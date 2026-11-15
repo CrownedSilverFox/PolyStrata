@@ -506,22 +506,56 @@ void Qwen35::attn_store(Block& B, int64_t pos, int n) {
     head_norm_rope(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, first, n, rms_eps_, st_,
                    nullptr, axes, sections_, at ? at + 1 : nullptr);
     lin(B.wv, xn_, v_, n, xq_);
+    const int kv_stride = n_kv_ * head_dim_;
+    const float* k_in = k_;
+    const float* v_in = v_;
+    if (ring > 0 && n > ring) {
+        const int skip = n - ring;
+        pos += skip;
+        k_in += size_t(skip) * kv_stride;
+        v_in += size_t(skip) * kv_stride;
+        n = ring;
+    }
     if (opt_.kv_format == KvFmt::kQ8_0) {
         if (at) {
-            store_q8_at(k_, B.k_codes, B.k_scales, n_kv_ * head_dim_, at, n, ring, st_);
-            store_q8_at(v_, B.v_codes, B.v_scales, n_kv_ * head_dim_, at, n, ring, st_);
+            store_q8_at(k_in, B.k_codes, B.k_scales, kv_stride, at, n, ring, st_);
+            store_q8_at(v_in, B.v_codes, B.v_scales, kv_stride, at, n, ring, st_);
+        } else if (ring > 0) {
+            const int p0 = (int) (pos % ring);
+            if (p0 + n <= ring) {
+                store_q8(k_in, B.k_codes, B.k_scales, kv_stride, p0, n, st_);
+                store_q8(v_in, B.v_codes, B.v_scales, kv_stride, p0, n, st_);
+            } else {
+                const int n1 = ring - p0;
+                const int n2 = n - n1;
+                store_q8(k_in, B.k_codes, B.k_scales, kv_stride, p0, n1, st_);
+                store_q8(v_in, B.v_codes, B.v_scales, kv_stride, p0, n1, st_);
+                store_q8(k_in + size_t(n1) * kv_stride, B.k_codes, B.k_scales, kv_stride, 0, n2, st_);
+                store_q8(v_in + size_t(n1) * kv_stride, B.v_codes, B.v_scales, kv_stride, 0, n2, st_);
+            }
         } else {
-            const int64_t p = ring > 0 ? pos % ring : pos;
-            store_q8(k_, B.k_codes, B.k_scales, n_kv_ * head_dim_, p, n, st_);
-            store_q8(v_, B.v_codes, B.v_scales, n_kv_ * head_dim_, p, n, st_);
+            store_q8(k_in, B.k_codes, B.k_scales, kv_stride, pos, n, st_);
+            store_q8(v_in, B.v_codes, B.v_scales, kv_stride, pos, n, st_);
         }
     } else if (at) {
-        store_f16_at(k_, B.keys, n_kv_ * head_dim_, at, n, ring, st_);
-        store_f16_at(v_, B.vals, n_kv_ * head_dim_, at, n, ring, st_);
+        store_f16_at(k_in, B.keys, kv_stride, at, n, ring, st_);
+        store_f16_at(v_in, B.vals, kv_stride, at, n, ring, st_);
+    } else if (ring > 0) {
+        const int p0 = (int) (pos % ring);
+        if (p0 + n <= ring) {
+            store_f16(k_in, B.keys, kv_stride, p0, n, st_);
+            store_f16(v_in, B.vals, kv_stride, p0, n, st_);
+        } else {
+            const int n1 = ring - p0;
+            const int n2 = n - n1;
+            store_f16(k_in, B.keys, kv_stride, p0, n1, st_);
+            store_f16(v_in, B.vals, kv_stride, p0, n1, st_);
+            store_f16(k_in + size_t(n1) * kv_stride, B.keys, kv_stride, 0, n2, st_);
+            store_f16(v_in + size_t(n1) * kv_stride, B.vals, kv_stride, 0, n2, st_);
+        }
     } else {
-        const int64_t p = ring > 0 ? pos % ring : pos;
-        store_f16(k_, B.keys, n_kv_ * head_dim_, p, n, st_);
-        store_f16(v_, B.vals, n_kv_ * head_dim_, p, n, st_);
+        store_f16(k_in, B.keys, kv_stride, pos, n, st_);
+        store_f16(v_in, B.vals, kv_stride, pos, n, st_);
     }
 }
 
@@ -556,7 +590,8 @@ void Qwen35::attn(Block& B, int64_t pos, int n) {
         uint16_t* kw = q8 ? (uint16_t*) q8w_ : nullptr;
         uint16_t* vw = q8 ? kw + work_halves_ : nullptr;
         const size_t score_floats = (size_t) chunk_ * n_head_ * opt_.max_context;
-        if (!(fattn_ && (q8 ? fattn_q8(q_, Kvq8{B.k_codes, B.k_scales}, Kvq8{B.v_codes, B.v_scales}, pos, n, att_,
+        const bool can_fattn = fattn_ && (ring == 0);
+        if (!(can_fattn && (q8 ? fattn_q8(q_, Kvq8{B.k_codes, B.k_scales}, Kvq8{B.v_codes, B.v_scales}, pos, n, att_,
                                        head_dim_, n_head_, n_kv_, scale, score_, score_floats, st_)
                             : fattn_f16(q_, B.keys, B.vals, pos, n, att_, head_dim_, n_head_, n_kv_, scale, score_,
                                         score_floats, st_))))
