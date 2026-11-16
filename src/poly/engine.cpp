@@ -1181,7 +1181,8 @@ void Engine::metal_cover(int64_t end) {
 
 void* Engine::kv_alloc(size_t bytes, int per) {
     if (again_ != SIZE_MAX) return bufs_.at(again_++).p;
-    const size_t all = (size_t) ((opt_.max_context + per - 1) / per) * bytes;
+    const int64_t cap_rows = opt_.kv_resident > 0 ? std::min<int64_t>(opt_.max_context, opt_.kv_resident) : opt_.max_context;
+    const size_t all = (size_t) ((cap_rows + per - 1) / per) * bytes;
 #if defined(STRATA_GPU_METAL)
     if (opt_.metal_balanced && opt_.kv_grow) {
         const size_t capacity = (size_t) ((kv_rows_for(1) + per - 1) / per) * bytes;
@@ -1192,8 +1193,7 @@ void* Engine::kv_alloc(size_t bytes, int per) {
 #endif
     void* p = nullptr;
     if (!vmm_ || !opt_.kv_grow) {
-        const size_t alloc_rows = opt_.kv_resident > 0 ? (size_t) opt_.kv_resident : (size_t) opt_.max_context;
-        p = dmalloc((size_t) ((alloc_rows + per - 1) / per) * bytes, "the attention cache");
+        p = dmalloc(all, "the attention cache");
     } else {
         Kv k;
         k.bytes = bytes;
@@ -1653,8 +1653,8 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     const std::string name = arch ? arch->s : std::string();
     // Clover is a qwen35moe model trained to also guess a block of tokens at once (Qwen35)
     const bool qwen35 = name == "qwen35moe" || name == "clover_moe";
-    if (o.kv_format == KvFmt::kQ8_0 && !qwen35 && name != "kolibri1" && name != "flint" && name != "lfm2moe")
-        throw std::runtime_error("--kv q8_0 is supported for qwen35moe, kolibri1, flint and lfm2moe models in v1; "
+    if ((o.kv_format == KvFmt::kQ8_0 || o.kv_format == KvFmt::kQ4_0) && !qwen35 && name != "kolibri1" && name != "flint" && name != "lfm2moe")
+        throw std::runtime_error("--kv " + std::string(o.kv_format == KvFmt::kQ4_0 ? "q4_0" : "q8_0") + " is supported for qwen35moe, kolibri1, flint and lfm2moe models in v1; "
                                  "this is a '" + name + "' model");
     // int8 and int8k are Gemma 4's: their readers are not the arithmetic q8_0's are, so a model takes one
     // family or the other rather than a choice between them.
@@ -1664,6 +1664,8 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     // moe() weighs the picks as a softmax of their scores, which is how only this architecture's router does
     if (o.cache_bias > 0.f && !qwen35)
         throw std::runtime_error("--cache-bias is supported for qwen35moe models; this is a '" + name + "' model");
+    if (o.kv_resident > 0 && !qwen35)
+        throw std::runtime_error("--kv-resident is supported for qwen35moe models in v1; this is a '" + name + "' model");
     const auto make = [&]() -> std::unique_ptr<Engine> {
         if (name == "glm5-next" || name == "glm5next") return std::make_unique<Glm5Next>();   // Unsloth: no hyphen
         if (qwen35) return std::make_unique<Qwen35>();
@@ -2630,6 +2632,7 @@ void Engine::load(const Options& o) {
     gpu::metal::set_scoped_residency(o.metal_balanced);
 #endif
     opt_ = o;
+    if ((!opt_.kv_grow || opt_.batch > 0) && opt_.kv_resident > 0) opt_.kv_resident = 0;
     asked_reserve_mib_ = o.vram_reserve_mib;
     if (opt_.max_context < 16) throw std::runtime_error("the context must be at least 16 tokens");
     if (opt_.prompt_batch < 1 || opt_.prompt_batch > 4096)
@@ -4855,6 +4858,7 @@ void Engine::run(const int32_t* tokens, int n) {
     const size_t wn = (size_t) opt_.window, recs = 3 * wn + (size_t) opt_.batch + 1;   // step()'s rows after
     const auto up = [&](int il, int m, size_t rec) {
         Layer& L = layers_[(size_t) il];
+        prefetch_layer(il, m);
         const size_t head = (size_t) head_key(il, m) * recs + rec;
         if (replay && L.fixed) replayed(L.heads, head, [&] { layer_head(L, il, m); });
         else layer_head(L, il, m);
