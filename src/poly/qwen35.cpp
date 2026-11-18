@@ -1170,6 +1170,7 @@ void Qwen35::attn_rows(Block& B, int n) {
     lin(B.wv, xn_, v_, n, xq_);
     const float scale = 1.f / std::sqrt((float) head_dim_);
     const bool q8 = (opt_.kv_format == KvFmt::kQ8_0 || opt_.kv_format == KvFmt::kQ4_0);
+    const int ring = kv_ring();
     const size_t kv = (size_t) n_kv_ * head_dim_, hq = (size_t) n_head_ * head_dim_;
     for (int i = 0, m; i < n; i += m) {
         const Row& r = rows_of_[i];
@@ -1186,14 +1187,29 @@ void Qwen35::attn_rows(Block& B, int n) {
         if (opt_.kv_format == KvFmt::kQ4_0) {
             kq = {(int8_t*) seq_buf(r.seq, B.k_codes), (uint16_t*) seq_buf(r.seq, B.k_scales)};
             vq = {(int8_t*) seq_buf(r.seq, B.v_codes), (uint16_t*) seq_buf(r.seq, B.v_scales)};
-            if (B.k_q4) {
-                store_q4_at(k_ + i * kv, (block_q4_0*) seq_buf(r.seq, B.k_q4), (int) kv, ai, m, 0, st_);
-                store_q4_at(v_ + i * kv, (block_q4_0*) seq_buf(r.seq, B.v_q4), (int) kv, ai, m, 0, st_);
-                dequant_q4_to_q8((const block_q4_0*) seq_buf(r.seq, B.k_q4), (int8_t*) kq.codes, (uint16_t*) kq.scales, (int) kv, m, st_);
-                dequant_q4_to_q8((const block_q4_0*) seq_buf(r.seq, B.v_q4), (int8_t*) vq.codes, (uint16_t*) vq.scales, (int) kv, m, st_);
+            // With KV streaming the per-layer q4 cache is not allocated; use the shared write stage instead.
+            // Store the m rows (at most a token and its guess) from row 0, then unpack to the cache's ring row,
+            // so the codes are the same Q4->Q8 dequantization the non-streaming path writes.
+            block_q4_0* kb = B.k_q4 ? (block_q4_0*) seq_buf(r.seq, B.k_q4) : q4_stage_k_;
+            block_q4_0* vb = B.v_q4 ? (block_q4_0*) seq_buf(r.seq, B.v_q4) : q4_stage_v_;
+            const int64_t row0 = ai[0];
+            const int p0 = B.k_q4 ? 0 : (int) (row0 % ring);
+            const int nb = (int) kv / 32;
+            store_q4(k_ + i * kv, kb, (int) kv, 0, m, st_);
+            store_q4(v_ + i * kv, vb, (int) kv, 0, m, st_);
+            int8_t* kcodes = (int8_t*) kq.codes + (size_t) p0 * kv;
+            uint16_t* kscales = (uint16_t*) kq.scales + (size_t) p0 * nb;
+            int8_t* vcodes = (int8_t*) vq.codes + (size_t) p0 * kv;
+            uint16_t* vscales = (uint16_t*) vq.scales + (size_t) p0 * nb;
+            if (p0 + m <= ring) {
+                dequant_q4_to_q8(kb, kcodes, kscales, (int) kv, m, st_);
+                dequant_q4_to_q8(vb, vcodes, vscales, (int) kv, m, st_);
             } else {
-                store_q8_at(k_ + i * kv, (int8_t*) kq.codes, (uint16_t*) kq.scales, (int) kv, ai, m, 0, st_);
-                store_q8_at(v_ + i * kv, (int8_t*) vq.codes, (uint16_t*) vq.scales, (int) kv, ai, m, 0, st_);
+                const int n1 = ring - p0, n2 = m - n1;
+                dequant_q4_to_q8(kb, kcodes, kscales, (int) kv, n1, st_);
+                dequant_q4_to_q8(vb, vcodes, vscales, (int) kv, n1, st_);
+                dequant_q4_to_q8(kb + (size_t) n1 * nb, (int8_t*) kq.codes, (uint16_t*) kq.scales, (int) kv, n2, st_);
+                dequant_q4_to_q8(vb + (size_t) n1 * nb, (int8_t*) vq.codes, (uint16_t*) vq.scales, (int) kv, n2, st_);
             }
         } else if (q8) {
             kq = {(int8_t*) seq_buf(r.seq, B.k_codes), (uint16_t*) seq_buf(r.seq, B.k_scales)};
