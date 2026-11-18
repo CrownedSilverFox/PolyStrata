@@ -917,8 +917,8 @@ void Qwen35::attn_store(Block& B, int64_t pos, int n) {
         if (at) {
             store_q4_at(k_, B.k_q4, kv_stride, at, n, 0, st_);
             store_q4_at(v_, B.v_q4, kv_stride, at, n, 0, st_);
-            dequant_q4_to_q8(B.k_q4, B.k_codes, B.k_scales, kv_stride, n, st_);
-            dequant_q4_to_q8(B.v_q4, B.v_codes, B.v_scales, kv_stride, n, st_);
+            dequant_q4_to_q8(B.k_q4, B.k_codes, B.k_scales, kv_stride, n, st_, at);
+            dequant_q4_to_q8(B.v_q4, B.v_codes, B.v_scales, kv_stride, n, st_, at);
         } else {
             store_q4(k_, B.k_q4, kv_stride, pos, n, st_);
             store_q4(v_, B.v_q4, kv_stride, pos, n, st_);
@@ -1192,7 +1192,7 @@ void Qwen35::attn_rows(Block& B, int n) {
             // so the codes are the same Q4->Q8 dequantization the non-streaming path writes.
             block_q4_0* kb = B.k_q4 ? (block_q4_0*) seq_buf(r.seq, B.k_q4) : q4_stage_k_;
             block_q4_0* vb = B.v_q4 ? (block_q4_0*) seq_buf(r.seq, B.v_q4) : q4_stage_v_;
-            const int64_t row0 = ai[0];
+            const int64_t row0 = r.pos;
             const int p0 = B.k_q4 ? 0 : (int) (row0 % ring);
             const int nb = (int) kv / 32;
             store_q4(k_ + i * kv, kb, (int) kv, 0, m, st_);

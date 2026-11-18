@@ -718,10 +718,11 @@ __global__ void store_q4_at_kernel(const float* __restrict__ x, block_q4_0* __re
 __global__ void dequant_q4_to_q8_kernel(const block_q4_0* __restrict__ in,
                                         int8_t* __restrict__ codes,
                                         half* __restrict__ scales,
-                                        int n, int rows, int nb) {
+                                        int n, int rows, int nb, const long long* __restrict__ at) {
     const int gb = blockIdx.x * blockDim.x + threadIdx.x;
     if (gb >= nb * rows) return;
-    const int row = gb / nb, blk = gb % nb;
+    const int trow = gb / nb, blk = gb % nb;
+    const long long row = at ? (*at + trow) : trow;
     const block_q4_0& b = in[(size_t) row * nb + blk];
     scales[(size_t) row * nb + blk] = *reinterpret_cast<const half*>(&b.d);
     int8_t* cr = codes + (size_t) row * n + blk * 32;
@@ -3047,12 +3048,13 @@ void store_q4_at(const float* x, block_q4_0* out, int n, const long long* at, in
     store_q4_at_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(x, out, n, rows, nb, at, ring);
 }
 
-void dequant_q4_to_q8(const block_q4_0* in, int8_t* codes, uint16_t* scales, int n, int rows, void* stream) {
+void dequant_q4_to_q8(const block_q4_0* in, int8_t* codes, uint16_t* scales, int n, int rows, void* stream,
+                      const long long* at) {
     if ((n & 31) != 0) throw std::invalid_argument("dequant_q4_to_q8: n is not a multiple of 32");
     const int nb = n >> 5;
     const size_t all = (size_t) nb * rows;
     if (!all) return;
-    dequant_q4_to_q8_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(in, codes, (half*) scales, n, rows, nb);
+    dequant_q4_to_q8_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(in, codes, (half*) scales, n, rows, nb, at);
 }
 
 void dsa_attend(void* blas, const float* q, const uint16_t* cache, const int32_t* sel, int sel_stride, int top_rows,

@@ -142,7 +142,9 @@ void store_q4(const float* x, block_q4_0* out, int n, int64_t pos, int rows, voi
 void store_q4_at(const float* x, block_q4_0* out, int n, const long long* at, int rows, int ring, void* stream);
 
 /// Dequantizes Q4_0 blocks to Q8_0 codes and scales (exact integer mapping: codes = nibble - 8, scale = scale).
-void dequant_q4_to_q8(const block_q4_0* in, int8_t* codes, uint16_t* scales, int n, int rows, void* stream);
+/// With `at`, the destination rows start at the position held on the card when the launch runs (graph replay).
+void dequant_q4_to_q8(const block_q4_0* in, int8_t* codes, uint16_t* scales, int n, int rows, void* stream,
+                      const long long* at = nullptr);
 /// Attention over cached latents for the tokens from position `pos`.  q: n_head * rank absorbed queries a token.
 /// The first dense_rows tokens attend to every cache row up to their own.  The others each have a list in sel
 /// (sel_stride apart): top_rows cache rows, then the rows of the pool their own position is still filling.
