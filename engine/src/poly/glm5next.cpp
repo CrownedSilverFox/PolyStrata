@@ -6,7 +6,6 @@
 #include "strata/poly/kernels.hpp"
 #include "strata/kernels/native_mmvq.hpp"
 
-#include "ggml.h"
 
 #include <algorithm>
 #include <bit>

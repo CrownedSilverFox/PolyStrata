@@ -5,7 +5,7 @@
 #include "runtime.hpp"
 #include "strata/kernels/native_mmvq.hpp"
 
-#include "ggml.h"
+#include "strata/quant/types.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +21,7 @@ constexpr float kMinWeightSum = 6.103515625e-5f;   // the floor ggml's MoE graph
 constexpr uint32_t kTypeI32 = 26;
 constexpr float kPi = 3.14159265358979323846f;
 
-// ggml_rope_ext's arguments as the deepseek4 graph gives them, and ggml_rope_yarn_corr_dims().
+// The arguments of ggml's rope_ext as the deepseek4 graph gives them, and its rope_yarn_corr_dims().
 Rope make_rope(float base, int n_rot, float freq_scale, float ext_factor, int n_ctx_orig, float beta_fast,
                float beta_slow) {
     Rope r;
@@ -274,7 +274,7 @@ int DeepSeek4::head_key(int il, int n) const { return blocks_[(size_t) il].ratio
 // one.  A group of a token is n_head / groups heads that lie together.
 void DeepSeek4::out_proj(Block& B, int n) {
     const int in = n_head_ * head_dim_ / o_groups_;
-    const size_t row = ggml_row_size((ggml_type) B.wo_a.type, in);
+    const size_t row = strata::quant::row_bytes((int) B.wo_a.type, in);
     if (n == 1 && o_groups_ <= 8 && kernels::native_mmvq_supported((int) B.wo_a.type)) {
         // a token's groups lie one behind the other: quantized as one vector, then every group in one launch
         kernels::native_quantize_q8_1(att_, q8_, n_head_ * head_dim_, 1, st_);

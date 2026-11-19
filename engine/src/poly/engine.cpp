@@ -20,7 +20,7 @@
 #include "strata/kernels/native_mmvq.hpp"
 #include "strata/platform/memory.hpp"
 
-#include "ggml.h"
+#include "gguf_types.hpp"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -1611,21 +1611,21 @@ void Engine::load_moe(int il, bool shared) {
     }
     L.gu_step = L.gu2();
     if (L.mixed()) {   // Flint NanoPlus: 335,872 + 270,336 bytes, whole blocks of neither IQ2_S (82) nor IQ2_XXS (66)
-        const size_t unit = std::lcm(std::lcm(ggml_type_size((ggml_type) L.gu_type), ggml_type_size((ggml_type) L.u_type)),
+        const size_t unit = std::lcm(std::lcm(type_block_bytes(L.gu_type), type_block_bytes(L.u_type)),
                                      size_t(8));
         L.gu_step = (L.gu_step + unit - 1) / unit * unit;
     }
     // NVFP4 experts converted from NVIDIA's checkpoints carry each expert's global scale of gate, up and down
     // (llama.cpp's ffn_*_exps_s).  Gate's and up's go on their products ahead of the activation (ExpertScales),
     // down's on the expert's weight in its token's sum.  Only NVFP4's: Gemma 4's ffn_down_exps.scale is its own.
-    const bool nv = L.gu_type == GGML_TYPE_NVFP4 || L.u_type == GGML_TYPE_NVFP4 || L.d_type == GGML_TYPE_NVFP4;
+    const bool nv = L.gu_type == kTypeNVFP4 || L.u_type == kTypeNVFP4 || L.d_type == kTypeNVFP4;
     if (nv && tensor(il, "ffn_gate_up_exps.scale"))
         throw std::runtime_error(blk(il, "ffn_gate_up_exps.scale: NVFP4 scales of a joined gate and up are not supported"));
     // A projection of another type in the same layer has none (Qwen3.6 NVFP4-MTP-HQ: some ups are Q4_K).
     const auto one = [&](const char* n, uint32_t type, Dev& d, std::vector<float>& h) {
         const TensorInfo* t = tensor(il, n);
         h.clear();
-        if (type != GGML_TYPE_NVFP4 || !t) return;
+        if (type != kTypeNVFP4 || !t) return;
         if (t->type != kTypeF32) throw std::runtime_error(t->name + " is not F32");
         d = upload(t, blk(il, n), n_expert_, 1, kF32);
         h.resize((size_t) n_expert_);
@@ -1749,7 +1749,7 @@ Dev Engine::upload(const TensorInfo* t, const std::string& name, int64_t n_in, i
 // blocks' E4M3 scales.  1 for any other matrix.
 float Engine::global_scale(const TensorInfo& t) const {
     static const std::string w = ".weight";
-    if (t.type != GGML_TYPE_NVFP4 || t.name.size() <= w.size() ||
+    if (t.type != kTypeNVFP4 || t.name.size() <= w.size() ||
         t.name.compare(t.name.size() - w.size(), w.size(), w) != 0)
         return 1.0f;
     const TensorInfo* s = home(t).find(t.name.substr(0, t.name.size() - w.size()) + ".scale");
@@ -1768,10 +1768,9 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
                                  std::to_string(n_out) + "]");
     const size_t bytes = home(*t).payload(*t), count = (size_t) t->elements();
     if (dense_) uploaded_.emplace_back(home(*t).data(*t), bytes);
-    if (want == kGuessMat && !fix && n_in % ggml_blck_size(GGML_TYPE_Q4_0) == 0 &&
-        ggml_get_type_traits((ggml_type) t->type)->to_float) {
-        const size_t row = ggml_row_size(GGML_TYPE_Q4_0, n_in), out = row * (size_t) n_out;
-        const Dev d{dense_ ? dense_ + dense_at_ : nullptr, (uint32_t) GGML_TYPE_Q4_0, (int) n_in, (int) n_out};
+    if (want == kGuessMat && !fix && n_in % type_block_values(kTypeQ4_0) == 0 && type_converts(t->type)) {
+        const size_t row = strata::quant::row_bytes((int) kTypeQ4_0, n_in), out = row * (size_t) n_out;
+        const Dev d{dense_ ? dense_ + dense_at_ : nullptr, kTypeQ4_0, (int) n_in, (int) n_out};
         dense_at_ += pad(out) + kTail;
         if (!dense_) return d;
         if (dense_at_ > dense_bytes_) throw std::logic_error("the dense arena is too small for " + t->name);
@@ -1780,16 +1779,15 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
         const size_t in_row = bytes / (size_t) n_out, rows = 4096;
         std::vector<uint8_t> q(out);
         std::vector<float> f(rows * (size_t) n_in);
-        const ggml_to_float_t to_float = ggml_get_type_traits((ggml_type) t->type)->to_float;
         const uint8_t* src = (const uint8_t*) home(*t).data(*t);
         Workers pool(std::max(1u, std::thread::hardware_concurrency() / 2));
         for (size_t r0 = 0; r0 < (size_t) n_out; r0 += rows) {
             const size_t m = std::min(rows, (size_t) n_out - r0);
             pool.run((int) ((m + 255) / 256), [&](int k) {
                 const size_t a = (size_t) k * 256, b = std::min(m, a + 256);
-                to_float(src + (r0 + a) * in_row, f.data() + a * n_in, (int64_t) ((b - a) * n_in));
-                ggml_quantize_chunk(GGML_TYPE_Q4_0, f.data() + a * n_in, q.data() + (r0 + a) * row, 0,
-                                    (int64_t) (b - a), n_in, nullptr);
+                type_to_floats(t->type, src + (r0 + a) * in_row, f.data() + a * n_in, (int64_t) ((b - a) * n_in));
+                strata::quant::quantize_q4_0_ref(f.data() + a * n_in, q.data() + (r0 + a) * row,
+                                                 (int64_t) ((b - a) * n_in));
             });
         }
         h2d(d.p, q.data(), out);
@@ -1816,9 +1814,8 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
     }
 
     std::vector<float> f(count);
-    const ggml_type_traits* traits = ggml_get_type_traits((ggml_type) t->type);
     if (t->type == kTypeF32) std::memcpy(f.data(), home(*t).data(*t), bytes);
-    else if (traits && traits->to_float) traits->to_float(home(*t).data(*t), f.data(), (int64_t) count);
+    else if (type_converts(t->type)) type_to_floats(t->type, home(*t).data(*t), f.data(), (int64_t) count);
     else throw std::runtime_error(t->name + " is " + shape_of(*t) + ", a type this engine cannot read");
 #if defined(STRATA_GPU_METAL)
     if (opt_.metal_balanced) drop_file_pages(home(*t).data(*t), bytes);
@@ -1829,8 +1826,8 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
         h2d(d.p, f.data(), out);
         return d;
     }
-    std::vector<ggml_bf16_t> h(count);
-    ggml_fp32_to_bf16_row(f.data(), h.data(), (int64_t) count);
+    std::vector<uint16_t> h(count);
+    for (size_t i = 0; i < count; ++i) h[i] = bf16_of(f[i]);
     h2d(d.p, h.data(), out);
     return d;
 }
@@ -1896,9 +1893,9 @@ void Engine::fill_expert_cache() {
         // A slot is a whole number of blocks of each of the experts' types, so the slots of a layer that lie one
         // behind the other are the matrices of one launch (moe_rows()), and of 8 bytes, which keeps every block
         // where its type may be read.
-        const size_t unit = std::lcm(std::lcm(std::lcm(ggml_type_size((ggml_type) L.gu_type),
-                                                       ggml_type_size((ggml_type) L.u_type)),
-                                              ggml_type_size((ggml_type) L.d_type)),
+        const size_t unit = std::lcm(std::lcm(std::lcm(type_block_bytes(L.gu_type),
+                                                       type_block_bytes(L.u_type)),
+                                              type_block_bytes(L.d_type)),
                                      size_t(8));
         const size_t bytes = (L.gu2() + L.d_bytes + kTail + unit - 1) / unit * unit;
         L.slot_bytes = bytes;
@@ -2744,11 +2741,11 @@ void Engine::load(const Options& o) {
 
     // the token table stays in the file, a row a token, and embed() reads a row in whatever type it has
     const TensorInfo* te = gg_->find("token_embd.weight");
-    const ggml_type_traits* tt = te ? ggml_get_type_traits((ggml_type) te->type) : nullptr;
     if (!te || te->shape.size() != 2 || (int64_t) te->shape[0] != n_embd_ || (int64_t) te->shape[1] != n_vocab_ ||
-        !tt || tt->blck_size <= 0 || n_embd_ % tt->blck_size != 0 || (te->type != kTypeF32 && !tt->to_float))
+        type_block_values(te->type) <= 0 || n_embd_ % type_block_values(te->type) != 0 ||
+        (te->type != kTypeF32 && !type_converts(te->type)))
         throw std::runtime_error("token_embd.weight must be [" + std::to_string(n_embd_) + ", " +
-                                 std::to_string(n_vocab_) + "] in a type ggml converts to floats, it is " +
+                                 std::to_string(n_vocab_) + "] in a type this engine converts to floats, it is " +
                                  (te ? shape_of(*te) : "missing"));
     tok_row_ = gg_->payload(*te) / (size_t) n_vocab_;
     tok_type_ = te->type;
@@ -3508,7 +3505,7 @@ const Stats& Engine::stats() const {
 void Engine::embed(int32_t token, float* dst) const {
     const uint8_t* row = tok_embd_ + (size_t) token * tok_row_;
     if (tok_type_ == kTypeF32) std::memcpy(dst, row, (size_t) n_embd_ * sizeof(float));
-    else ggml_get_type_traits((ggml_type) tok_type_)->to_float(row, dst, n_embd_);
+    else type_to_floats(tok_type_, row, dst, n_embd_);
 }
 
 void Engine::images(const Image* im, int n) {
