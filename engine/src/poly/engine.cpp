@@ -5767,7 +5767,111 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
         ~Clear() { p = nullptr; }
     } clear{rows_of_};
     std::vector<int> key;
-    for (int il = lo_; il < hi_; ++il) {
+    // With experts on the CPU, the rows go through the layers in two halves, a sequence's rows in one, as a window's
+    // tokens do (run()): this thread routes a half and computes its CPU experts, and meanwhile the thread that hands
+    // the card its cached experts hands it first the other half's sum, the rest of its layer and the next layer up to
+    // its router.  The card's layer and the CPU's experts overlap instead of taking turns.  A half's recordings are
+    // its own (its rows' place in the buffers is in them).  STRATA_POLY_STEP_HALVES=0 keeps the rows together.
+    static const bool halves_on = [] {
+        const char* v = std::getenv("STRATA_POLY_STEP_HALVES");
+        return !(v && v[0] == '0');
+    }();
+    int mid = R / 2;
+    while (mid < R && mid > 0 && rseq[(size_t) mid] == rseq[(size_t) mid - 1]) ++mid;
+    const bool halved = halves_on && !card && batch_heads() && !all_cached() && R >= 4 && mid > 0 && mid < R &&
+                        !batched(layers_[(size_t) first_moe_layer()], R);
+    if (halved) {
+        const int first[3] = {0, mid, R};
+        int at0 = 0;
+        const auto half = [&](int k) {
+            shift_rows(first[k] - at0);
+            at0 = first[k];
+            ev_ = ev_row_[k];
+            return first[k + 1] - first[k];
+        };
+        const auto rec_of = [&](int k) { return recs + 64 * (size_t) first[k] + (size_t) (first[k + 1] - first[k]); };
+        const auto head_half = [&](Layer& L, int il, int k) {
+            const int r0 = first[k], m = first[k + 1] - first[k];
+            const int64_t keep = pos_;
+            std::vector<int> hkey{m, 1000 + r0};
+            for (int i = r0; i < r0 + m; ++i) {
+                pos_ = at[(size_t) i];
+                hkey.push_back(rseq[(size_t) i]);
+                hkey.push_back(head_key(il, 1));
+                if (guesses) hkey.push_back(rsnap[(size_t) i] ? 1 : 0);
+            }
+            pos_ = keep;
+            rows_of_ = rows.data() + r0;
+            n_rows_of_ = m;
+            if (replay && L.fixed) {
+                void*& made = L.rows_heads[hkey];
+                if (!made) made = record([&] { layer_head(L, il, m); });
+                ck(cudaGraphLaunch((cudaGraphExec_t) made, cs(st_)), "layer graph");
+            } else {
+                layer_head(L, il, m);
+            }
+            rows_of_ = nullptr;
+        };
+        // half k on from layer il, whose experts it has (-1: from the start), to the next router's copy
+        const auto go_on = [&](int k, int il, bool add) {
+            const int m = half(k);
+            const size_t rk = rec_of(k);
+            if (il >= 0) {
+                Layer& L = layers_[(size_t) il];
+                if (add) moe_add(m);
+                if (replay && L.fixed) replayed(L.tail, rk, [&] { layer_tail(L, il, m); });
+                else layer_tail(L, il, m);
+            }
+            for (int j = il < 0 ? lo_ : il + 1; j < hi_; ++j) {
+                Layer& J = layers_[(size_t) j];
+                head_half(J, j, k);
+                if (!J.moe) continue;
+                ck(cudaEventRecord((cudaEvent_t) ev_, cs(st_)), "router");
+                if (replay) replayed(J.shared, rk, [&] { moe_shared(J, j, m); });
+                else moe_shared(J, j, m);
+                break;
+            }
+        };
+        const auto back = [&] {
+            shift_rows(-at0);
+            at0 = 0;
+            ev_ = ev_row_[0];
+            rows_of_ = nullptr;
+        };
+        struct {
+            int k = -1, il = -1;
+            bool add = false;
+        } late;
+        std::exception_ptr failed;
+        try {
+            for (int k = 0; k < 2; ++k) go_on(k, -1, false);
+            for (int il = lo_; il < hi_; ++il) {
+                Layer& L = layers_[(size_t) il];
+                if (!L.moe) continue;
+                for (int k = 0; k < 2; ++k) {
+                    const std::function<void()> other = [&] {
+                        try {
+                            if (split_) cudaSetDevice(device_);
+                            go_on(late.k, late.il, late.add);
+                            half(k);
+                        } catch (...) {
+                            failed = std::current_exception();
+                        }
+                    };
+                    const int m = half(k);
+                    const bool add = moe(L, il, m, late.k >= 0 ? &other : nullptr);
+                    if (failed) std::rethrow_exception(failed);
+                    late = {k, il, add};
+                }
+            }
+            if (late.k >= 0) go_on(late.k, late.il, late.add);
+        } catch (...) {
+            back();
+            throw;
+        }
+        back();
+    }
+    for (int il = lo_; il < hi_ && !halved; ++il) {
         Layer& L = layers_[(size_t) il];
         if (batch_heads()) {
             const int64_t keep = pos_;
