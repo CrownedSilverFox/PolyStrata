@@ -271,7 +271,11 @@ if(STRATA_METAL_POLY)
     ${S}/core/conversation_memory.cpp ${S}/core/conversation_file.cpp ${S}/spec/draft_policy.cpp
     ${S}/spec/suffix_drafter.cpp)
   target_include_directories(strata-poly PRIVATE ${_strata_ggml_root}/ggml/include ${_strata_ggml_root}/ggml/src)
-  target_link_libraries(strata-poly PRIVATE strata_poly_metal_kernels ggml-cpu ggml-base)
+  # the CPU experts' rows and the tensor types read on the host are the Strata quant layer's
+  if(NOT TARGET strata_quant)
+    message(FATAL_ERROR "strata-poly on Metal needs the Strata quant layer (STRATA_OWN_CPU_QUANT=ON)")
+  endif()
+  target_link_libraries(strata-poly PRIVATE strata_poly_metal_kernels strata_quant ggml-cpu ggml-base)
   target_compile_definitions(strata-poly PRIVATE STRATA_VERSION="0.1.45-metal-poly")
   set_source_files_properties(${S}/poly/norm_q8_test.cu PROPERTIES LANGUAGE CXX)
   add_executable(poly_norm_q8_metal_test ${S}/poly/norm_q8_test.cu)

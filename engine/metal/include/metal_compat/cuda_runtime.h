@@ -208,13 +208,6 @@ inline cudaError_t cudaGraphInstantiateWithFlags(cudaGraphExec_t* x, cudaGraph_t
     return strata::gpu::graph_instantiate(x,g,f);
 }
 
-// cudaMemcpy2D(dst, dpitch, src, spitch, width, height, kind): a strided copy, used by the vision tower's patch rows and
-// the Engram tables' column slices.  The Metal runtime has no pitched copy yet, so this reports failure rather than
-// copying nothing silently.
-inline strata::gpu::Error cudaMemcpy2D(void*, size_t, const void*, size_t, size_t, size_t, strata::gpu::CopyKind) {
-    return strata::gpu::kErrorUnsupported;   // cudaMemcpy2D_unimplemented_marker
-}
-
 // occupancy query: the Metal runtime decides its own threadgroup limits, so answer "one block" and let the caller size grids
 template <typename K, typename... A>
 static inline strata::gpu::Error cudaOccupancyMaxActiveBlocksPerMultiprocessor(int* n, K&&, int, A&&...) {

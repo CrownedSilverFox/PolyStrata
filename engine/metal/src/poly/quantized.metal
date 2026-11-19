@@ -31,7 +31,7 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     uint row=group.y; ulong yrow=row;
     device const uchar* w=static_cast<device uchar*>(a.p[0]);
     device float* out_y=static_cast<device float*>(a.p[2]);
-    if(a.kind==1) { w=static_cast<device const uchar* const*>(a.p[0])[static_cast<device int*>(a.p[3])[row]]+a.offset; }
+    if(a.kind==1) { w=static_cast<device const uchar* device const*>(a.p[0])[static_cast<device int*>(a.p[3])[row]]+a.offset; }
     else if(a.kind==2 || a.kind==6) {
         if(a.kind==6 && a.p[4]) row+=static_cast<device int*>(a.p[4])[group.z];
         if(row>=uint(a.rows)) return;
@@ -62,7 +62,7 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
         if(group.z>=uint(*static_cast<device int*>(a.p[5])))return;
         device int* bounds=static_cast<device int*>(a.p[4]);
         if(row<uint(bounds[group.z]) || row>=uint(bounds[group.z+1]))return;
-        w=static_cast<device const uchar* const*>(a.p[0])[group.z]+a.offset;
+        w=static_cast<device const uchar* device const*>(a.p[0])[group.z]+a.offset;
         if(a.kind==4)xrow=static_cast<device int*>(a.p[3])[row];
         else yrow=static_cast<device int*>(a.p[3])[row];
     }
