@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build a Strata image from an engine component package. Run it on a Linux x86_64 machine with Docker (it needs the internet
+# Build a PolyStrata image from an engine component package. Run it on a Linux x86_64 machine with Docker (it needs the internet
 # for the base image and for the Terminal's pinned Python and locked wheels; the engine package is local).
 #
 #   docker/build.sh --flavor cuda --engine ~/pkgs/0.1.45.3-linux-x86_64-cuda-cuda13 --tag strata:0.2.7-cuda13
@@ -12,7 +12,7 @@
 #   --flavor cuda|hip|sycl   which system libraries the runtime adds (see docker/Dockerfile)
 #   --tag NAME               image name (default strata:<version>-<flavor>)
 #   --base IMAGE             base image (default ubuntu:24.04; sycl: ubuntu:26.04)
-#   --repo DIR               the Strata source tree (default: the one this script is in)
+#   --repo DIR               the PolyStrata source tree (default: the one this script is in)
 #   --version V              label (default: read from CMakeLists.txt)
 #   --ctx DIR                keep the build context here (default: a temporary folder, removed after the build)
 #   --no-cache               docker build --no-cache

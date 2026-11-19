@@ -44,7 +44,7 @@ class CapabilityTable(unittest.TestCase):
         rel = {"product_version": "0.2.14", "control_version": "0.1.60", "engine_version": "0.1.60",
                "assets": ["strata-engine-0.1.60-linux-x86_64-cuda-cuda13.tar.gz", "strata-engine-0.1.59-linux-x86_64-sycl.tar.gz",
                           "strata-control-0.1.60-windows-x86_64.zip", "strata-control-0.1.59-linux-aarch64.tar.gz",
-                          "strata-dsv41-0.1.59-macos-arm64-metal.tar.gz", "Strata-0.2.14-macos-arm64.dmg"]}
+                          "strata-dsv41-0.1.59-macos-arm64-metal.tar.gz", "PolyStrata-0.2.14-macos-arm64.dmg"]}
         self.assertEqual(ct.versions_line(rel), "App and Terminal 0.2.14, Control and engines 0.1.60; these packages stay at 0.1.59: "
                          "Control linux-aarch64; DeepSeek engines macos-arm64-metal; engines linux-x86_64-sycl. "
                          "App, Control and engine versions differ on purpose.")

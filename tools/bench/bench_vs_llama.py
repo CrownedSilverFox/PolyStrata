@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Strata vs llama.cpp head-to-head (stream 1402-h).  Measurement only.
+"""PolyStrata vs llama.cpp head-to-head (stream 1402-h).  Measurement only.
 
 Both engines are driven through their OpenAI-compatible HTTP servers (/v1/chat/completions), with the same prompt
-text, same sampler settings and the same GGUF.  Server-side timings (llama.cpp's names, which Strata's server also
+text, same sampler settings and the same GGUF.  Server-side timings (llama.cpp's names, which PolyStrata's server also
 emits) give prompt tok/s and decode tok/s; time to first token is the server's prompt_ms (non-streaming request,
 so TTFT = prompt processing time).  Peak VRAM comes from nvidia-smi polling, or the amdgpu sysfs counter when there is none (minus the idle baseline), RAM from the
 engine process tree (psutil RSS, which counts mmap'd file pages) and the system's used-memory delta.

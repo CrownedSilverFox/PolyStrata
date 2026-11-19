@@ -1,7 +1,7 @@
 # Mac
 
 Docker on a Mac runs Linux in a virtual machine that has no access to the Mac's GPU (no Metal), so a container could only
-use the CPU, and Strata has no CPU-only mode worth running. Use the Mac app or the Terminal instead:
+use the CPU, and PolyStrata has no CPU-only mode worth running. Use the Mac app or the Terminal instead:
 
     curl -fsSL --connect-timeout 15 --max-time 120 <release-folder>/install.sh -o install.sh && sh install.sh        # then: strata launch
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Entry point of the Strata container: `strata launch --no-tui` with the settings the TUI asks for, read from environment
+# Entry point of the PolyStrata container: `strata launch --no-tui` with the settings the TUI asks for, read from environment
 # variables, then stay up and stop cleanly on SIGTERM (`docker stop`).
 #
 #   docker run ... strata              start the server (default)
@@ -7,7 +7,7 @@
 #   docker run ... strata sh           a shell
 #
 # Settings (all optional; names match the screens of `strata launch`):
-#   MODEL         model size, e.g. IQ3_XXS, Q2_0 (empty: Strata picks one for this card and says so)
+#   MODEL         model size, e.g. IQ3_XXS, Q2_0 (empty: PolyStrata picks one for this card and says so)
 #   FAMILY        model family when a size is offered by several (qwen, swift, coder, ...)
 #   MODEL_PATH    GGUF files you already have, a folder or one .gguf, inside the container (mount it read-only)
 #   ALLOW_DOWNLOAD  1: go on and download the model although model files of the older layout (/data/models) were left unread (default: stop)
@@ -21,7 +21,7 @@
 #   GPU_ROLES     a role for each card, e.g. 1=main,0=helper (main, helper or off; cards you do not name are off; not together with GPU / GPUS)
 #   TUNE          quick | thorough | skip   (done once; RETUNE=1 tunes again)
 #   PORT          port inside the container (default 8080)
-#   API_KEY / API_KEY_FILE   the key clients must send. The server listens on every address inside the container, and Strata does
+#   API_KEY / API_KEY_FILE   the key clients must send. The server listens on every address inside the container, and PolyStrata does
 #                 not serve beyond loopback without a key, so one is always on: yours, or one made on the first start and kept in /data.
 #   PRESET        preset name in /data (default "docker"). Settings above are saved into it; with no settings given a saved preset is reused.
 #   STRATA_SET    advanced engine settings, space separated KEY=VALUE (like `strata launch --set`)
@@ -61,7 +61,7 @@ legacy_models_guard() {
   [ -n "$1" ] && return 0
   stuck=$(find "$2" -maxdepth 3 -name '*.gguf' 2>/dev/null | head -1)
   [ -n "$stuck" ] || return 0
-  msg="There are model files in ${stuck%/*} (the older image's place). This image keeps its models in /data/Strata-data/models and does not read them there, so it would download the model again (tens of GB). To use them: mount that folder read-only and set MODEL_PATH to the folder that holds the shards (docs/DOCKER.md, \"Files you already have\"), or put them in /data/Strata-data/models/<model folder>/. To download anyway: set ALLOW_DOWNLOAD=1. Nothing was downloaded."
+  msg="There are model files in ${stuck%/*} (the older image's place). This image keeps its models in /data/PolyStrata-data/models and does not read them there, so it would download the model again (tens of GB). To use them: mount that folder read-only and set MODEL_PATH to the folder that holds the shards (docs/DOCKER.md, \"Files you already have\"), or put them in /data/PolyStrata-data/models/<model folder>/. To download anyway: set ALLOW_DOWNLOAD=1. Nothing was downloaded."
   if [ "${ALLOW_DOWNLOAD:-0}" = "1" ]; then warn "$msg Going on, because ALLOW_DOWNLOAD=1."; else die "$msg" 2; fi
 }
 
@@ -70,7 +70,7 @@ if [ "$#" -gt 0 ] && [ "$1" != "run" ] && [ "$1" != "serve" ]; then
   case "$1" in strata) shift; exec "$STRATA" "$@" ;; *) exec "$@" ;; esac
 fi
 
-mkdir -p /data/state /data/home /data/install /data/Strata-data /run 2>/dev/null || die "/data is not writable. Mount a volume there: -v strata-data:/data"
+mkdir -p /data/state /data/home /data/install /data/PolyStrata-data /run 2>/dev/null || die "/data is not writable. Mount a volume there: -v strata-data:/data"
 if ! grep -q " /data " /proc/self/mountinfo 2>/dev/null; then
   warn "/data is not a volume, so the model and your settings are lost when this container is removed. Add: -v strata-data:/data"
 fi
@@ -83,7 +83,7 @@ fi
 limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo max)
 case "$limit" in max|"") ;; *[!0-9]*) ;; *)
   gb=$((limit / 1073741824))
-  warn "This container has a memory limit of ${gb} GB. Strata plans from the host's RAM (/proc/meminfo) and loads tens of GB, so a low limit can end in the container being killed. Raise or remove the limit."
+  warn "This container has a memory limit of ${gb} GB. PolyStrata plans from the host's RAM (/proc/meminfo) and loads tens of GB, so a low limit can end in the container being killed. Raise or remove the limit."
 esac
 if [ -n "${API_KEY:-}" ] && [ "${#API_KEY}" -lt 16 ]; then
   warn "API_KEY is short (${#API_KEY} characters). Use 16 or more; 'openssl rand -hex 24' makes a good one."
@@ -94,24 +94,24 @@ for legacy in HOST LOW_RAM REINSTALL RESIDENT_BUDGET_GIB KV_STREAMING LAYER_SPLI
 done
 
 # ---- a volume from the older (0.1.x) image: its models, packs and draft layer are in /data/models, /data/packs and /data/mtp.
-# This image keeps them in /data/Strata-data. Move them over (a rename inside one volume: instant, no copy, no download).
+# This image keeps them in /data/PolyStrata-data. Move them over (a rename inside one volume: instant, no copy, no download).
 # A folder that is its own mount (a bind mount of yours) is never touched.
 legacy_moved=""
 for d in models packs mtp; do
   [ -d "/data/$d" ] || continue
   grep -q " /data/$d " /proc/self/mountinfo 2>/dev/null && continue
   [ -n "$(ls -A "/data/$d" 2>/dev/null)" ] || continue
-  mkdir -p "/data/Strata-data/$d" 2>/dev/null || continue
+  mkdir -p "/data/PolyStrata-data/$d" 2>/dev/null || continue
   for item in "/data/$d"/* "/data/$d"/.[!.]*; do
     [ -e "$item" ] || continue
     name=${item##*/}
-    [ -e "/data/Strata-data/$d/$name" ] && continue
-    if mv "$item" "/data/Strata-data/$d/$name" 2>/dev/null; then legacy_moved="$legacy_moved $d/$name"
-    else warn "Could not move $item into /data/Strata-data/$d (the model is downloaded again unless you set MODEL_PATH=/data/$d/...)."; fi
+    [ -e "/data/PolyStrata-data/$d/$name" ] && continue
+    if mv "$item" "/data/PolyStrata-data/$d/$name" 2>/dev/null; then legacy_moved="$legacy_moved $d/$name"
+    else warn "Could not move $item into /data/PolyStrata-data/$d (the model is downloaded again unless you set MODEL_PATH=/data/$d/...)."; fi
   done
   rmdir "/data/$d" 2>/dev/null || true
 done
-[ -n "$legacy_moved" ] && say "Found model files from the older image in the volume and moved them into /data/Strata-data (no copy, nothing is downloaded again):$legacy_moved"
+[ -n "$legacy_moved" ] && say "Found model files from the older image in the volume and moved them into /data/PolyStrata-data (no copy, nothing is downloaded again):$legacy_moved"
 
 # ---- run settings made by an image for another card or another engine version name that image's engine folder
 # (/opt/strata/components/engine/<package>/...): in this image that folder is not there, so the server would stop at the start. Drop
@@ -178,7 +178,7 @@ if [ -z "$key" ] && [ -n "${API_KEY_FILE:-}" ]; then
 fi
 
 # ---- settings -> `strata launch` flags
-set -- launch --no-tui --access lan --port "$PORT" --data-dir /data/Strata-data
+set -- launch --no-tui --access lan --port "$PORT" --data-dir /data/PolyStrata-data
 have=""
 
 preset_exists=""
@@ -259,7 +259,7 @@ if [ -n "$preset_exists" ]; then
 elif [ -n "$have" ]; then
   set -- "$@" --save-preset "$PRESET"
 else
-  warn "No MODEL was set, so Strata picks the model it recommends for this card. Set MODEL (for example MODEL=IQ3_XXS) to choose."
+  warn "No MODEL was set, so PolyStrata picks the model it recommends for this card. Set MODEL (for example MODEL=IQ3_XXS) to choose."
   set -- "$@" --save-preset "$PRESET"
 fi
 
@@ -288,7 +288,7 @@ phase preparing
 if [ -n "${MODEL:-}" ]; then what="$MODEL${model_path:+ from $model_path}"
 elif [ -n "$model_path" ]; then what="the model files in $model_path"
 else what="the recommended model"; fi
-say "Starting Strata: $what (preset '$PRESET')."
+say "Starting PolyStrata: $what (preset '$PRESET')."
 if [ -n "$key" ]; then
   STRATA_LAUNCH_KEY="$key" "$PYBIN" -c "$RESET_INT" "$STRATA" "$@" &
 else
@@ -308,7 +308,7 @@ fi
 ( umask 077; "$STRATA" launch --show-key --preset "$PRESET" > "$KEY_FILE" 2>/dev/null ) || true
 [ -s "$KEY_FILE" ] || rm -f "$KEY_FILE"
 if [ -z "$key" ]; then
-  warn "No API_KEY was set, so Strata made one (the server listens on all addresses in the container and will not run without a key)."
+  warn "No API_KEY was set, so PolyStrata made one (the server listens on all addresses in the container and will not run without a key)."
   warn "Show it with: docker exec <container> strata launch --show-key --preset $PRESET   Set your own with -e API_KEY=..."
 fi
 phase serving

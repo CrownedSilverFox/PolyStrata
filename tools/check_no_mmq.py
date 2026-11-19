@@ -12,7 +12,7 @@ A look whose tool is there but does not run to the end (missing file, a crash, t
 reads no device function) is printed as NOT RUN with the reason; it is never left out of the line in silence.
 Exit 0 when nothing is found, 1 with the hits listed (at most 20 per look), 2 on a usage error, 3 when nothing is found but a look whose tool
 was named on the command line (--nm, --cuobjdump) did not run: that file was not fully checked.
-Strata's own prompt helpers keep the namespace strata::prefill::mmq (gather_native, swiglu, iota, ...): that name is not a marker."""
+PolyStrata's own prompt helpers keep the namespace strata::prefill::mmq (gather_native, swiglu, iota, ...): that name is not a marker."""
 import argparse
 import os
 import re
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 # llama.cpp's MMQ: the kernels and their templates (mul_mat_q, mul_mat_q_stream_k_fixup, load_tiles_*, vec_dot_*_mma / _dp4a), the q8_1
-# quantizers (quantize_mmq_q8_1, quantize_scatter_mmq_q8_1), ggml-cuda's host side (ggml_cuda_*, ggml_backend_cuda_context) and Strata's MMQ
+# quantizers (quantize_mmq_q8_1, quantize_scatter_mmq_q8_1), ggml-cuda's host side (ggml_cuda_*, ggml_backend_cuda_context) and PolyStrata's MMQ
 # glue (ggml_cuda_host.cu's error text, the K-quant library's file name)
 RAW = [b"mul_mat_q", b"quantize_mmq_q8_1", b"quantize_scatter_mmq", b"ggml_cuda_", b"ggml_backend_cuda", b"ggml-cuda (strata mmq)",
        b"libstrata_kq", b"strata_kq.dll", b"load_tiles_", b"mmq_get_"]

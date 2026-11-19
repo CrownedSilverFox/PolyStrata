@@ -8,7 +8,7 @@ What it covers (standard library only, no network):
   * the manifest against the code: app/Terminal version (terminal/strata_cli/__init__.py, app/host and app/desktop package
     files, Cargo.toml) and Control/engine version (the CMake project version);
   * the three installer file names in the manifest's asset list;
-  * every installer file name (Strata-<version>-windows-x64-setup.exe, ...-linux-x86_64.AppImage, ...-macos-arm64.dmg)
+  * every installer file name (PolyStrata-<version>-windows-x64-setup.exe, ...-linux-x86_64.AppImage, ...-macos-arm64.dmg)
     in a current page: the version must be the manifest's, and the file must be in the release's asset list;
   * the version lines of the pages listed in LINES below.
 Release notes, measurement logs and docs/history/ keep the versions they were written with; tools/doc_pages.py says which
@@ -26,9 +26,9 @@ import doc_pages  # noqa: E402
 ROOT = doc_pages.ROOT
 MANIFEST = os.path.join(ROOT, "docs", "data", "release.json")
 
-INSTALLER_NAMES = ("Strata-{v}-windows-x64-setup.exe", "Strata-{v}-linux-x86_64.AppImage", "Strata-{v}-macos-arm64.dmg")
+INSTALLER_NAMES = ("PolyStrata-{v}-windows-x64-setup.exe", "PolyStrata-{v}-linux-x86_64.AppImage", "PolyStrata-{v}-macos-arm64.dmg")
 # Any installer-looking file name in a current page.  Group 1 is the version.
-INSTALLER_RE = re.compile(r"Strata-(\d+\.\d+(?:\.\d+)*)-(?:windows-x64-setup\.exe|linux-x86_64\.AppImage|macos-arm64\.dmg)")
+INSTALLER_RE = re.compile(r"PolyStrata-(\d+\.\d+(?:\.\d+)*)-(?:windows-x64-setup\.exe|linux-x86_64\.AppImage|macos-arm64\.dmg)")
 
 V = r"(\d+\.\d+(?:\.\d+)*)"
 # (page, regex, manifest keys): the regex has one group per key, each holding a version.  A rule that matches nothing is
@@ -36,8 +36,8 @@ V = r"(\d+\.\d+(?:\.\d+)*)"
 LINES = [
     ("docs/README.md", r"This documentation is for version " + V + r"\.", ["product_version"]),
     ("docs/INSTALL.md", r"\(version " + V + r"\)", ["product_version"]),
-    ("docs/AI_SETUP.md", r"install Strata \(version " + V + r"\)", ["product_version"]),
-    ("docs/SOURCE_INSTALL.md", r"use Strata \(version " + V + r"\)", ["product_version"]),
+    ("docs/AI_SETUP.md", r"install PolyStrata \(version " + V + r"\)", ["product_version"]),
+    ("docs/SOURCE_INSTALL.md", r"use PolyStrata \(version " + V + r"\)", ["product_version"]),
     ("AGENTS.md", r"^Version " + V + r", engine " + V + r"\.", ["product_version", "engine_version"]),
     ("docs/AI_REFERENCE.md", r"against the " + V + r" release tree \(app and Terminal " + V + r"; Control " + V + r", engines " + V + r"\)",
      ["product_version", "product_version", "control_version", "engine_version"]),
@@ -49,7 +49,7 @@ LINES = [
     ("tools/packaging/UPDATES.md", r"VERSION file\s*\n\s*# \(" + V + r"\)", ["control_version"]),
     ("tools/packaging/UPDATES.md", r'"version": "' + V + r'", "platform": "linux-x86_64", "backend": "cuda"', ["engine_version"]),
     ("tools/packaging/UPDATES.md", r"engine/strata-engine-" + V + r"-linux-x86_64-cuda-cuda13", ["engine_version"]),
-    ("docs/MEDIA_KIT.md", r"for Strata " + V + r"\.", ["product_version"]),
+    ("docs/MEDIA_KIT.md", r"for PolyStrata " + V + r"\.", ["product_version"]),
     ("tools/packaging/README.md", r"\(app and Terminal " + V + r", Control " + V + r", engines " + V + r"\)", ["product_version", "control_version", "engine_version"]),
     ("tools/packaging/ENGINE-COMPONENT.md", r'"name": "strata-engine", "version": "' + V + '"', ["engine_version"]),
     ("tools/packaging/ENGINE-COMPONENT.md", r"package_engine.py --src <build folder> --backend cuda --version " + V, ["engine_version"]),
