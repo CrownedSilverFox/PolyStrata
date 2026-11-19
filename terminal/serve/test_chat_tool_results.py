@@ -29,6 +29,17 @@ def normalized(messages):
     return openai_to_messages({"messages": messages})[0]
 
 
+def without_ids(messages):
+    """PolyStrata keeps a call's "id" and its answer's "tool_call_id" in the messages: GLM's template sorts a run of answers by
+    them and Gemma 4's names an answer's tool by them.  The Qwen template reads neither.  The same messages without them."""
+    out = copy.deepcopy(messages)
+    for m in out:
+        m.pop("tool_call_id", None)
+        for c in m.get("tool_calls") or []:
+            c.pop("id", None)
+    return out
+
+
 def rendered(messages):
     return TEMPLATE.render(normalized(messages), enable_thinking=False)
 
@@ -41,7 +52,7 @@ class ChatToolResults(unittest.TestCase):
         self.assertEqual(rendered(raw), rendered(ordered))
         self.assertLess(rendered(raw).index("RESULT_FROM_A"), rendered(raw).index("RESULT_FROM_B"))
         self.assertEqual(raw, before)
-        messages = normalized(raw)
+        messages = without_ids(normalized(raw))    # (the ids PolyStrata keeps for GLM's and Gemma 4's templates; nothing else)
         self.assertEqual([m["content"] for m in messages[2:]], ["RESULT_FROM_A", "RESULT_FROM_B"])
         self.assertTrue(all(set(m) == {"role", "content"} for m in messages[2:]))
         self.assertTrue(all(set(c) == {"function"} for c in messages[1]["tool_calls"]))
@@ -54,7 +65,7 @@ class ChatToolResults(unittest.TestCase):
             call.pop("id")
         for result in legacy[2:]:
             result.pop("tool_call_id")
-        self.assertEqual(normalized(ordered), normalized(legacy))
+        self.assertEqual(without_ids(normalized(ordered)), normalized(legacy))
         self.assertEqual(rendered(ordered), rendered(legacy))
 
     def test_ambiguous_or_incomplete_ids_preserve_received_order(self):

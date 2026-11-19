@@ -27,7 +27,7 @@ EDITABLE = [
     ("reasoning_budget_tokens", "int>=0", "Cap the thinking of every request at this many tokens (0 or empty: no cap)"),
     ("fit_max_tokens", "bool", "Shorten a max_tokens that does not fit the context (on by default); off: answer 400 like llama.cpp"),
     ("drop_oldest", "bool", "Leave out a conversation's oldest turns when it no longer fits the context, instead of "
-                            "answering 400 (the system prompt and the last turn stay)"),
+                            "answering 400 (the system prompt and last turn stay)"),
     ("truncate_middle", "bool", "Trim the middle of an oversized text prompt, keeping its beginning and ending"),
     ("preserve_thinking", "bool", "Keep the thinking of earlier turns in the prompt (templates that support it: "
                                   "Qwen3.6, Ornith, Tiel Coder)"),

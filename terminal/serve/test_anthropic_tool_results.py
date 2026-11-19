@@ -35,6 +35,17 @@ def normalized(messages):
     return anthropic_to_messages({"messages": messages})[0]
 
 
+def without_ids(messages):
+    """PolyStrata keeps a call's "id" and its answer's "tool_call_id" in the messages: GLM's template sorts a run of answers by
+    them and Gemma 4's names an answer's tool by them.  The Qwen template reads neither.  The same messages without them."""
+    out = copy.deepcopy(messages)
+    for m in out:
+        m.pop("tool_call_id", None)
+        for c in m.get("tool_calls") or []:
+            c.pop("id", None)
+    return out
+
+
 def results(messages):
     return [m["content"] for m in normalized(messages) if m["role"] == "tool"]
 
@@ -58,12 +69,13 @@ class AnthropicToolResults(unittest.TestCase):
             block.pop("id")
         for block in legacy[2]["content"]:
             block.pop("tool_use_id")
-        self.assertEqual(normalized(ordered), normalized(legacy))
+        self.assertEqual(without_ids(normalized(ordered)), normalized(legacy))
         self.assertEqual([m["content"] for m in normalized(ordered)[2:]], ["RESULT_FROM_SLOW", "RESULT_FROM_FAST"])
 
     def test_ids_never_reach_the_template(self):
         for raw in (history(), in_call_order()):
             messages = normalized(raw)
+            messages = without_ids(messages)       # (the ids PolyStrata keeps for GLM's and Gemma 4's templates; nothing else)
             self.assertTrue(all(set(m) == {"role", "content"} for m in messages[2:]))
             self.assertTrue(all(set(c) == {"function"} for c in messages[1]["tool_calls"]))
 

@@ -6410,8 +6410,8 @@ class SilentEngine(unittest.TestCase):
             fake.getrlimit.return_value = (-1, -1)               # unlimited: the old RAM hint stays
             self.assertIn("running out of RAM", engine.death_note())
             fake.getrlimit.return_value = (0, 0)
-            engine.proc.poll.return_value = -11                  # another signal: not this cause
-            self.assertIn("running out of RAM", engine.death_note())
+            engine.proc.poll.return_value = -11                  # another signal: not this cause, and not RAM (PolyStrata names the signal)
+            self.assertIn("was ended by SIGSEGV", engine.death_note())
 
     def test_prompt_chunks_set_the_wait(self):
         # a PP line every second, at 100 tok/s: far over a 0.3 s silence, but each chunk is on time for its size

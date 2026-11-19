@@ -28,6 +28,7 @@ SKIP = ("engine/src/", "engine/include/", "engine/tests/", "engine/cmake/", "eng
         "docs/FAQ.md")
 KINDS = (".md", ".py", ".html", ".js", ".css", ".bat", ".sh", ".yml", ".yaml")
 NAMES = ("Dockerfile",)
+CATALOGS = "terminal/serve/web/locales/"                # the web page's text in each language (.json)
 KEEP = "|".join((
     r"\[Strata\]\(https://github\.com/Niko1221/Strata", # a Markdown link to it
     r"Niko1221/Strata\">Strata",                        # an HTML link to it
@@ -54,7 +55,7 @@ def rename(text: str) -> str:
 def files() -> list:
     out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
     return [f for f in out.splitlines()
-            if not f.startswith(SKIP) and (f.endswith(KINDS) or f in NAMES)]
+            if not f.startswith(SKIP) and (f.endswith(KINDS) or f in NAMES or f.startswith(CATALOGS))]
 
 
 def main() -> int:

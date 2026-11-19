@@ -1765,7 +1765,7 @@ class Telemetry:
         else:
             s["cpu"] = self.fallback.cpu()
             s["ram_used"], s["ram_total"] = self.fallback.ram()
-        if self.quota:
+        if getattr(self, "quota", False):                # (a Telemetry made without __init__, as a test does, has none)
             s["cpu"] = self.cgroup.cpu()
         if self.cgroup.mem and s.get("ram_total") and self.cgroup.mem < s["ram_total"]:
             used = self.cgroup.ram_used()

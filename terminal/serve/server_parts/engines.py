@@ -621,6 +621,8 @@ def vision_start_error(line: str, log=None, code: int | None = None, waited: flo
     shown = [x for x in lines[-3:] if x != text]
     if shown:
         extra.append("last lines of its log: " + " | ".join(x[:200] for x in shown))
+        if isinstance(getattr(log, "name", None), str):       # (PolyStrata, issue 162: where the rest of it is)
+            extra.append("the log is " + log.name)
     if extra:
         msg += " (" + "; ".join(extra) + ")"
     return msg

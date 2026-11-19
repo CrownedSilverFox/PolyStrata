@@ -40,12 +40,12 @@ class Busy(unittest.TestCase):
         try:
             with open(name, "a") as log:
                 m = server.vision_start_error("", log)
-            self.assertIn("ended before it was ready", m)
+            self.assertIn("ended without saying anything", m)
             self.assertIn("libcudart.so.12", m)
             self.assertIn(name, m)
         finally:
             Path(name).unlink()
-        self.assertIn("wrote nothing", server.vision_start_error(""))
+        self.assertIn("ended without saying anything", server.vision_start_error(""))
 
     def test_other_failures_are_unchanged(self):
         self.assertEqual(server.vision_start_error("ERR no mmproj\n"), "the vision encoder did not start: ERR no mmproj")

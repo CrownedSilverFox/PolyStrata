@@ -1104,8 +1104,16 @@ class StrataEngine:
                     "with the log.")
         proc = self.proc                                 # None while a restart has not started the next one yet
         rc = proc.poll() if proc is not None else None
-        # Linux ends a program short of RAM with SIGKILL; any other signal is a crash or another program's doing
-        if rc is not None and rc < 0 and -rc != getattr(signal, "SIGKILL", 9):
+        card = next((x.strip() for x in reversed(tail.splitlines())
+                     if re.search(r"out of memory", x, re.I) and re.search(r"cuda|hip|vram|gpu|graphics", x, re.I)), "")
+        if card and rc != -9:                             # #5078: the engine aborted on a card that was full: not a RAM story, and no dmesg to read
+            return ("The engine stopped because the graphics card ran out of memory (its log says: " + card[:200] + "). Close other programs "
+                    "that use the graphics card and try again. If it keeps happening, keep more graphics memory free: "
+                    "strata launch --set vram-reserve-mib=2048.")
+        # Linux ends a program short of RAM with SIGKILL, and the C++ runtime aborts on a failed allocation (std::bad_alloc);
+        # any other signal is a crash or another program's doing
+        ram_abort = rc == -6 and "bad_alloc" in tail      # (-6: SIGABRT where a signal ends a program, i.e. not on Windows)
+        if rc is not None and rc < 0 and -rc != getattr(signal, "SIGKILL", 9) and not ram_abort:
             try:
                 sig = signal.Signals(-rc).name
             except ValueError:
@@ -1120,12 +1128,6 @@ class StrataEngine:
         if rc is not None and rc >= 0 and last:          # it ended by itself: its own last words say why (#215)
             return (f"The engine exited (code {rc}). Its last log line: {last} - if that does not explain it, please "
                     "report it at github.com/Niko1221/Strata/issues with the log.")
-        card = next((x.strip() for x in reversed(tail.splitlines())
-                     if re.search(r"out of memory", x, re.I) and re.search(r"cuda|hip|vram|gpu|graphics", x, re.I)), "")
-        if card and rc != -9:                             # #5078: the engine aborted on a card that was full: not a RAM story, and no dmesg to read
-            return ("The engine stopped because the graphics card ran out of memory (its log says: " + card[:200] + "). Close other programs "
-                    "that use the graphics card and try again. If it keeps happening, keep more graphics memory free: "
-                    "strata launch --set vram-reserve-mib=2048.")
         rt_note = rttime_limit_note() if rc == -9 else ""
         if rt_note:                                       # #3238: the kernel killed it, but not for RAM
             return ("The engine was ended by signal 9. " + rt_note + " If dmesg (sudo dmesg | grep -i -E 'killed "
@@ -4131,6 +4133,8 @@ class Service:
             special = getattr(tokenizer, "special_ids", None) or {}
             self.stop_ids = {special[k] for k in ("tokenizer.ggml.eos_token_id", "tokenizer.ggml.eot_token_id",
                                                   "tokenizer.ggml.eom_token_id") if k in special}
+            if not self.stop_ids and special.get("eos") is not None:   # a tokenizer folder that names its end token "eos"
+                self.stop_ids = {int(special["eos"])}                  # (the Strata project's packs; server_parts/end_tokens.py)
         # these are exactly the engine's default --eos-ids (a ChatML model's <|im_end|> and <|endoftext|>, else the
         # GGUF's eos, eot and eom): what it ends a slot's reply on.  The model-specific stops added below are not.
         if self.stop_ids:
@@ -5684,9 +5688,7 @@ class Service:
                 return fetched[src] if src in fetched else Vision.download(src) \
                     if src.startswith(("http://", "https://")) else src
             images = [fetch(src) for src in images]
-        if images:
-            pad = self.tok.encode(IMAGE_PAD, parse_special=True)[0]
-            start = self.tok.encode(VISION_START, parse_special=True)[0]
+        if images:                                      # (pad and start are the model's own marks, from image_marks above)
             # Encode only while the engine is idle: the engine and the image encoder (a separate process) must not
             # run on the GPU at the same time - an encode during a running request left that request stuck at
             # "reading the prompt" with CPU and GPU busy, for good (reproduced).  So encoding takes its turn in the
