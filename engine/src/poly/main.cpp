@@ -873,9 +873,9 @@ int serve(Session& ss) {
     };
     // A token for every slot that writes: BT <slot> <token> each, and BDONE <slot> <produced> <finish> <ms> for a
     // slot that ends with it.  False when the engine failed, which leaves it in no known state.
-    Sampler slot_sampler;
-    std::vector<int> seqs, kept;
-    std::vector<int32_t> feed, guess;
+    std::vector<Sampler> samplers(slots.size());
+    std::vector<int> seqs, kept, row_of;
+    std::vector<int32_t> feed, guess, picked;
     std::vector<size_t> which;
     const auto step = [&] {
         seqs.clear();
@@ -909,9 +909,37 @@ int serve(Session& ss) {
             return false;
         }
         kept.assign(which.size(), 1);
+        row_of.resize(which.size());
+        picked.resize(2 * which.size());
         for (size_t i = 0, row = 0; i < which.size(); ++i) {
+            slots[which[i]].held.push_back(feed[i]);
+            row_of[i] = (int) row;
+            row += guessing && guess[i] >= 0 ? 2 : 1;
+        }
+        // whether a slot's answer ends with t, its next token
+        const auto ends = [&](const Slot& sl, int32_t t) {
+            return ss.is_eos(t) || sl.stop || sl.produced + 1 >= sl.max_new ||
+                   (long long) sl.held.size() + 2 > engine.max_context();
+        };
+        // A slot's picks are its own (its sampler, history and generator), and a pick reads the whole vocabulary:
+        // the CPU's threads take a slot each, where one thread took 1.1 ms of a 16-slot step.  A guess that is what
+        // was picked has been through the model already, so the token after it is picked too, unless the answer ends
+        // with the first; the token an answer ends with is shown and never fed, as without guesses.
+        engine.on_threads((int) which.size(), [&](int i) {
+            Slot& sl = slots[which[(size_t) i]];
+            Sampler& sp = samplers[which[(size_t) i]];
+            const int32_t t = (int32_t) sp.pick(engine.logits_of(row_of[(size_t) i]), engine.n_vocab(), sl.s, sl.held,
+                                                sl.rng);
+            picked[2 * (size_t) i] = t;
+            picked[2 * (size_t) i + 1] = -1;
+            if (!guessing || guess[(size_t) i] != t || ends(sl, t)) return;
+            sl.held.push_back(t);
+            picked[2 * (size_t) i + 1] =
+                (int32_t) sp.pick(engine.logits_of(row_of[(size_t) i] + 1), engine.n_vocab(), sl.s, sl.held, sl.rng);
+            sl.held.pop_back();
+        });
+        for (size_t i = 0; i < which.size(); ++i) {
             Slot& sl = slots[which[i]];
-            sl.held.push_back(feed[i]);
             // a token for the slot: false when its answer ends with it
             const auto emit = [&](int32_t t) {
                 ++sl.produced;
@@ -924,18 +952,14 @@ int serve(Session& ss) {
                 }
                 return fin == nullptr;
             };
-            const bool guessed = guessing && guess[i] >= 0;
-            int32_t t = (int32_t) slot_sampler.pick(engine.logits_of((int) row), engine.n_vocab(), sl.s, sl.held, sl.rng);
-            // a guess that is what was picked has been through the model already, so the token after it is picked
-            // too; the token an answer ends with is shown and never fed, as without guesses
-            if (emit(t) && guessed && t == guess[i]) {
+            int32_t t = picked[2 * i];
+            if (emit(t) && picked[2 * i + 1] >= 0) {
                 sl.held.push_back(t);
                 kept[i] = 2;
-                t = (int32_t) slot_sampler.pick(engine.logits_of((int) row + 1), engine.n_vocab(), sl.s, sl.held, sl.rng);
+                t = picked[2 * i + 1];
                 emit(t);
             }
             sl.next = t;
-            row += guessed ? 2 : 1;
         }
         if (guessing) {
             try {

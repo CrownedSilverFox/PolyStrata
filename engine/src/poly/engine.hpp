@@ -236,6 +236,11 @@ public:
     int n_embd() const { return n_embd_; }
     int max_context() const { return opt_.max_context; }
     int threads() const { return workers_ ? workers_->threads() : 0; }
+    /// fn(0..n-1) on the CPU threads, returning when all are done (Workers::run()); fn must not throw.
+    void on_threads(int n, const std::function<void(int)>& fn) {
+        if (workers_) workers_->run(n, fn);
+        else for (int i = 0; i < n; ++i) fn(i);
+    }
     /// The NUMA node the CPU threads were kept on, and the share of the experts' pages it holds; -1: no node chosen.
     int numa_node() const { return node_; }
     double numa_share() const { return node_share_; }
