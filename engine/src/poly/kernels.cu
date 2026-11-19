@@ -2246,18 +2246,36 @@ __global__ void softcap_kernel(float* x, size_t n, float cap) {
 }
 
 // One block of 1024; a thread has every 1024th value.
+// One block reads a vocabulary's scores twice.  Four values a load and four loads in flight a thread: with a load
+// at a time each thread waited out the memory's latency 128 times a pass, 62 us for Qwen3.6's 131,072 guesses.
 __global__ void likeliest_kernel(const float* __restrict__ x, int n, Likeliest* __restrict__ out) {
     __shared__ float part[32];
     __shared__ int first[32];
+    const int n4 = ((uintptr_t) x & 15) == 0 ? n / 4 : 0;   // the rest one at a time
+    const float4* __restrict__ x4 = (const float4*) x;
     float m = -INFINITY;
-    for (int i = threadIdx.x; i < n; i += blockDim.x) m = fmaxf(m, x[i]);
+#pragma unroll 4
+    for (int i = threadIdx.x; i < n4; i += blockDim.x) {
+        const float4 v = x4[i];
+        m = fmaxf(m, fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w)));
+    }
+    for (int i = 4 * n4 + threadIdx.x; i < n; i += blockDim.x) m = fmaxf(m, x[i]);
     m = block_max(m, part);
     int at = n;
     float sum = 0.0f;
-    for (int i = threadIdx.x; i < n; i += blockDim.x) {
-        if (x[i] == m) at = min(at, i);
-        if (x[i] > m - 20.0f) sum += expf(x[i] - m);
+    const auto one = [&](float v, int i) {
+        if (v == m) at = min(at, i);
+        if (v > m - 20.0f) sum += expf(v - m);
+    };
+#pragma unroll 4
+    for (int i = threadIdx.x; i < n4; i += blockDim.x) {
+        const float4 v = x4[i];
+        one(v.x, 4 * i);
+        one(v.y, 4 * i + 1);
+        one(v.z, 4 * i + 2);
+        one(v.w, 4 * i + 3);
     }
+    for (int i = 4 * n4 + threadIdx.x; i < n; i += blockDim.x) one(x[i], i);
 #pragma unroll
     for (int o = WARP / 2; o > 0; o >>= 1) at = min(at, __shfl_xor_sync(0xffffffff, at, o, WARP));
     if ((threadIdx.x & 31) == 0) first[threadIdx.x >> 5] = at;
