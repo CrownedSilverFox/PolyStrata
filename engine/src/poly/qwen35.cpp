@@ -730,10 +730,18 @@ void Qwen35::attn_rows(Block& B, int n) {
 }
 
 // A layer from its input to its router's copy.  A prompt batch's MoE (moe_rows) does its own routing.
+// A norm and its quantization are one launch, and so are the residual's sum and the next norm
+// (native_add_rms_norm_q8_1(), the same bytes as the launches it stands for: poly_norm_q8_test).  Metal keeps them
+// apart.
 void Qwen35::layer_head(Layer& L, int il, int n) {
     Block& B = blocks_[(size_t) il];
+#if defined(STRATA_GPU_METAL)
     rms_norm(r_, fp(L.attn_norm), xn_, n_embd_, n, rms_eps_, st_);
     kernels::native_quantize_q8_1(xn_, xq_, n_embd_ * n, 1, st_);
+#else
+    const int threads = sum_threads(n_embd_);
+    kernels::native_add_rms_norm_q8_1(r_, nullptr, fp(L.attn_norm), xn_, xq_, n_embd_, n, rms_eps_, threads, st_);
+#endif
     dbg("attn_in", il, xn_, n_embd_);
     if (block_pass_) {
         if (B.gdn) gdn_block_pass(B, n);
@@ -744,10 +752,13 @@ void Qwen35::layer_head(Layer& L, int il, int n) {
         attn(B, pos_, n);
     }
     dbg("attn", il, ao_, n_embd_);
+#if defined(STRATA_GPU_METAL)
     axpy(ao_, 1.f, r_, n * n_embd_, true, st_);
-
     rms_norm(r_, fp(L.ffn_norm), xn_, n_embd_, n, rms_eps_, st_);
     kernels::native_quantize_q8_1(xn_, xq_, n_embd_ * n, 1, st_);
+#else
+    kernels::native_add_rms_norm_q8_1(r_, ao_, fp(L.ffn_norm), xn_, xq_, n_embd_, n, rms_eps_, threads, st_);
+#endif
     dbg("ffn_in", il, xn_, n_embd_);
     if (!batched(L, n)) moe_router(L, n);
 }
