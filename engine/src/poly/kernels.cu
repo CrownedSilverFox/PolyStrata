@@ -960,6 +960,15 @@ __global__ void copy2_kernel(const uint32_t* __restrict__ x0, uint32_t* __restri
     else if (i < n0 + n1) y1[i - n0] = x1[i - n0];
 }
 
+__global__ void copy3_kernel(const uint32_t* __restrict__ x0, uint32_t* __restrict__ y0, int n0,
+                             const uint32_t* __restrict__ x1, uint32_t* __restrict__ y1, int n1,
+                             const uint32_t* __restrict__ x2, uint32_t* __restrict__ y2, int n2) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n0) y0[i] = x0[i];
+    else if (i < n0 + n1) y1[i - n0] = x1[i - n0];
+    else if (i < n0 + n1 + n2) y2[i - n0 - n1] = x2[i - n0 - n1];
+}
+
 // The sums may be one and the same, so a thread adds its value of each vector in turn.
 __global__ void add_scaled_kernel(ScaledRows rows, int count, int n) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -3135,6 +3144,15 @@ void copy2(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, v
                                                              (const uint32_t*) x1, (uint32_t*) y1, n1);
     if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
         throw std::runtime_error(std::string("copy2: ") + cudaGetErrorString(e));
+}
+
+void copy3(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, const void* x2, void* y2, int n2,
+           void* stream) {
+    copy3_kernel<<<grid(n0 + n1 + n2, 256), 256, 0, cs(stream)>>>((const uint32_t*) x0, (uint32_t*) y0, n0,
+                                                                  (const uint32_t*) x1, (uint32_t*) y1, n1,
+                                                                  (const uint32_t*) x2, (uint32_t*) y2, n2);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("copy3: ") + cudaGetErrorString(e));
 }
 
 void add_scaled(const ScaledRows& rows, int count, int n, void* stream) {

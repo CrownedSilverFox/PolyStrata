@@ -189,6 +189,7 @@ struct Stats {
     int64_t tokens = 0, gpu_experts = 0, cpu_experts = 0, batch_cached = 0, batch_staged = 0;
     int64_t swapped_experts = 0;   ///< experts that took a cached one's slot (follow())
     int64_t tail_experts = 0;      ///< a token's experts left out by Options::tail_skip
+    int64_t ahead_sent = 0, ahead_used = 0;   ///< experts uploaded ahead of their layer (vram_ahead()), and run so
     double cpu_ms = 0, route_wait_ms = 0;
 };
 
@@ -603,6 +604,8 @@ protected:
     void mirror_give(int il, int e);          ///< the expert is on the card: its slot is a spare again
     void mirror_keep(int il, int e, const uint8_t* vram);   ///< the expert leaves the card: its slot copied back
     GatherPiece* gather_slot();
+    void vram_ahead(int j, int n, size_t part);
+    const uint8_t* ahead_of(int il, int e, unsigned& read);
     void mind_memory();
     void follow(int written);
     void follow_loop();
@@ -703,6 +706,22 @@ protected:
     void* gather_ev_[8] = {};                       ///< per list: marks the card's read of it
     int gather_at_ = 0;
     std::vector<int> stage_rest_;                   ///< stage()'s experts the mirror lacks: their places
+    // While an answer is written the staging buffer is idle.  vram_ahead() uploads the next MoE layer's guessed
+    // experts that the card lacks into it from the mirror, a group of slots a call, while the CPU computes this
+    // layer's; that layer's call runs on the card the ones that have arrived (ahead_of()).
+    struct Ahead {
+        static constexpr int kSlots = 16;
+        int il = -1;           ///< the layer the group's experts are of; -1: none
+        int n = 0;
+        bool here = false;     ///< their uploads have arrived
+        int32_t e[kSlots];
+        void* up = nullptr;    ///< marks their uploads, on up_
+        void* read = nullptr;  ///< marks the launches of the last call that read them, on st_
+    };
+    static constexpr int kAheadGroups = 6, kAheadGuesses = 4;
+    Ahead ahead_[kAheadGroups + 1];   ///< and last, the misses a call uploads for itself (moe())
+    int ahead_turn_ = 0, ahead_slots_ = 0;
+    size_t ahead_stride_ = 0;
     std::atomic<bool> map_quit_{false};
     /// Options::lock_experts: the experts whose pages are locked (layer * n_expert + expert), first by mapper_, then
     /// by relock() between requests once mapper_ is done (locks_ready_)

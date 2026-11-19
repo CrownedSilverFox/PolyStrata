@@ -216,6 +216,9 @@ void axpy(const float* x, float a, float* acc, int n, bool add, void* stream);
 /// and write too, and a kernel's copy to or from it has none of the wait that a copy engine's has on Windows,
 /// some 25 microseconds between it and the launches beside it.
 void copy2(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, void* stream);
+/// copy2() with a third run.  CUDA and HIP only.
+void copy3(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, const void* x2, void* y2, int n2,
+           void* stream);
 /// A piece of a gather: `bytes` from src to dst, each 16-byte aligned, as is bytes.  32 bytes, so that the kernel
 /// reads a piece in whole 16-byte loads.
 struct GatherPiece {

@@ -727,6 +727,9 @@ Engine::~Engine() {
         if (e) cudaEventDestroy((cudaEvent_t) e);
     for (void* e : ev_row_)
         if (e) cudaEventDestroy((cudaEvent_t) e);
+    for (const Ahead& g : ahead_)
+        for (void* e : {g.up, g.read})
+            if (e) cudaEventDestroy((cudaEvent_t) e);
     for (int j = 0; j < n_swap_; ++j)
         if (swap_[(size_t) j].done) cudaEventDestroy(swap_[(size_t) j].done);
     for (void* g : graphs_) cudaGraphExecDestroy((cudaGraphExec_t) g);
@@ -3015,8 +3018,10 @@ void Engine::load(const Options& o) {
         // the next layer's top 8: the best of 0, 8, 12 and 16, and of 8 with the layer after's top 8 as well
         prefetch_k_ = 8;
         const size_t part = 16 * (size_t) n_expert_;   // a part's rows: up to 16
-        ahead_dev_ = (float*) dmalloc(8 * part * sizeof(float), "scratch");
-        h_ahead_ = (float*) hmalloc(8 * part * sizeof(float), "pinned memory");
+        if (!ahead_dev_) {
+            ahead_dev_ = (float*) dmalloc(8 * part * sizeof(float), "scratch");
+            h_ahead_ = (float*) hmalloc(8 * part * sizeof(float), "pinned memory");
+        }
     }
     const std::vector<uint8_t> keep = ram_keep();
     if (opt_.ram_experts_mib >= 0) {
@@ -3262,6 +3267,11 @@ void Engine::alloc() {
         std::vector<int32_t> ramp(rr);
         std::iota(ramp.begin(), ramp.end(), 0);
         ck(cudaMemcpy(iota_, ramp.data(), rr * sizeof(int32_t), cudaMemcpyHostToDevice), "scratch");
+        // the next MoE layer's router on a layer's input (moe_router()), for vram_ahead() or pool_ahead(): here, so
+        // that the expert cache is sized without it
+        const size_t part = 16 * (size_t) n_expert_;
+        ahead_dev_ = (float*) dmalloc(8 * part * sizeof(float), "scratch");
+        h_ahead_ = (float*) hmalloc(8 * part * sizeof(float), "pinned memory");
 
         // One layer's experts pass through it at a time, so it never holds more than a layer has.  A model of
         // small experts has a few hundred MiB a layer, and the rest of the default would be VRAM that the
@@ -3597,6 +3607,8 @@ const Stats& Engine::stats() const {
         all_stats_.batch_staged += s.batch_staged;
         all_stats_.swapped_experts += s.swapped_experts;
         all_stats_.tail_experts += s.tail_experts;
+        all_stats_.ahead_sent += s.ahead_sent;
+        all_stats_.ahead_used += s.ahead_used;
         all_stats_.cpu_ms += s.cpu_ms;
         all_stats_.route_wait_ms += s.route_wait_ms;
     }
@@ -3738,17 +3750,26 @@ int Engine::card_rows() const {
 // The router's scores, and the copies of them and of the experts' input to the host.
 void Engine::moe_router(const Layer& L, int n) {
     router_scores(L, n);
-    copy2(rl_, h_rl_, n * n_expert_, xn_, h_x_, n * n_embd_, st_);
-    if (prefetch_k_ <= 0 || block_pass_ || n > 16) return;
+    const size_t ne = (size_t) n_expert_;
+    int j = (int) (&L - layers_.data()) + 1;   // the next MoE layer, whose router on this layer's input guesses ahead
+    while (j < n_layer_ && !layers_[(size_t) j].moe) ++j;
     size_t part = 0;
     for (size_t q = 0; q < 8; ++q)
         if (ev_ == ev_row_[q]) part = q;
-    const size_t ne = (size_t) n_expert_;
-    // the next MoE layer's router on this layer's input, for pool_ahead()
-    int j = (int) (&L - layers_.data()) + 1;
-    while (j < n_layer_ && !layers_[(size_t) j].moe) ++j;
-    if (j >= n_layer_) return;
-    float* d = ahead_dev_ + part * 16 * ne;
+    const bool ahead = prefetch_k_ > 0 && !block_pass_ && n <= 16 && j < n_layer_;
+#if !defined(STRATA_GPU_METAL)
+    // vram_ahead(): its scores go to the host in the router's copy, a kernel's as the router's own: a copy engine's
+    // copy on st_ waits for the launches around it
+    if (ahead && ahead_slots_ > 0) {
+        float* d = ahead_dev_ + part * 16 * ne;
+        lin(layers_[(size_t) j].gate_inp, xn_, d, n, xq_);
+        copy3(rl_, h_rl_, n * n_expert_, xn_, h_x_, n * n_embd_, d, h_ahead_ + part * 16 * ne, n * n_expert_, st_);
+        return;
+    }
+#endif
+    copy2(rl_, h_rl_, n * n_expert_, xn_, h_x_, n * n_embd_, st_);
+    if (!ahead) return;
+    float* d = ahead_dev_ + part * 16 * ne;   // pool_ahead()
     lin(layers_[(size_t) j].gate_inp, xn_, d, n, xq_);
     ck(cudaMemcpyAsync(h_ahead_ + part * 16 * ne, d, (size_t) n * ne * sizeof(float), cudaMemcpyDeviceToHost, cs(st_)),
        "read ahead");
@@ -3794,6 +3815,86 @@ void Engine::pool_ahead(int j, int n, size_t part, int k) {
             pool_tick_[v] = pool_now_ + 4;
             pool_queue(L, e, (int32_t) v, false);
         }
+}
+
+// Layer j's likeliest experts that the card lacks, kAheadGuesses of each of n tokens, every token's best guess
+// first, up from the mirror into the next group of the staging buffer's slots while the CPU computes this layer's
+// experts (moe()'s launch).  The group's last reader is done before they land (its `read`).  A guess another group
+// already has for j is not sent twice.
+//
+// The guesses are the next layer's router on this layer's input (moe_router()).  Qwen3.6 UD-Q3_K_M on lab-pro6000
+// GPU2 held to 6 GB (--vram-pool): of the experts a call uploaded, 1.05 to 1.1 uses each with 4 guesses a token;
+// with 6 the card took 84% of the experts in place of 81%, but more uploads were late and the answer slower; with
+// 8 a third of them went unused.
+void Engine::vram_ahead(int j, int n, size_t part) {
+    const Layer& L = layers_[(size_t) j];
+    const size_t ne = (size_t) n_expert_;
+    constexpr int k = kAheadGuesses;
+    n = std::min(n, 16);
+    const int me = ahead_turn_;
+    Ahead& g = ahead_[me];
+    g.il = -1;
+    g.n = 0;
+    int32_t top[16][k];
+    int m[16];
+    for (int r = 0; r < n; ++r) {   // the k best in one pass, as pool_ahead()
+        const float* s = h_ahead_ + part * 16 * ne + (size_t) r * ne;
+        int32_t* t = top[r];
+        float best[k];
+        m[r] = 0;
+        for (int e = 0; e < (int) ne; ++e) {
+            if (m[r] == k && s[e] <= best[k - 1]) continue;
+            int at = m[r] < k ? m[r]++ : k - 1;
+            for (; at > 0 && best[at - 1] < s[e]; --at) best[at] = best[at - 1], t[at] = t[at - 1];
+            best[at] = s[e];
+            t[at] = e;
+        }
+    }
+    const auto sent = [&](int32_t e) {
+        for (int h = 0; h < kAheadGroups; ++h) {
+            const Ahead& o = ahead_[h];
+            if (o.il == j && std::find(o.e, o.e + o.n, e) != o.e + o.n) return true;
+        }
+        return false;
+    };
+    for (int q = 0; q < k && g.n < ahead_slots_; ++q)
+        for (int r = 0; r < n && g.n < ahead_slots_; ++r) {
+            if (q >= m[r]) continue;
+            const int32_t e = top[r][q];
+            if (L.slot[(size_t) e] || !mirror(j, e) || std::find(g.e, g.e + g.n, e) != g.e + g.n || sent(e)) continue;
+            g.e[g.n++] = e;
+        }
+    if (g.n == 0) return;
+    ahead_turn_ = (ahead_turn_ + 1) % kAheadGroups;
+    staged_il_ = -1;   // the staging buffer holds other experts now
+    ck(cudaStreamWaitEvent(cs(up_), (cudaEvent_t) g.read, 0), "upload ahead");
+    uint8_t* at = stage_ + (size_t) me * ahead_slots_ * ahead_stride_;
+    for (int i = 0; i < g.n; ++i, at += ahead_stride_)
+        ck(cudaMemcpyAsync(at, mirror(j, g.e[i]), L.gu2() + L.d_bytes, cudaMemcpyHostToDevice, cs(up_)), "upload ahead");
+    ck(cudaEventRecord((cudaEvent_t) g.up, cs(up_)), "upload ahead");
+    g.here = false;
+    g.il = j;
+    stats_.ahead_sent += g.n;
+}
+
+// Expert e of layer il in a group vram_ahead() uploaded, once it has arrived, or null.  `read` gets the group's bit:
+// moe() marks the group's last reader after its launches.
+const uint8_t* Engine::ahead_of(int il, int e, unsigned& read) {
+    for (int h = 0; h < kAheadGroups; ++h) {
+        Ahead& g = ahead_[h];
+        if (g.il != il) continue;
+        const int32_t* p = std::find(g.e, g.e + g.n, e);
+        if (p == g.e + g.n) continue;
+        if (!g.here) {
+            const cudaError_t q = cudaEventQuery((cudaEvent_t) g.up);
+            if (q == cudaErrorNotReady) return nullptr;
+            ck(q, "upload ahead");
+            g.here = true;
+        }
+        read |= 1u << h;
+        return stage_ + ((size_t) h * ahead_slots_ + (size_t) (p - g.e)) * ahead_stride_;
+    }
+    return nullptr;
 }
 
 int Engine::first_moe_layer() const {
@@ -4161,14 +4262,18 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         rekeep();
         pool_reseed();
     }
+    int ahead_j = -1;   // vram_ahead()'s layer: launch() sends its guesses
+    size_t ahead_part = 0;
     if (prefetch_k_ > 0 && !block_pass_ && n <= 16) {   // as moe_router() asked for it
         size_t part = 0;
         for (size_t q = 0; q < 8; ++q)
             if (ev_ == ev_row_[q]) part = q;
         int j = il + 1;
         while (j < n_layer_ && !layers_[(size_t) j].moe) ++j;
-        if (j < n_layer_) pool_ahead(j, n, part, prefetch_k_);
+        if (j < n_layer_ && pool_) pool_ahead(j, n, part, prefetch_k_);
+        else if (j < n_layer_ && ahead_slots_ > 0) ahead_j = j, ahead_part = part;
     }
+    unsigned read = 0;   // the groups of vram_ahead() this call reads
 
     const float limit = clamp_exp_[(size_t) il];
     const size_t xq_row = kernels::native_q8_1_bytes(n_embd_);
@@ -4219,6 +4324,11 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                     cached[n_cached++] = {s, we, at + t, (int) e};
                     continue;
                 }
+                if (const uint8_t* s = ahead_slots_ > 0 ? ahead_of(il, (int) e, read) : nullptr) {
+                    cached[n_cached++] = {s, we, at + t, (int) e};
+                    ++stats_.ahead_used;
+                    continue;
+                }
                 host_e[n_host] = (int32_t) e;
                 host_k[n_host] = k;
                 const float gs = L.h_s_gate.empty() ? 1.f : L.h_s_gate[e], us = L.h_s_up.empty() ? 1.f : L.h_s_up[e];
@@ -4234,24 +4344,63 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         // Options::skip_weight in place of the places: one whose weight is under that share of its token's experts'
         // weight, for every token here.  It keeps an expert the router weighs high at any place, and leaves out one it
         // weighs low at any place, so for the same change of the answers it leaves out more (docs/BACKENDS.md).
+        int32_t kept_e[kCpuRows * kMaxUsed];   // host_e of the ones kept
         if (opt_.skip_weight > 0.f) {
             int kept = 0;
             for (int i = 0; i < n_host; ++i) {
                 bool low = true;
                 for (int j = 0; j < n_host && low; ++j) low = host_e[j] != host_e[i] || host_rel[j] < opt_.skip_weight;
                 if (low) ++stats_.tail_experts;
-                else host[kept++] = host[i];
+                else kept_e[kept] = host_e[i], host[kept++] = host[i];
             }
             n_host = kept;
+            std::copy(kept_e, kept_e + kept, host_e);
         } else if (opt_.tail_skip > 0) {
             int kept = 0;
             for (int i = 0; i < n_host; ++i) {
                 bool low = true;
                 for (int j = 0; j < n_host && low; ++j) low = host_e[j] != host_e[i] || host_k[j] >= opt_.tail_skip;
                 if (low) ++stats_.tail_experts;
-                else host[kept++] = host[i];
+                else kept_e[kept] = host_e[i], host[kept++] = host[i];
             }
             n_host = kept;
+            std::copy(kept_e, kept_e + kept, host_e);
+        }
+        // The miss the most tokens here chose goes up from the mirror now, ahead of the card's experts, and the card
+        // computes it in the CPU's place: the CPU's share of a call costs it most where it is one expert more, and
+        // the card waits for one upload less than the CPU takes for it.  At 6 GB (vram_ahead()) 85% of the experts
+        // went to the card in place of 81%, 182-189 tokens/s in place of 175-187; two or three a call left the card
+        // waiting for their uploads, and were slower than none.
+        int own = -1;   // that expert, which launch() uploads; -1: none
+        if (ahead_slots_ > 0 && n_host > 0 && at == 0) {
+            int best = 0, most = 0;
+            for (int i = 0; i < n_host; ++i) {
+                if (host[i].gate != mirror(il, host_e[i])) continue;
+                int uses = 0;
+                for (int q = 0; q < n_host; ++q) uses += host_e[q] == host_e[i];
+                if (uses > most) best = host_e[i], most = uses;
+            }
+            if (most > 0) {
+                Ahead& g = ahead_[kAheadGroups];
+                uint8_t* slot = stage_ + (size_t) kAheadGroups * ahead_slots_ * ahead_stride_;
+                g.il = il;
+                g.n = 1;
+                g.e[0] = best;
+                own = best;
+                read |= 1u << kAheadGroups;
+                ++stats_.ahead_sent;
+                int kept = 0;
+                for (int i = 0; i < n_host; ++i) {
+                    if (host_e[i] == best) {
+                        cached[n_cached++] = {slot, host[i].weight, at + host[i].row, best};
+                        ++stats_.ahead_used;
+                    } else {
+                        host[kept] = host[i];
+                        host_e[kept++] = host_e[i];
+                    }
+                }
+                n_host = kept;
+            }
         }
         if (pool_) pool_take(L, il, host, n_host);
         stats_.gpu_experts += n_cached;
@@ -4265,6 +4414,15 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         const std::function<void()> launch = [&] {
             if (split_) cudaSetDevice(device_);   // one of the experts' threads, which every card's engine shares
             if (first && at == 0) (*first)();
+            if (own >= 0) {   // the miss this call took for the card, up before its experts run
+                const Ahead& g = ahead_[kAheadGroups];
+                ck(cudaStreamWaitEvent(cs(up_), (cudaEvent_t) g.read, 0), "upload ahead");
+                ck(cudaMemcpyAsync(stage_ + (size_t) kAheadGroups * ahead_slots_ * ahead_stride_, mirror(il, own),
+                                   L.gu2() + L.d_bytes, cudaMemcpyHostToDevice, cs(up_)),
+                   "upload ahead");
+                ck(cudaEventRecord((cudaEvent_t) g.up, cs(up_)), "upload ahead");
+                ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) g.up, 0), "upload ahead");
+            }
             const size_t ff = (size_t) n_ff_exp_, q8_row = kernels::native_q8_1_bytes(n_ff_exp_);
             // the scratch holds rows_ experts' values, and a launch's down rows stay inside one add_scaled's kSumRows
             const int most = kernels::native_mmvq_slots_wide() ? kSlots : 8;
@@ -4318,6 +4476,8 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
             if (opt_.metal_optimize && n_host > 0)
                 ck(gpu::metal::submit(static_cast<gpu::Stream>(st_)), "submitting cached experts");
 #endif
+            // the next layer's guesses, up while the CPU computes this layer's experts
+            if (ahead_j >= 0 && at == 0) vram_ahead(ahead_j, n, ahead_part);
         };
 
         // The next layer's router wait is what makes h_cpu_ free to write again.
@@ -4329,7 +4489,8 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         }
         any_host = true;
         t0 = Clock::now();
-        const std::function<void()>* meanwhile = n_cached > 0 || (first && at == 0) ? &launch : nullptr;
+        const std::function<void()>* meanwhile =
+            n_cached > 0 || (first && at == 0) || (ahead_j >= 0 && at == 0) ? &launch : nullptr;
         // The experts still being read (missed now, or read ahead and not there yet) are computed last, by
         // cpu_experts(), and the others meanwhile: read before them, a call's reads held its whole CPU part up.
         uint8_t late[kCpuRows * kMaxUsed];
@@ -4366,6 +4527,8 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         pool_reads_.clear();
         stats_.cpu_ms += ms_since(t0);
     }
+    for (int h = 0; read; ++h, read >>= 1)
+        if (read & 1u) ck(cudaEventRecord((cudaEvent_t) ahead_[h].read, cs(st_)), "upload ahead");
     return any_host;
 }
 
@@ -4435,6 +4598,11 @@ bool Engine::moe_card(Layer& L, int il, int n) {
 // stagers_ fill them, while the workers compute experts.
 void Engine::stage(const Layer& L, const int32_t* experts, int m, void* stream, bool alone) {
     staged_il_ = -1;   // whatever the buffer held
+    for (Ahead& g : ahead_) {   // vram_ahead()'s groups go, once the calls that read them are done
+        if (g.il < 0) continue;
+        ck(cudaStreamWaitEvent(cs(stream), (cudaEvent_t) g.read, 0), "expert staging");
+        g.il = -1;
+    }
     const size_t step = L.gu_step, down_at = pad((size_t) m * step);
 #if !defined(STRATA_GPU_METAL)
     if (!mirror_of_.empty()) {
@@ -4697,6 +4865,23 @@ void Engine::build_mirror() {
     mirror_spare_ = std::move(spare);
     std::fprintf(stderr, "strata-poly: the %zu experts outside VRAM in %.1f GiB of pinned memory in %.1f s\n", n,
                  (double) total / (1 << 30), ms_since(t0) / 1000.0);
+
+    // vram_ahead(): one sequence's answer (step() mixes the staging buffer with other sequences' prompt reads).
+    // STRATA_POLY_AHEAD=0 turns it off.
+    const char* ahead = std::getenv("STRATA_POLY_AHEAD");
+    ahead_stride_ = (slot_max_ + 4095) / 4096 * 4096;
+    ahead_slots_ = std::min<int>(Ahead::kSlots, (int) (stage_narrow_ / ahead_stride_ / (kAheadGroups + 1)));
+    if ((ahead && ahead[0] == '0') || opt_.batch > 0 || !up_ || !ahead_dev_ || ahead_slots_ < 4) {
+        ahead_slots_ = 0;
+        return;
+    }
+    for (Ahead& g : ahead_)
+        for (void** e : {&g.up, &g.read}) {
+            cudaEvent_t ev = nullptr;
+            ck(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming), "cudaEventCreate");
+            *e = ev;
+        }
+    prefetch_k_ = kAheadGuesses;   // moe_router() scores the next layer's router
 #endif
 }
 
@@ -6013,7 +6198,12 @@ void Engine::window(const int32_t* tokens, int t) {
     const bool recorded = std::exchange(recorded_, false);
     // Under a freeze the way is the measured times', not the request's: a frozen answer's sums are the ones its
     // first token's way gives, whichever way that was.
-    if (timed && !freeze_experts_) halves_ = pick_way(t);
+    //
+    // With the next layer's experts uploaded ahead (vram_ahead()) the tokens go together: halves overlap the CPU's
+    // experts with the card's layer, and there is little of the CPU's left to overlap, while each half reads the
+    // layer's weights again and guesses ahead for fewer tokens.  At 6 GB the tokens together wrote 181 tokens/s
+    // where the timed choice wrote 172 (12 GB: 275 and 252), four runs each.
+    if (timed && !freeze_experts_) halves_ = ahead_slots_ == 0 && pick_way(t);
     const Clock::time_point t0 = Clock::now();
     windowed_ = true;
     snap_bits_ = snap_tokens(t);
