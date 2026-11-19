@@ -15,7 +15,7 @@
 #include "strata/poly/kernels.hpp"
 #include "strata/kernels/native_mmvq.hpp"
 
-#include "ggml.h"
+#include "gguf_types.hpp"
 
 #include <cuda_runtime.h>
 
@@ -41,7 +41,7 @@ void ck(cudaError_t e) {
 // rows x n_in weights in the GGUF's blocks, as floats
 std::vector<float> dequant(uint32_t type, const uint8_t* w, int n_in, int rows) {
     std::vector<float> out((size_t) rows * n_in);
-    ggml_get_type_traits((ggml_type) type)->to_float(w, out.data(), (int64_t) rows * n_in);
+    poly::type_to_floats(type, w, out.data(), (int64_t) rows * n_in);
     return out;
 }
 
@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
                                        g.find(b + "ffn_down_exps.scale")};
             const uint32_t sc_type[3] = {tg.type, tu.type, td.type};
             for (int k = 0; k < 3; ++k)
-                if (sc_type[k] != GGML_TYPE_NVFP4) sc[k] = nullptr;
+                if (sc_type[k] != poly::kTypeNVFP4) sc[k] = nullptr;
             const bool scaled = sc[0] || sc[1] || sc[2];
             float* d_s = nullptr;   // this expert's gate and up scales, ExpertScales' table for it
             if (scaled) ck(cudaMalloc(&d_s, 2 * sizeof(float)));
@@ -252,7 +252,7 @@ int main(int argc, char** argv) {
             std::vector<double> want;
             std::vector<float> wr((size_t) n_in);
             for (int r : rows) {
-                ggml_get_type_traits((ggml_type) t->type)->to_float(w + (size_t) r * row_bytes, wr.data(), n_in);
+                poly::type_to_floats(t->type, w + (size_t) r * row_bytes, wr.data(), n_in);
                 for (int b = 0; b < kBatch; ++b) {
                     double acc = 0.0;
                     for (int i = 0; i < n_in; ++i) acc += (double) wr[(size_t) i] * xb[(size_t) b * n_in + i];

@@ -34,9 +34,11 @@ inline bool type_converts(uint32_t type) {
     return t != nullptr && strata::quant::can_dequant(t->type);
 }
 
-/// n values (whole blocks) at src as floats.  The caller has asked type_converts().
+/// n values (whole blocks) at src as floats: a type type_converts() takes, or F32 itself.
 inline void type_to_floats(uint32_t type, const void* src, float* dst, int64_t n) {
-    if (type == kTypeF16) {
+    if (type == 0) {
+        std::memcpy(dst, src, (size_t) n * sizeof(float));
+    } else if (type == kTypeF16) {
         const uint16_t* h = (const uint16_t*) src;
         for (int64_t i = 0; i < n; ++i) dst[i] = strata::quant::fp16_to_fp32(h[i]);
     } else if (type == 30) {   // BF16: a float's upper half

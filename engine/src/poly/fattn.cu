@@ -4,8 +4,12 @@
 // (fattn_mma.cuh, change 2).
 #include "fattn.hpp"
 
-#if !defined(GGML_USE_HIP)
+#if !defined(GGML_USE_HIP) && !defined(STRATA_POLY_OWN)
 #include "fattn_mma.cuh"
+#elif !defined(GGML_USE_HIP)   // STRATA_POLY_OWN: the decode kernels below are this project's own and need no more than these
+#include <cuda_fp16.h>
+#include <cuda_runtime.h>
+#define WARP_SIZE 32
 #endif
 
 #include <algorithm>
@@ -28,6 +32,7 @@ struct Setup {
 
 int grid(long long n, int per) { return (int) ((n + per - 1) / per); }
 
+#if !defined(STRATA_POLY_OWN)
 // The launch's shape and shared memory as ggml_cuda_flash_attn_ext_mma_f16_case() works them out, for the
 // current card.  Ampere or later: on Turing the kernel has no 64-column tile.
 template <int Group>
@@ -110,12 +115,15 @@ Layout layout(int n, int dim, int n_head, int kv_heads, int nbatch_fa, size_t sc
     if (rows >= (long long) n + nbatch_fa) L.rows = rows;
     return L;
 }
+#endif   // !STRATA_POLY_OWN
+
 
 void ck(const char* what) {
     const cudaError_t e = cudaGetLastError();
     if (e != cudaSuccess) throw std::runtime_error(std::string("fattn: ") + what + ": " + cudaGetErrorString(e));
 }
 
+#if !defined(STRATA_POLY_OWN)   // the prompt batch's side: llama.cpp's kernel and what is launched around it
 // rows [row, row + valid) of a q8_0 cache (or an fp16 one, f16) as fp16, and zeros on to `blockIdx.y`'s last row:
 // the kernel reads whole steps of keys, and the causal mask removes the zero rows' weights, but a NaN would get
 // through it
@@ -222,6 +230,8 @@ bool run(const float* q, Kvq8 kq8, Kvq8 vq8, const half* keys, const half* vals,
     ck("merge");
     return true;
 }
+
+#endif   // !STRATA_POLY_OWN
 
 // ---- decode (fdec_q8): a few tokens over the whole cache, split by keys, on the tensor cores ----
 
@@ -543,6 +553,7 @@ size_t fdec_floats(int rows, int kv_heads) { return (size_t) grid(rows, kSplit) 
 
 }  // namespace
 
+#if !defined(STRATA_POLY_OWN)
 bool fattn_fits(int dim, int n_head, int kv_heads, int rows, size_t scratch_floats) {
     if (dim != kD || kv_heads <= 0 || rows <= 0) return false;
     if (n_head == 8 * kv_heads) {
@@ -576,10 +587,30 @@ bool fattn_f16(const float* q, const uint16_t* keys, const uint16_t* vals, int64
                          kv_heads, scale, scratch, scratch_floats, stream));
 }
 
+#else   // STRATA_POLY_OWN: no llama.cpp kernel in this build; a prompt batch's attention is attend_batch()'s
+
+bool fattn_fits(int, int, int, int, size_t) { return false; }
+
+bool fattn_q8(const float*, Kvq8, Kvq8, int64_t, int, float*, int, int, int, float, float*, size_t, void*) { return false; }
+
+bool fattn_f16(const float*, const uint16_t*, const uint16_t*, int64_t, int, float*, int, int, int, float, float*, size_t,
+               void*) {
+    return false;
+}
+
+#endif
+
 bool fdec_fits(int dim, int n_head, int kv_heads, int rows, size_t scratch_floats) {
     if (dim != kD || kv_heads <= 0 || (n_head != 8 * kv_heads && n_head != 16 * kv_heads) || rows <= 0) return false;
+#if !defined(STRATA_POLY_OWN)
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     return GGML_CUDA_CC_IS_NVIDIA(cc) && ampere_mma_available(cc) && fdec_floats(rows, kv_heads) <= scratch_floats;
+#else   // Ampere or later, which is what llama.cpp's ampere_mma_available() asks
+    int dev = 0, major = 0;
+    return cudaGetDevice(&dev) == cudaSuccess &&
+           cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess && major >= 8 &&
+           fdec_floats(rows, kv_heads) <= scratch_floats;
+#endif
 }
 
 namespace {

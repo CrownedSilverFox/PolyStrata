@@ -3,11 +3,11 @@
 # strata_poly() after Strata's own targets exist; it uses their libraries (strata_kernels, strata_spec, the GPU
 # runtime and BLAS targets).
 #
-# strata-poly still multiplies a prompt's quantized matrices with llama.cpp's MMQ kernels (ggml-cuda) and takes
-# other tensor arithmetic from ggml-base.  Its CPU experts' rows are Strata's quant layer (strata_quant), no longer
-# ggml-cpu.  The tree vendored in third_party/strata-ggml has no ggml-cuda since Strata 0.2.16, so strata-poly is
-# built only from a llama.cpp checkout: -DSTRATA_GGML_DIR=<checkout>.  CMakeLists.txt sets STRATA_BUILD_POLY from
-# that before it decides whether ggml is configured at all.
+# strata-poly needs no ggml and no llama.cpp: a prompt's quantized products are Strata's own grouped kernel
+# (src/poly/mmq_own.cu), the CPU experts' rows its quant layer (strata_quant).  -DSTRATA_POLY_MMQ=ON builds the
+# products llama.cpp's way instead (its MMQ kernels, its flash-attention kernel and the GDN adapter that needs its
+# headers), from a llama.cpp checkout given as -DSTRATA_GGML_DIR: the tree vendored in third_party/strata-ggml has no
+# ggml-cuda.  That is the default only on HIP, where the own kernel does not exist yet and a checkout is there.
 
 macro(strata_poly)
 if(STRATA_BUILD_TESTS)
@@ -60,7 +60,7 @@ endif()
 # Shared prepared-input GDN recurrence. Either engine may link this library;
 # only the Poly Qwen35 adapter is integrated initially. Keep FP32/BF16 hi+lo math
 # separate from the MMQ targets' -use_fast_math compilation options.
-if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND STRATA_ENABLE_CUDA)
+if(STRATA_BUILD_POLY AND STRATA_POLY_MMQ AND STRATA_NATIVE_EXPERTS AND STRATA_ENABLE_CUDA)
   set(_strata_gdn_ggml ${_strata_ggml_root}/ggml)
   add_library(strata_gdn_mma STATIC src/kernels/cuda/gdn_mma.cu)
   target_include_directories(strata_gdn_mma PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -79,10 +79,11 @@ endif()
 
 # ---- strata-poly: GLM 5.3 Flash (llama.cpp's glm5-next), read from its GGUF ----
 #
-# A second engine beside `strata`.  It shares the quantized matvec kernels and the GGUF reader, and takes the
-# CPU experts' dot products from ggml-cpu.  On HIP it is the same CUDA-shaped code through the hip_compat headers
-# (the wave32 RDNA backend; gfx906's wave64 compat layer is not supported here).
+# A second engine beside `strata`.  It shares the quantized matvec kernels, the grouped prompt kernel, the quant
+# layer and the GGUF reader.  On HIP it is the same CUDA-shaped code through the hip_compat headers (the wave32
+# RDNA backend; gfx906's wave64 compat layer is not supported here).
 if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT STRATA_HIP_GFX906)
+  if(STRATA_POLY_MMQ)
   # The prompt path's quantized products: llama.cpp's MMQ kernels (ggml-cuda, MIT) for the types the model's
   # GGUFs keep their matrices in (the list in src/poly/mmq.cu), from the checkout strata_mmq is compiled from and
   # with the same host symbols.  A library of its own, so that what `strata` multiplies with MMQ stays as it is.
@@ -155,7 +156,18 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
     target_link_libraries(strata_poly_mmq PUBLIC ggml-base ${_strata_gpu_runtime_target})
   endif()
 
-  if(STRATA_ENABLE_CUDA)
+  else()
+    # Strata's own kernels (mmq_own.cu); fattn.cu keeps its decode kernels and leaves llama.cpp's prompt kernel out
+    add_library(strata_poly_mmq STATIC src/poly/mmq_own.cu src/poly/fattn.cu)
+    target_include_directories(strata_poly_mmq PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})
+    target_compile_definitions(strata_poly_mmq PRIVATE STRATA_POLY_OWN=1)
+    target_link_libraries(strata_poly_mmq PUBLIC strata_kernels ${_strata_gpu_runtime_target})
+    if(STRATA_ENABLE_HIP)
+      target_compile_definitions(strata_poly_mmq PRIVATE GGML_USE_HIP=1)   # fattn.cu: no kernel of either kind on HIP
+    endif()
+  endif()
+
+  if(STRATA_ENABLE_CUDA AND STRATA_POLY_MMQ)
     target_compile_definitions(strata_poly_mmq PUBLIC STRATA_POLY_GDN_MMA=1)
     target_link_libraries(strata_poly_mmq PUBLIC strata_gdn_mma)
 
@@ -170,7 +182,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
                    src/poly/flint.cpp src/poly/kolibri1.cpp src/poly/cpu_experts.cpp src/poly/kernels.cu
                    src/poly/kernels_dsv4.cu src/core/conversation_memory.cpp)
     target_include_directories(poly_gdn_mma_state_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})
-    target_link_libraries(poly_gdn_mma_state_test PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant ggml-base
+    target_link_libraries(poly_gdn_mma_state_test PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant
                          ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target} CUDA::cuda_driver Threads::Threads)
   endif()
 
@@ -186,7 +198,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   else()
     set(_strata_poly_driver CUDA::cuda_driver)
   endif()
-  target_link_libraries(strata-poly PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant ggml-base
+  target_link_libraries(strata-poly PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant
                                            ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target}
                                            ${_strata_poly_driver}
                                            Threads::Threads)
@@ -194,7 +206,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   add_executable(poly_expert_parity src/poly/expert_parity.cpp src/poly/cpu_experts.cpp src/poly/kernels.cu)
   target_include_directories(poly_expert_parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                        ${_strata_gpu_include_directories})
-  target_link_libraries(poly_expert_parity PRIVATE strata_poly_mmq strata_kernels strata_quant ggml-base
+  target_link_libraries(poly_expert_parity PRIVATE strata_poly_mmq strata_kernels strata_quant
                                                   ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target}
                                                   Threads::Threads)
   # a read with the draft block repeats bit for bit; needs the model file, so it is run by hand:
@@ -206,7 +218,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
                                       src/core/conversation_memory.cpp)
   target_include_directories(poly_draft_race_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                          ${_strata_gpu_include_directories})
-  target_link_libraries(poly_draft_race_test PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant ggml-base
+  target_link_libraries(poly_draft_race_test PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant
                                                     ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target}
                                                     ${_strata_poly_driver} Threads::Threads)
   # a prompt batch's routing on the card against the hosts' routing; needs a card, so it is run by hand
@@ -259,10 +271,12 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   set_tests_properties(poly_hip_prefill_fp32_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   # fattn_q8() and fattn_f16() (llama.cpp's flash-attention kernel) against attend_batch(), and with `dec` fdec_q8()
   # against attend(); needs a card, run by hand
-  add_executable(poly_fattn_test src/poly/fattn_test.cu src/poly/kernels.cu)
-  target_include_directories(poly_fattn_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/poly
-                                                    ${_strata_gpu_include_directories})
-  target_link_libraries(poly_fattn_test PRIVATE strata_poly_mmq ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+  if(STRATA_POLY_MMQ)
+    add_executable(poly_fattn_test src/poly/fattn_test.cu src/poly/kernels.cu)
+    target_include_directories(poly_fattn_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/poly
+                                                      ${_strata_gpu_include_directories})
+    target_link_libraries(poly_fattn_test PRIVATE strata_poly_mmq ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+  endif()
   # STRATA_POLY_STAGED_TILES: the staged experts in size classes, each a launch of its own tile width, against one
   # launch, bit for bit; needs a card
   add_executable(poly_mmq_tiles_test src/poly/mmq_tiles_test.cu)
@@ -286,10 +300,12 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_link_libraries(poly_workers_test PRIVATE strata_quant Threads::Threads)
   add_test(NAME poly_workers_test COMMAND poly_workers_test)
   # the card's MXFP4 product against ggml's dequantizer on random blocks, without a model; needs a card, run by hand
-  add_executable(poly_mxfp4_test src/poly/mxfp4_test.cu)
-  target_include_directories(poly_mxfp4_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gg}/include
-                                                    ${_strata_gpu_include_directories})
-  target_link_libraries(poly_mxfp4_test PRIVATE strata_kernels ggml-base ${_strata_gpu_runtime_target})
+  if(TARGET ggml-base)
+    add_executable(poly_mxfp4_test src/poly/mxfp4_test.cu)
+    target_include_directories(poly_mxfp4_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_ggml_root}/ggml/include
+                                                      ${_strata_gpu_include_directories})
+    target_link_libraries(poly_mxfp4_test PRIVATE strata_kernels ggml-base ${_strata_gpu_runtime_target})
+  endif()
   # the Q8_0 KV cache kernels (store_q8 / store_q8_at) against a host reference (GPU, synthetic, no model)
   if(STRATA_BUILD_TESTS)
     add_executable(poly_kv_q8_test src/poly/kv_q8_test.cpp src/poly/kernels.cu)
@@ -302,10 +318,10 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   # --kv int8/int8k's kernels (store_int8 / attend_int8) against ggml's own quantizer and against attend() over the
   # same numbers in fp16.  The reference is ggml-cpu's quantize_row_q8_0_ref, hence the ggml links; under HIP the
   # mma tier's probes are behind STRATA_USE_HIP (the dp4a tier is what runs there anyway).
-  if(STRATA_BUILD_TESTS)
+  if(STRATA_BUILD_TESTS AND TARGET ggml-cpu)
     add_executable(poly_kv_int8_test src/poly/kv_int8_test.cpp src/poly/kernels.cu)
     target_include_directories(poly_kv_int8_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
-                                                      ${_strata_gpu_include_directories} ${_strata_gg}/include)
+                                                      ${_strata_gpu_include_directories} ${_strata_ggml_root}/ggml/include)
     target_link_libraries(poly_kv_int8_test PRIVATE ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target}
                                                   ggml-cpu ggml-base Threads::Threads)
     add_test(NAME poly_kv_int8_test COMMAND poly_kv_int8_test)

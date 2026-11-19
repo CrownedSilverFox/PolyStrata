@@ -584,17 +584,24 @@ strata_cpu_kernels()
 # third_party/strata-ggml (frozen at the llama.cpp commit in third_party/ggml/VERSION.txt, see its UPSTREAM.md): no download.
 # -DSTRATA_GGML_DIR=<llama.cpp checkout> still builds from that checkout instead (an override kept for two releases).
 strata_ggml_resolve("${CMAKE_CURRENT_SOURCE_DIR}")
-# strata-poly (cmake/strata_poly.cmake) needs llama.cpp's ggml-cuda, which only a checkout given as -DSTRATA_GGML_DIR has
-set(_strata_poly_default OFF)
-if(EXISTS "${_strata_ggml_root}/ggml/src/ggml-cuda/mmq.cuh")
-  set(_strata_poly_default ON)
+# strata-poly (cmake/strata_poly.cmake).  Its prompt products are Strata's own kernels; llama.cpp's MMQ in their place
+# needs ggml-cuda, which only a checkout given as -DSTRATA_GGML_DIR has.  On HIP, where the own kernel does not exist
+# yet, MMQ is the default when such a checkout is there.
+option(STRATA_BUILD_POLY "Build strata-poly" ON)
+set(_strata_poly_mmq_default OFF)
+if(STRATA_ENABLE_HIP AND EXISTS "${_strata_ggml_root}/ggml/src/ggml-cuda/mmq.cuh")
+  set(_strata_poly_mmq_default ON)
 endif()
-option(STRATA_BUILD_POLY "Build strata-poly (needs -DSTRATA_GGML_DIR=<llama.cpp checkout>)" ${_strata_poly_default})
+option(STRATA_POLY_MMQ "strata-poly: llama.cpp's MMQ prompt kernels instead of Strata's own (needs -DSTRATA_GGML_DIR=<llama.cpp checkout>)"
+       ${_strata_poly_mmq_default})
+if(STRATA_POLY_MMQ AND NOT EXISTS "${_strata_ggml_root}/ggml/src/ggml-cuda/mmq.cuh")
+  message(FATAL_ERROR "STRATA_POLY_MMQ needs llama.cpp's ggml-cuda: give a checkout with -DSTRATA_GGML_DIR (looked in ${_strata_ggml_root})")
+endif()
 if(STRATA_NATIVE_EXPERTS)
   enable_language(C)
   # ggml-base / ggml-cpu only where something links them: the tests (ggml as the oracle) and the ggml-cpu pool (STRATA_OWN_CPU_QUANT=OFF).
   # A release engine (tests off, Strata's own pool) configures, builds and links no ggml; the ggml tools below exist only with it.
-  if(STRATA_BUILD_TESTS OR NOT STRATA_OWN_CPU_QUANT OR STRATA_BUILD_POLY)
+  if(STRATA_BUILD_TESTS OR NOT STRATA_OWN_CPU_QUANT OR STRATA_POLY_MMQ)
     strata_ggml_configure_root()
   else()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)   # (what strata_ggml_configure_root sets for the whole project)

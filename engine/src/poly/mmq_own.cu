@@ -1,0 +1,220 @@
+// src/poly/mmq_own.cu - mmq.hpp's prompt products without llama.cpp: Strata's own grouped kernel
+// (strata::kernels::gemm_iq_f16_grouped, src/kernels/cuda/iq_kernels.cu).  The weights stay in their GGUF blocks and
+// are dequantized into shared memory a tile at a time, the activations are FP16 rows, the sums FP32, on the FP16
+// tensor cores.  mmq.cu is the llama.cpp form of the same class (-DSTRATA_POLY_MMQ=ON); one of the two is built.
+//
+// What differs from MMQ for the callers:
+//   - the activations are halves, not Q8_1 blocks, so every type "keeps its sums in halves" (half_sums()): a row
+//     with a value beyond a half's range goes through the engine's guard, and what is left is saturated here;
+//   - a row's product does not depend on the launch it is in (split_exact()): each output value is its own sum
+//     over the row's tiles in their order;
+//   - no kernel for the cards before Volta, for a matrix whose rows are not whole tiles of 128, for a type the
+//     dequantizer does not have (Q2_K, MXFP4, IQ1_S, the float types) or where a tile's shared memory is more than
+//     the card gives a block (Turing: 64 KiB): fits() is false there and the engine reads such a batch a row at a time.
+#include "mmq.hpp"
+
+#if defined(GGML_USE_HIP) || defined(STRATA_USE_HIP) || defined(__HIPCC__)
+
+// HIP: the grouped kernel is CUDA's.  No prompt product here, so every batch is read a row at a time.
+#include <stdexcept>
+
+namespace strata::poly {
+Mmq::Mmq() {}
+Mmq::~Mmq() {}
+bool Mmq::fits(int, int64_t, int64_t) { return false; }
+size_t Mmq::q8_bytes(int64_t rows, int64_t cols) { return (size_t) rows * (size_t) cols * 2; }
+bool Mmq::half_sums(int) { return false; }
+bool Mmq::split_exact(int, int64_t) { return true; }
+void Mmq::quantize(const float*, const int32_t*, void*, int, int64_t, int64_t, int64_t, void*) {}
+void Mmq::mul(const void*, int, int64_t, int64_t, size_t, int, const void*, const int32_t*, const int32_t*, int64_t, int64_t,
+              float*, int64_t, void*) {
+    throw std::runtime_error("strata-poly prompt product: not in a HIP build");
+}
+}  // namespace strata::poly
+
+#else
+
+#include "strata/kernels/iq_kernels.hpp"
+
+#include <cuda_fp16.h>
+#include <cuda_runtime.h>
+
+#include <stdexcept>
+#include <string>
+
+namespace strata::poly {
+namespace {
+
+constexpr int kTileRows = 128;        // gemm_iq_f16_grouped's WG_BN: weight rows a block
+constexpr float kHalfMax = 65504.f;   // the largest finite half
+
+// The types iq_kernels.cu's dq_dispatch dequantizes (its is_iq(), a build with STRATA_Q6K_EXPERTS, the default).
+bool dequantized(int t) {
+    switch (t) {
+        case 2: case 3: case 6: case 7: case 8:                       // Q4_0 Q4_1 Q5_0 Q5_1 Q8_0
+        case 11: case 12: case 13: case 14:                           // Q3_K Q4_K Q5_K Q6_K
+        case 16: case 17: case 18: case 20: case 21: case 22: case 23: case 29:   // the i-quants
+        case 40: case 42:                                             // NVFP4, Q2_0
+            return true;
+        default:
+            return false;
+    }
+}
+
+// values of a row the kernel reads at a time: whole superblocks of 256, or blocks of 128 for the two types that have them
+bool whole_tiles(int t, int64_t cols) {
+    if (t == 42 || (t == 20 && cols % 256 != 0)) return cols % 128 == 0;
+    return cols % 256 == 0;
+}
+
+// shared memory of a block (the kernel's own sum: BN weight rows of WK + 8 halves, BM = 64 rows of XK + 8 = 136)
+size_t tile_bytes(int t, int64_t cols) {
+    const int wk = (t == 42 || (t == 20 && cols % 256 != 0)) ? 128 : 256;
+    return (size_t) kTileRows * (wk + 8) * 2 + (size_t) 64 * (128 + 8) * 2;
+}
+
+struct Card {
+    int major = 0;
+    size_t shared = 0;
+};
+
+// the current card's (a layer split asks for each of its cards): read once a card
+Card card() {
+    static Card known[64];
+    static bool read[64];
+    int dev = 0, v = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) return Card{};
+    if (!read[dev]) {
+        Card c;
+        if (cudaDeviceGetAttribute(&v, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess) c.major = v;
+        if (cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) == cudaSuccess) c.shared = (size_t) v;
+        known[dev] = c;
+        read[dev] = true;
+    }
+    return known[dev];
+}
+
+// a block a row; the rows go over the grid's two sides, which hold 65,535 each
+dim3 rows_grid(int64_t rows) {
+    const unsigned gx = (unsigned) (rows < 32768 ? rows : 32768);
+    return dim3(gx, (unsigned) ((rows + gx - 1) / gx));
+}
+
+void ck(cudaError_t e, const char* what) {
+    if (e != cudaSuccess) throw std::runtime_error(std::string("strata-poly prompt product: ") + what + ": " + cudaGetErrorString(e));
+}
+
+// row i of xq = row ids[i] of x (row i without ids), as halves
+__global__ void to_halves(const float* __restrict__ x, const int32_t* __restrict__ ids, __half* __restrict__ xq, int cols,
+                          int64_t ld, int64_t rows) {
+    const int64_t row = (int64_t) blockIdx.y * gridDim.x + blockIdx.x;
+    if (row >= rows) return;
+    const float* src = x + (ids ? (int64_t) ids[row] : row) * ld;
+    __half* dst = xq + row * cols;
+    for (int c = threadIdx.x; c < cols; c += blockDim.x)
+        dst[c] = __float2half(fminf(fmaxf(src[c], -kHalfMax), kHalfMax));
+}
+
+// row ids[i] of dst = row i of y
+__global__ void place_rows(const float* __restrict__ y, int64_t ldy, const int32_t* __restrict__ ids,
+                           float* __restrict__ dst, int64_t ld_dst, int cols, int64_t rows) {
+    const int64_t row = (int64_t) blockIdx.y * gridDim.x + blockIdx.x;
+    if (row >= rows) return;
+    const float* src = y + row * ldy;
+    float* out = dst + (int64_t) ids[row] * ld_dst;
+    for (int c = threadIdx.x; c < cols; c += blockDim.x) out[c] = src[c];
+}
+
+// One prompt path's buffers on the card: where a single matrix's two bounds lie, and the products of a launch
+// whose rows go elsewhere.
+struct Ctx {
+    int32_t* bounds = nullptr;
+    int32_t bounds_host[2] = {0, 0};
+    float* y = nullptr;
+    size_t y_floats = 0;
+};
+
+}  // namespace
+
+Mmq::Mmq() {
+    Ctx* c = new Ctx;
+    if (cudaMalloc(&c->bounds, 2 * sizeof(int32_t)) != cudaSuccess) {
+        delete c;
+        throw std::runtime_error("strata-poly prompt product: no memory on the card for two numbers");
+    }
+    ctx_ = c;
+}
+
+Mmq::~Mmq() {
+    Ctx* c = (Ctx*) ctx_;
+    cudaFree(c->bounds);
+    cudaFree(c->y);
+    delete c;
+}
+
+bool Mmq::fits(int ggml_type, int64_t w_rows, int64_t w_cols) {
+    const Card c = card();
+    return c.major >= 7 && dequantized(ggml_type) && w_rows % kTileRows == 0 && whole_tiles(ggml_type, w_cols) &&
+           tile_bytes(ggml_type, w_cols) <= c.shared;
+}
+
+size_t Mmq::q8_bytes(int64_t rows, int64_t cols) { return ((size_t) rows * (size_t) cols * 2 + 255) / 256 * 256; }
+
+bool Mmq::half_sums(int) { return true; }
+
+bool Mmq::split_exact(int, int64_t) { return true; }
+
+void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int, int64_t cols, int64_t ld, int64_t rows,
+                   void* stream) {
+    if (rows <= 0) return;
+    to_halves<<<rows_grid(rows), 256, 0, (cudaStream_t) stream>>>(x, ids, (__half*) xq, (int) cols, ld, rows);
+    ck(cudaGetLastError(), "the rows as halves");
+}
+
+void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size_t stride, int n, const void* xq,
+              const int32_t* bounds, const int32_t* ids, int64_t total_rows, int64_t max_rows, float* dst,
+              int64_t ld_dst, void* stream) {
+    if (n <= 0 || total_rows <= 0) return;
+    Ctx& c = *(Ctx*) ctx_;
+    const cudaStream_t s = (cudaStream_t) stream;
+    if (!bounds) {   // one matrix takes every row
+        if (n != 1) throw std::runtime_error("strata-poly prompt product: several matrices need their bounds");
+        c.bounds_host[0] = 0;
+        c.bounds_host[1] = (int32_t) total_rows;
+        ck(cudaMemcpyAsync(c.bounds, c.bounds_host, sizeof c.bounds_host, cudaMemcpyHostToDevice, s), "a matrix's bounds");
+        bounds = c.bounds;
+    }
+    // straight into dst where row i is row i; else by way of a buffer of this path's own
+    float* y = dst;
+    int64_t ldy = ld_dst;
+    if (ids || ld_dst % 4 != 0) {
+        ldy = (w_rows + 3) / 4 * 4;
+        const size_t need = (size_t) total_rows * (size_t) ldy;
+        if (need > c.y_floats) {
+            ck(cudaStreamSynchronize(s), "waiting for the launches before");   // they may still read the old buffer
+            cudaFree(c.y);
+            c.y = nullptr;
+            c.y_floats = 0;
+            ck(cudaMalloc(&c.y, need * sizeof(float)), "memory for a launch's products");
+            c.y_floats = need;
+        }
+        y = c.y;
+    }
+    if (!kernels::gemm_iq_f16_grouped(ggml_type, w, stride, (int) w_rows, (int) w_cols, xq, (int) w_cols, bounds, n,
+                                      (int) max_rows, y, (int) ldy, stream))
+        throw std::runtime_error("strata-poly prompt product: no kernel for tensor type " + std::to_string(ggml_type) +
+                                 " with [" + std::to_string(w_rows) + ", " + std::to_string(w_cols) + "]");
+    if (y == dst) return;
+    if (ids) {
+        place_rows<<<rows_grid(total_rows), 256, 0, s>>>(y, ldy, ids, dst, ld_dst, (int) w_rows, total_rows);
+        ck(cudaGetLastError(), "the products to their rows");
+    } else {
+        ck(cudaMemcpy2DAsync(dst, (size_t) ld_dst * sizeof(float), y, (size_t) ldy * sizeof(float),
+                             (size_t) w_rows * sizeof(float), (size_t) total_rows, cudaMemcpyDeviceToDevice, s),
+           "the products to their rows");
+    }
+}
+
+}  // namespace strata::poly
+
+#endif
