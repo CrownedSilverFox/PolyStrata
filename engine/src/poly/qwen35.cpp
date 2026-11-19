@@ -319,8 +319,8 @@ void Qwen35::save_layer(int il, int64_t, uint8_t* dst) {
     const Block& B = blocks_[(size_t) il];
     if (!B.past) return;
     const size_t n = size_t(3) * conv_dim_ + size_t(v_heads_) * s_dim_ * s_dim_;
-    ck(cudaMemcpy(dst + (size_t) (B.past - state_) * sizeof(float), B.past, n * sizeof(float),
-                  cudaMemcpyDeviceToHost),
+    ck(cudaMemcpyAsync(dst + (size_t) (B.past - state_) * sizeof(float), B.past, n * sizeof(float),
+                       cudaMemcpyDeviceToHost, cs(st_)),
        "save state");
 }
 

@@ -3090,10 +3090,12 @@ void Engine::load(const Options& o) {
         workers_ = std::make_shared<Workers>(threads);
     }
     if (!aside_) aside_ = std::make_unique<Aside>();
-    // save_state()'s pinned memory, with the load: made at the first checkpoint, it held a request up 32 ms
+    // save_state()'s pinned memory, and read()'s for the checkpoints inside a read, with the load: made at the
+    // first checkpoint, it held a request up 32 ms
     if (!h_state_) {
         h_state_bytes_ = card_state_bytes();
         h_state_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
+        h_mark_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
     }
     route_tmp_.assign((size_t) workers_->threads() * 2 * n_expert_, 0.f);
     if (opt_.cache_bias > 0.f) bias_rl_.assign((size_t) n_expert_, 0.f);
@@ -3433,7 +3435,6 @@ void Engine::refreeze_experts() {
 // a 4,833-token prompt (a conversation's checkpoints).
 void Engine::save_state(uint8_t* dst) {
     OnCard here(device_, split_);
-    ck(cudaStreamSynchronize(cs(st_)), "save state");
     const size_t bytes = card_state_bytes();
     if (h_state_bytes_ < bytes) {
         hfree(h_state_);
@@ -3444,23 +3445,31 @@ void Engine::save_state(uint8_t* dst) {
     for (int il = 0; il < (int) layers_.size(); ++il)
         if (runs(il)) save_layer(il, pos_, h_state_);
     save_last(h_state_);
+    ck(cudaStreamSynchronize(cs(st_)), "save state");
+    state_out(h_state_, dst);
+    if (next_) next_->save_state(dst + bytes);
+}
+
+// A card's state from pinned memory to its place, a piece a CPU thread.
+void Engine::state_out(const uint8_t* from, uint8_t* to) {
     constexpr size_t kPiece = size_t(1) << 20;
+    const size_t bytes = card_state_bytes();
     const int pieces = (int) ((bytes + kPiece - 1) / kPiece);
     const auto piece = [&](int i) {
         const size_t at = (size_t) i * kPiece;
-        std::memcpy(dst + at, h_state_ + at, std::min(kPiece, bytes - at));
+        std::memcpy(to + at, from + at, std::min(kPiece, bytes - at));
     };
     if (workers_) workers_->run(pieces, piece);
     else
         for (int i = 0; i < pieces; ++i) piece(i);
-    if (next_) next_->save_state(dst + bytes);
 }
 
 // What the state has that is no layer's: the model's output for the last token, which the draft block pairs the
 // next one with.  It lies behind the layers' state.
 void Engine::save_last(uint8_t* dst) {
     if (!draft_) return;
-    ck(cudaMemcpy(dst + rec_n_ * sizeof(float), hn_, (size_t) n_embd_ * sizeof(float), cudaMemcpyDeviceToHost),
+    ck(cudaMemcpyAsync(dst + rec_n_ * sizeof(float), hn_, (size_t) n_embd_ * sizeof(float), cudaMemcpyDeviceToHost,
+                       cs(st_)),
        "save state");
 }
 
@@ -6394,6 +6403,13 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     }
     // a turn for each layer, and one for the model's output, which the draft block keeps a row of
     const int turns = hi_ - lo_ + (draft_ ? 1 : 0);
+    // A checkpoint's layers are copied in the stream, behind the call before it and ahead of the next one's turn
+    // at the layer, so the card goes on.  The first two go to pinned memory, at the card's speed, and to their
+    // states after the read; the others straight to their states, which are pageable: 2 MB of Qwen3.6's took the
+    // card 1.3 ms a layer.
+    std::vector<uint8_t*> staged((size_t) n_marks, nullptr);
+    for (int m = 0, used = 0; m < n_marks && used < 2; ++m)
+        if (marks[m].state && h_state_bytes_ >= card_state_bytes()) staged[(size_t) m] = used++ ? h_mark_ : h_state_;
     shared_ahead_ = true;
     try {
         for (int k = 0; k < turns; ++k) {
@@ -6422,12 +6438,12 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
                     ++read_draft_calls_;
                 }
                 if (uint8_t* state = call.mark >= 0 ? marks[call.mark].state : nullptr) {
-                    ck(cudaStreamSynchronize(cs(st_)), "read");
+                    uint8_t* const to = staged[(size_t) call.mark] ? staged[(size_t) call.mark] : state;
                     const int64_t pos = pos_ + call.m;
-                    if (il < n_layer_) save_layer(il, pos, state);
+                    if (il < n_layer_) save_layer(il, pos, to);
                     if (k == turns - 1) {   // what no turn is for: a layer behind the model's, the last output
-                        for (int j = n_layer_; j < (int) layers_.size(); ++j) save_layer(j, pos, state);
-                        save_last(state);
+                        for (int j = n_layer_; j < (int) layers_.size(); ++j) save_layer(j, pos, to);
+                        save_last(to);
                     }
                 }
                 // The card's work on the next call starts now.  This call's rows leave beside it, unless this was
@@ -6445,6 +6461,9 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
             }
         }
         if (host) ck(cudaStreamSynchronize(cs(rs_)), "read");
+        ck(cudaStreamSynchronize(cs(st_)), "read");
+        for (int m = 0; m < n_marks; ++m)
+            if (staged[(size_t) m]) state_out(staged[(size_t) m], marks[m].state);
         if (next_ && !host) {   // the rows are in r_, a call's in each half
             float* h = pass_rows(n);
             for (int c = 0; c < n_calls; ++c)

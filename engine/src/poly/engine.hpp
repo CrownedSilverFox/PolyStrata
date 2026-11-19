@@ -893,7 +893,9 @@ protected:
     bool halves_ = false;        ///< the way of the window under way
     float *wlogits_ = nullptr, *h_wlogits_ = nullptr;   ///< a window's logits, token after token: VRAM and pinned
     uint8_t* h_state_ = nullptr;   ///< pinned: save_state()'s way to its caller's memory
+    uint8_t* h_mark_ = nullptr;    ///< pinned: and with it read()'s, for two checkpoints inside a read
     size_t h_state_bytes_ = 0;
+    void state_out(const uint8_t* from, uint8_t* to);
     int cached_ = 0;
 
     // device scratch: a layer's input streams, one stream, the normed input, the attention's and the FFN's output

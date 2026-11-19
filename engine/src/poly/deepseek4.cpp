@@ -507,8 +507,8 @@ void DeepSeek4::save_layer(int il, int64_t pos, uint8_t* dst) {
     const size_t raw_row = (size_t) head_dim_ * sizeof(uint16_t);
     std::memset(dst, 0, layer_extra(B));
     ring_runs(pos, window_, raw_ring_, [&](size_t slot, size_t at, size_t m) {
-        ck(cudaMemcpy(dst + slot * raw_row, (const uint8_t*) B.raw + at * raw_row, m * raw_row,
-                      cudaMemcpyDeviceToHost),
+        ck(cudaMemcpyAsync(dst + slot * raw_row, (const uint8_t*) B.raw + at * raw_row, m * raw_row,
+                           cudaMemcpyDeviceToHost, cs(st_)),
            "save state");
     });
     dst += (size_t) window_ * raw_row;
@@ -517,7 +517,8 @@ void DeepSeek4::save_layer(int il, int64_t pos, uint8_t* dst) {
         const size_t row = (size_t) S->width * sizeof(float);
         for (const float* ring : {S->kv, S->score}) {
             ring_runs(pos, keep_rows(B), B.ring, [&](size_t slot, size_t at, size_t m) {
-                ck(cudaMemcpy(dst + slot * row, (const uint8_t*) ring + at * row, m * row, cudaMemcpyDeviceToHost),
+                ck(cudaMemcpyAsync(dst + slot * row, (const uint8_t*) ring + at * row, m * row, cudaMemcpyDeviceToHost,
+                                   cs(st_)),
                    "save state");
             });
             dst += (size_t) keep_rows(B) * row;

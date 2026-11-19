@@ -178,8 +178,8 @@ void Lfm2Moe::assign_scratch() {
 void Lfm2Moe::save_layer(int il, int64_t, uint8_t* dst) {
     const Block& B = blocks_[(size_t) il];
     if (!B.past) return;
-    ck(cudaMemcpy(dst + (size_t) (B.past - state_) * sizeof(float), B.past, size_t(2) * n_embd_ * sizeof(float),
-                  cudaMemcpyDeviceToHost),
+    ck(cudaMemcpyAsync(dst + (size_t) (B.past - state_) * sizeof(float), B.past, size_t(2) * n_embd_ * sizeof(float),
+                       cudaMemcpyDeviceToHost, cs(st_)),
        "save state");
 }
 
