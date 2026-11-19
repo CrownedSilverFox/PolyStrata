@@ -894,6 +894,10 @@ int serve(Session& ss) {
             if (guessing) {
                 guess.resize(seqs.size());
                 engine.draft_many(seqs.data(), feed.data(), (int) seqs.size(), guess.data());
+                // a step of more rows reads them as a prompt batch, whose kernels round otherwise: the slots past
+                // that many check no guess this step
+                for (size_t i = 0, rows = seqs.size(); i < guess.size(); ++i)
+                    if (guess[i] >= 0 && (int) ++rows > engine.step_rows_alone()) guess[i] = -1;
                 engine.step(seqs.data(), feed.data(), (int) seqs.size(), guess.data());
             } else {
                 engine.step(seqs.data(), feed.data(), (int) seqs.size());
@@ -1347,8 +1351,9 @@ int check_batch(Engine& engine, const std::vector<int32_t>& ids, int k, long lon
         if (guessing) {
             guess.resize(live.size());
             engine.draft_many(live.data(), feed.data(), (int) live.size(), guess.data());
-            for (size_t i = 0; i < live.size(); ++i) {
+            for (size_t i = 0, rows = live.size(); i < live.size(); ++i) {
                 if ((long long) got[(size_t) live[i] - 1].size() >= max_new) guess[i] = -1;   // no token wanted after
+                if (guess[i] >= 0 && (int) ++rows > engine.step_rows_alone()) guess[i] = -1;   // as the batch loop
                 offered += guess[i] >= 0;
             }
             engine.step(live.data(), feed.data(), (int) live.size(), guess.data());
@@ -1477,7 +1482,7 @@ void usage() {
                  "                         a system prompt read once: a prompt that starts with it goes on from\n"
                  "                         its end, whatever took the engine since; it is never pushed out\n"
                  "  --batch N              N answers written together, each in a sequence of its own with its own\n"
-                 "                         state and attention rows (default 0 = one at a time; at most 8);\n"
+                 "                         state and attention rows (default 0 = one at a time; at most 16);\n"
                  "                         --slots N is the same\n"
                  "  --batch-mtp            with --batch and a draft block: each answer written together guesses its\n"
                  "                         next token and the step checks it, a guess right gives two tokens\n"
@@ -1632,8 +1637,8 @@ int main(int argc, char** argv) {
         usage();
         return 2;
     }
-    if (o.batch < 0 || o.batch > 8 || check < 0 || check > o.batch || (check > 0 && (int) ids.size() <= check)) {
-        std::fprintf(stderr, "strata-poly: --batch takes 0 to 8, and --check-batch at most --batch prompts, each "
+    if (o.batch < 0 || o.batch > 16 || check < 0 || check > o.batch || (check > 0 && (int) ids.size() <= check)) {
+        std::fprintf(stderr, "strata-poly: --batch takes 0 to 16, and --check-batch at most --batch prompts, each "
                              "with tokens left of --tokens\n");
         return 2;
     }

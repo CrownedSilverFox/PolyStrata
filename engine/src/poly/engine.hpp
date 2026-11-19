@@ -405,6 +405,9 @@ public:
     /// Whether step() takes guesses: Options::batch_mtp, a draft block, one card, and an architecture whose
     /// step() rows can leave the recurrent state after a row (rows_snaps()).
     bool steps_guesses() const;
+    /// The most rows a step() takes as decode rows: from kStageRows on a call goes the way of a prompt batch, whose
+    /// kernels round otherwise, and a sequence's tokens would no longer be the ones it gets alone.
+    int step_rows_alone() const;
     /// Sequence `to` becomes what sequence `from` is: its position, state, rows and pictures, copied on the card.
     void copy_seq(int from, int to);
 

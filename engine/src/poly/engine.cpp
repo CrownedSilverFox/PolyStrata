@@ -5373,6 +5373,8 @@ bool Engine::steps_guesses() const {
            (rec_n_ == 0 || (rows_snaps() && step_snap_));
 }
 
+int Engine::step_rows_alone() const { return std::min(rows_, kStageRows - 1); }
+
 void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* guesses) {
     if (n < 1 || n > std::min(rows_, sequences())) throw std::logic_error("step takes 1 to sequences() tokens");
     if (guesses && !steps_guesses()) throw std::logic_error("step: guesses need --batch-mtp, a draft block and one card");
