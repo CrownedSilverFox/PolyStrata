@@ -49,6 +49,8 @@ constexpr int kSwapHalf = 128;
 // behind is timed again after kWayAgain windows of that size, then after twice as many each time it is still
 // behind, up to kWayAgainMost.  A time counts kWayWeight against the ones before, and one of the way behind
 // kWayBehind, since it has fewer and older ones.
+// card_far_ (Engine::build_mirror()): the share of the profile's picks the cached experts must have
+constexpr double kCardFarShare = 0.9;
 constexpr int kWayFirst = 3;
 constexpr int kWayAgain = 4, kWayAgainMost = 64;
 constexpr double kWayWeight = 0.125, kWayBehind = 0.5;

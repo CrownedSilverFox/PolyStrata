@@ -912,6 +912,15 @@ protected:
     int32_t* h_ids_ = nullptr;                    ///< pinned: the experts, back from the card
     void** d_slots_ = nullptr;                    ///< every layer's L.slot on the card, n_expert_ a layer (moe_card())
     std::vector<void*> h_slots_;                  ///< what d_slots_ holds
+    // card_far_: with most experts cached, a few tokens route on the card even so (card_moe()), and a call's experts
+    // the card lacks are copied from their mirror slots into the staging buffer by the card first (moe_card())
+    bool card_far_ = false;
+    void** d_far_ = nullptr;                      ///< per (layer, expert): its mirror slot where L.slot is null
+    std::vector<void*> h_far_;                    ///< what d_far_ holds
+    void** d_tab_ = nullptr;                      ///< a call's table: the layer's slots and its staged experts
+    FarFetch* d_fetch_ = nullptr;
+    int* d_nfetch_ = nullptr;
+    bool card_routes() const { return all_cached() || card_far_; }
     uint8_t* stage_ = nullptr;                    ///< experts that are not cached, on their way through VRAM
     uint8_t* h_stage_[2] = {};                    ///< pinned; filled in turn
     void* ev_stage_[2] = {};                      ///< marks the upload out of each

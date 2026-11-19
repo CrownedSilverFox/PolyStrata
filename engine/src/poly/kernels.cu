@@ -3195,6 +3195,47 @@ void copy2(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, v
         throw std::runtime_error(std::string("copy2: ") + cudaGetErrorString(e));
 }
 
+__global__ void far_plan_kernel(const void* const* __restrict__ slots, const void* const* __restrict__ far,
+                                const int32_t* __restrict__ ids, int rr, int n_expert, uint8_t* stage, size_t stride,
+                                void** tab, FarFetch* fetch, int* count) {
+    for (int e = threadIdx.x; e < n_expert; e += blockDim.x) tab[e] = (void*) slots[e];
+    __syncthreads();
+    if (threadIdx.x != 0) return;
+    int nf = 0;
+    for (int k = 0; k < rr; ++k) {
+        const int e = ids[k];
+        if (e < 0 || e >= n_expert || tab[e] != nullptr) continue;
+        void* s = stage + (size_t) nf * stride;
+        tab[e] = s;
+        fetch[nf++] = {far[e], s};
+    }
+    *count = nf;
+}
+
+// 16 blocks a fetch keep the bus busy: on lab-pro6000's PCIe 5 card they copied 1.35 MiB in 31 us, 45 GB/s, from
+// cudaMallocHost's memory and from registered memory alike (a DMA copy: 27 us)
+__global__ void far_pull_kernel(const FarFetch* __restrict__ fetch, const int* __restrict__ count, size_t n16) {
+    if ((int) blockIdx.y >= *count) return;
+    const uint4* __restrict__ src = (const uint4*) fetch[blockIdx.y].src;
+    uint4* __restrict__ dst = (uint4*) fetch[blockIdx.y].dst;
+    for (size_t k = (size_t) blockIdx.x * blockDim.x + threadIdx.x; k < n16; k += (size_t) gridDim.x * blockDim.x)
+        dst[k] = src[k];
+}
+
+void far_plan(const void* const* slots, const void* const* far, const int32_t* ids, int rr, int n_expert,
+              uint8_t* stage, size_t stride, void** tab, FarFetch* fetch, int* count, void* stream) {
+    far_plan_kernel<<<1, 256, 0, cs(stream)>>>(slots, far, ids, rr, n_expert, stage, stride, tab, fetch, count);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("far_plan: ") + cudaGetErrorString(e));
+}
+
+void far_pull(const FarFetch* fetch, const int* count, int most, size_t bytes, void* stream) {
+    if (most <= 0) return;
+    far_pull_kernel<<<dim3(16, (unsigned) most), 256, 0, cs(stream)>>>(fetch, count, bytes / 16);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("far_pull: ") + cudaGetErrorString(e));
+}
+
 void copy3(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, const void* x2, void* y2, int n2,
            void* stream) {
     copy3_kernel<<<grid(n0 + n1 + n2, 256), 256, 0, cs(stream)>>>((const uint32_t*) x0, (uint32_t*) y0, n0,

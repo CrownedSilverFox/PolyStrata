@@ -220,6 +220,18 @@ void axpy(const float* x, float a, float* acc, int n, bool add, void* stream);
 /// and write too, and a kernel's copy to or from it has none of the wait that a copy engine's has on Windows,
 /// some 25 microseconds between it and the launches beside it.
 void copy2(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, void* stream);
+/// An expert the card lacks, for a call routed on the card: from its slot in the pinned mirror to a staging slot.
+struct FarFetch {
+    const void* src;
+    void* dst;
+};
+/// tab[e] = slots[e] for each of n_expert experts, and for an expert some pair of ids[0..rr) picks that has no slot
+/// (null), the next staging slot (stage + k * stride), listed in fetch[] with its mirror slot far[e]; *count is how
+/// many.  One block.  CUDA and HIP only.
+void far_plan(const void* const* slots, const void* const* far, const int32_t* ids, int rr, int n_expert,
+              uint8_t* stage, size_t stride, void** tab, FarFetch* fetch, int* count, void* stream);
+/// The first *count of fetch[0..most), `bytes` each (a multiple of 16), copied by the card's threads.
+void far_pull(const FarFetch* fetch, const int* count, int most, size_t bytes, void* stream);
 /// copy2() with a third run.  CUDA and HIP only.
 void copy3(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, const void* x2, void* y2, int n2,
            void* stream);

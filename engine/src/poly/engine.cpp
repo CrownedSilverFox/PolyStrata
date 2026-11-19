@@ -3259,6 +3259,12 @@ void Engine::alloc() {
         d_wts_ = (float*) dmalloc(rr * sizeof(float), "scratch");
         h_ids_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");
         d_slots_ = (void**) dmalloc((size_t) n_layer_ * n_expert_ * sizeof(void*), "scratch");
+#if !defined(STRATA_GPU_METAL)
+        d_far_ = (void**) dmalloc((size_t) n_layer_ * n_expert_ * sizeof(void*), "scratch");
+        d_tab_ = (void**) dmalloc((size_t) n_expert_ * sizeof(void*), "scratch");
+        d_fetch_ = (FarFetch*) dmalloc((size_t) card_rows() * sizeof(FarFetch), "scratch");
+        d_nfetch_ = (int*) dmalloc(sizeof(int), "scratch");
+#endif
         tab_ = (int32_t*) dmalloc(tab, "scratch");
         h_tab_ = (int32_t*) hmalloc(tab, "pinned memory");
         iota_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
@@ -4553,21 +4559,40 @@ void Engine::moe_add(int n) { axpy(h_cpu_, 1.f, fo_, n * n_embd_, true, st_); }
 // With every routed expert in VRAM, a few tokens' experts are routed on the card and found there by its picks
 // (moe_card()), so a layer never waits for the host.  The cache's slots go to the card again when they changed.
 bool Engine::card_moe(int n) {
-    if (!all_cached() || !d_slots_ || n * n_used_ > card_rows() || opt_.dump) return false;
-    bool same = !h_slots_.empty();
+    if (!card_routes() || !d_slots_ || n * n_used_ > card_rows() || opt_.dump) return false;
+    const bool far = !all_cached();
+    const auto far_of = [&](int il, int e) -> void* {
+        return layers_[(size_t) il].slot[(size_t) e] ? nullptr : (void*) mirror(il, e);
+    };
+    bool same = !h_slots_.empty() && (!far || !h_far_.empty());
     for (int il = lo_; il < hi_ && same; ++il) {
         const Layer& L = layers_[(size_t) il];
-        for (int e = 0; e < n_expert_ && same && L.moe; ++e)
-            same = h_slots_[(size_t) il * n_expert_ + e] == L.slot[(size_t) e];
+        for (int e = 0; e < n_expert_ && same && L.moe; ++e) {
+            const size_t i = (size_t) il * n_expert_ + e;
+            same = h_slots_[i] == L.slot[(size_t) e] && (!far || h_far_[i] == far_of(il, e));
+        }
     }
     if (!same) {
         h_slots_.assign((size_t) n_layer_ * n_expert_, nullptr);
-        for (int il = lo_; il < hi_; ++il)
-            if (layers_[(size_t) il].moe)
-                std::copy(layers_[(size_t) il].slot.begin(), layers_[(size_t) il].slot.end(),
-                          h_slots_.begin() + (ptrdiff_t) il * n_expert_);
+        if (far) h_far_.assign((size_t) n_layer_ * n_expert_, nullptr);
+        for (int il = lo_; il < hi_; ++il) {
+            if (!layers_[(size_t) il].moe) continue;
+            std::copy(layers_[(size_t) il].slot.begin(), layers_[(size_t) il].slot.end(),
+                      h_slots_.begin() + (ptrdiff_t) il * n_expert_);
+            for (int e = 0; e < n_expert_ && far; ++e) {
+                const size_t i = (size_t) il * n_expert_ + e;
+                if (!h_slots_[i] && !(h_far_[i] = far_of(il, e))) {   // in neither VRAM nor the mirror
+                    h_slots_.clear();
+                    h_far_.clear();
+                    return false;
+                }
+            }
+        }
         ck(cudaMemcpy(d_slots_, h_slots_.data(), h_slots_.size() * sizeof(void*), cudaMemcpyHostToDevice),
            "expert slots");
+        if (far)
+            ck(cudaMemcpy(d_far_, h_far_.data(), h_far_.size() * sizeof(void*), cudaMemcpyHostToDevice),
+               "expert slots");
 #if defined(STRATA_GPU_METAL)
         ck(gpu::metal::register_indirect(d_slots_, h_slots_.data(), h_slots_.size()), "expert dependencies");
 #endif
@@ -4588,6 +4613,14 @@ bool Engine::moe_card(Layer& L, int il, int n) {
     L.card = 1;
     const int rr = n * n_used_;
     const void* const* table = d_slots_ + (size_t) il * n_expert_;
+#if !defined(STRATA_GPU_METAL)
+    if (!all_cached()) {   // card_far_: the experts it lacks, from the mirror into the staging buffer first
+        far_plan(table, d_far_ + (size_t) il * n_expert_, d_ids_, rr, n_expert_, stage_, ahead_stride_, d_tab_,
+                 d_fetch_, d_nfetch_, st_);
+        far_pull(d_fetch_, d_nfetch_, rr, (L.gu2() + L.d_bytes + 15) / 16 * 16, st_);
+        table = d_tab_;
+    }
+#endif
     const size_t xq_row = kernels::native_q8_1_bytes(n_embd_), ff = (size_t) n_ff_exp_;
     // a mixed layer's gate and up are each a matrix of n_ff rows of its own type, up's into the second half
     const kernels::MmvqIds gate_up{table, d_ids_, 0, xq_, xq_row, n_used_, g_, 2 * ff};
@@ -4881,14 +4914,35 @@ void Engine::build_mirror() {
     std::fprintf(stderr, "strata-poly: the %zu experts outside VRAM in %.1f GiB of pinned memory in %.1f s\n", n,
                  (double) total / (1 << 30), ms_since(t0) / 1000.0);
 
+    // card_far_: where the cached experts are the ones of nearly every pick the profile counted, an answer's few
+    // tokens route on the card as with every expert cached, and the card copies the rest from the mirror itself:
+    // a layer does not wait for the host, and a window is one recording.  The staging buffer holds a call's picks.
+    // Its answers are the ones every expert in VRAM gives.  STRATA_POLY_CARD_FAR=0 or 1 says no or yes.
+    ahead_stride_ = (slot_max_ + 4095) / 4096 * 4096;
+    {
+        double held = 0, all = 0;
+        for (int il = 0; il < n_layer_ && !prior_.empty(); ++il)
+            for (int e = 0; e < n_expert_ && layers_[(size_t) il].moe; ++e) {
+                const double u = (double) prior_[(size_t) il * n_expert_ + e];
+                all += u;
+                if (layers_[(size_t) il].slot[(size_t) e]) held += u;
+            }
+        const char* cf = std::getenv("STRATA_POLY_CARD_FAR");
+        const bool fits = d_far_ && opt_.batch == 0 && (size_t) card_rows() * ahead_stride_ <= stage_narrow_;
+        card_far_ = fits && (cf ? cf[0] == '1' : all > 0 && held >= kCardFarShare * all);
+        if (card_far_)
+            std::fprintf(stderr, "strata-poly: experts the card lacks: copied by the card from the mirror (%.1f%% of "
+                                 "the profile's picks cached)\n",
+                         all > 0 ? 100.0 * held / all : 0.0);
+    }
+
     // vram_ahead(): one sequence's answer (step() mixes the staging buffer with other sequences' prompt reads).
     // Whether an upload has arrived decides where an expert is computed, so a cache asked to stay as it is
     // (--expert-swaps 0, the regression tests' way to get the same answer twice) gets none.  STRATA_POLY_AHEAD=0
     // turns it off.
     const char* ahead = std::getenv("STRATA_POLY_AHEAD");
-    ahead_stride_ = (slot_max_ + 4095) / 4096 * 4096;
     ahead_slots_ = std::min<int>(Ahead::kSlots, (int) (stage_narrow_ / ahead_stride_ / (kAheadGroups + 1)));
-    if ((ahead && ahead[0] == '0') || opt_.batch > 0 || opt_.expert_swaps == 0 || !up_ || !ahead_dev_ ||
+    if ((ahead && ahead[0] == '0') || opt_.batch > 0 || opt_.expert_swaps == 0 || card_far_ || !up_ || !ahead_dev_ ||
         ahead_slots_ < 4) {
         ahead_slots_ = 0;
         return;
@@ -5457,7 +5511,7 @@ void Engine::run(const int32_t* tokens, int n) {
     //
     // A half's launches are the ones its tokens have in a call of their own, at their rows of the buffers
     // (shift_rows()), so each token comes out as it would alone.
-    if (n > 1 && windowed_ && !all_cached() && halves_) {
+    if (n > 1 && windowed_ && !card_routes() && halves_) {
         const int first[3] = {0, (n + 1) / 2, n};   // half k is the tokens [first[k], first[k + 1])
         const unsigned bits = snap_bits_;           // the window's tokens that leave the recurrent state
         int at = 0;
@@ -6212,7 +6266,7 @@ void Engine::window(const int32_t* tokens, int t) {
     OnCard here(device_, split_);
     end_read();
     // the two ways are a choice only with experts on the CPU; a call that records launches says nothing of them
-    const bool timed = t > 1 && !all_cached();
+    const bool timed = t > 1 && !card_routes();
     const bool recorded = std::exchange(recorded_, false);
     // Under a freeze the way is the measured times', not the request's: a frozen answer's sums are the ones its
     // first token's way gives, whichever way that was.
