@@ -1,14 +1,24 @@
 # PolyStrata's own targets: strata-poly, the engine for the models read from their GGUF files (GLM 5.3 Flash,
-# Qwen3.6, Gemma 4, LFM2.5, DeepSeek V4 Flash, Flint, Kolibri 1, ...), and its tests.  Strata's build is in
-# CMakeLists.txt and the other files of this folder; this one is included after them and uses their targets.
+# Qwen3.6, Gemma 4, LFM2.5, DeepSeek V4 Flash, Flint, Kolibri 1, ...), and its tests.  CMakeLists.txt calls
+# strata_poly() after Strata's own targets exist; it uses their libraries (strata_kernels, strata_spec, the GPU
+# runtime and BLAS targets).
+#
+# strata-poly still multiplies a prompt's quantized matrices with llama.cpp's MMQ kernels (ggml-cuda) and takes its
+# CPU experts' rows from ggml-cpu.  The tree vendored in third_party/strata-ggml has no ggml-cuda since Strata
+# 0.2.16, so strata-poly is built only from a llama.cpp checkout: -DSTRATA_GGML_DIR=<checkout>.  CMakeLists.txt
+# sets STRATA_BUILD_POLY from that before it decides whether ggml is configured at all.
 
+macro(strata_poly)
+if(STRATA_BUILD_TESTS)
   add_executable(glm_conversations_test src/poly/conversations_test.cpp src/poly/spill.cpp)
   add_test(NAME glm_conversations_test COMMAND glm_conversations_test)
   add_executable(poly_guesses_test src/poly/guesses_test.cpp src/spec/draft_policy.cpp)
   target_include_directories(poly_guesses_test PRIVATE include)
   add_test(NAME poly_guesses_test COMMAND poly_guesses_test)
 
-  endif()
+endif()
+
+if(STRATA_BUILD_POLY)
   # Clang turns ggml-cpu's i-quant grid lookups (_mm256_set_epi32 of eight table loads, IQ2_*/IQ3_*) into
   # vpgatherdd, which Intel's Gather Data Sampling microcode mitigation (2023) made slow on Skylake to Tiger Lake.
   # -mno-gather keeps them scalar loads: the same values, so the same products.  On an i9-9980HK (Windows, ROCm's
@@ -31,6 +41,8 @@
   if(STRATA_CPU_NO_GATHER AND TARGET ggml-cpu)
     message(STATUS "ggml-cpu: -mno-gather (STRATA_CPU_NO_GATHER)")
     target_compile_options(ggml-cpu PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-mno-gather>)
+  endif()
+endif()
 
 # The opt-in lifecycle is a host-only test, including on non-CUDA builds.
 if(STRATA_BUILD_TESTS)
@@ -47,12 +59,8 @@ endif()
 # Shared prepared-input GDN recurrence. Either engine may link this library;
 # only the Poly Qwen35 adapter is integrated initially. Keep FP32/BF16 hi+lo math
 # separate from the MMQ targets' -use_fast_math compilation options.
-if(STRATA_NATIVE_EXPERTS AND STRATA_ENABLE_CUDA)
-  if(STRATA_GGML_DIR)
-    set(_strata_gdn_ggml ${STRATA_GGML_DIR}/ggml)
-  else()
-    set(_strata_gdn_ggml ${strata_llamacpp_SOURCE_DIR}/ggml)
-  endif()
+if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND STRATA_ENABLE_CUDA)
+  set(_strata_gdn_ggml ${_strata_ggml_root}/ggml)
   add_library(strata_gdn_mma STATIC src/kernels/cuda/gdn_mma.cu)
   target_include_directories(strata_gdn_mma PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${_strata_gdn_ggml}/include ${_strata_gdn_ggml}/src ${_strata_gdn_ggml}/src/ggml-cuda)
@@ -73,18 +81,12 @@ endif()
 # A second engine beside `strata`.  It shares the quantized matvec kernels and the GGUF reader, and takes the
 # CPU experts' dot products from ggml-cpu.  On HIP it is the same CUDA-shaped code through the hip_compat headers
 # (the wave32 RDNA backend; gfx906's wave64 compat layer is not supported here).
-if(STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT STRATA_HIP_GFX906)
+if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT STRATA_HIP_GFX906)
   # The prompt path's quantized products: llama.cpp's MMQ kernels (ggml-cuda, MIT) for the types the model's
   # GGUFs keep their matrices in (the list in src/poly/mmq.cu), from the checkout strata_mmq is compiled from and
   # with the same host symbols.  A library of its own, so that what `strata` multiplies with MMQ stays as it is.
-  if(NOT _strata_mmq)   # a HIP build without STRATA_PREFILL_MMQ has not set these up yet
-    if(STRATA_GGML_DIR)
-      set(_strata_gg ${STRATA_GGML_DIR}/ggml)
-    else()
-      set(_strata_gg ${strata_llamacpp_SOURCE_DIR}/ggml)
-    endif()
-    set(_strata_mmq ${_strata_gg}/src/ggml-cuda)
-  endif()
+  set(_strata_gg ${_strata_ggml_root}/ggml)
+  set(_strata_mmq ${_strata_gg}/src/ggml-cuda)
   # Navi 12 / Navi 14 (gfx1011, gfx1012) have the signed dot4 that llama.cpp's ggml_cuda_dp4a leaves to RDNA1's SDWA
   # sequence (its vendors/hip.h counts gfx1012 as RDNA1); include/strata/hip_compat/intrinsics.hpp has the
   # measurement.  A HIP build for either has the checkout's common.cuh take __builtin_amdgcn_sdot4 there as well: the
@@ -136,7 +138,7 @@ if(STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT S
     # as strata_mmq's does.
     set_source_files_properties(${_strata_mmq}/quantize.cu ${_strata_poly_mmq_instances} PROPERTIES LANGUAGE HIP)
   endif()
-  add_library(strata_poly_mmq STATIC src/poly/mmq.cu src/poly/fattn.cu src/prefill/ggml_cuda_host.cu ${_strata_mmq}/quantize.cu
+  add_library(strata_poly_mmq STATIC src/poly/mmq.cu src/poly/fattn.cu src/poly/ggml_cuda_host.cu ${_strata_mmq}/quantize.cu
               ${_strata_poly_mmq_instances})
   target_include_directories(strata_poly_mmq PRIVATE ${_strata_gg}/include ${_strata_gg}/src ${_strata_mmq}
                                                     ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -309,5 +311,4 @@ if(STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT S
     add_test(NAME poly_kv_int8_test COMMAND poly_kv_int8_test)
   endif()
 endif()
-
-
+endmacro()
