@@ -3045,27 +3045,35 @@ def find_tool(name):
     local = Path.home() / ".local" / "bin" / exe
     if local.exists() and str(local) not in candidates:
         candidates.append(str(local))
-    older = None
+    older, broken = None, None                         # broken: one beside this Python that does not run
     for i, c in enumerate(candidates):
         runs, version = _tool_version(c, name)
-        if not runs and i < own:
-            # pip's launcher names the Python it was installed with, so in a folder moved after setup it does not start
-            # ("Fatal error in launcher", issue 78): the same version installed again writes it for this folder
-            say(f"  {exe} does not start (was this folder moved?): installing it again")
-            try:
-                import importlib.metadata as md
-                spec = f"{name}=={md.version(name)}"
-            except Exception:
-                spec = name
-            run([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
-                 "--force-reinstall", "--no-deps", spec])
-            runs, version = _tool_version(c, name)
         if not runs:
+            if i < own and broken is None:
+                broken = c
             continue
         if name == "cmake" and version and version[:2] < CMAKE_MIN:
             older = older or c
             continue
         return c
+    if broken:
+        # Nothing else will do, and pip's own does not start.  Its launcher names the Python it was installed with, so
+        # in a folder moved after setup it fails ("Fatal error in launcher", issue 78): the same version installed
+        # again writes it for this folder.  pip would not do that by itself: the package is installed already.
+        say(f"  {exe} does not start (was this folder moved?): installing it again")
+        try:
+            import importlib.metadata as md
+            spec = f"{name}=={md.version(name)}"
+        except Exception:
+            spec = name
+        try:
+            run([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+                 "--force-reinstall", "--no-deps", spec])
+        except (Exception, SystemExit):
+            return older
+        runs, version = _tool_version(broken, name)
+        if runs and not (name == "cmake" and version and version[:2] < CMAKE_MIN):
+            return broken
     return older
 
 

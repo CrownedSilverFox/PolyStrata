@@ -31,7 +31,7 @@ class HeaderBrand(unittest.TestCase):
 
     def test_the_name_is_a_link_to_the_project(self) -> None:
         self.assertEqual(self.tag, "a")
-        self.assertEqual(self.attrs.get("href"), "https://github.com/Niko1221/Strata")
+        self.assertEqual(self.attrs.get("href"), "https://github.com/simplexai-labs/PolyStrata")   # (this project's page)
         self.assertEqual(self.attrs.get("target"), "_blank")
         self.assertTrue({"noopener", "noreferrer"} <= set((self.attrs.get("rel") or "").split()))
 

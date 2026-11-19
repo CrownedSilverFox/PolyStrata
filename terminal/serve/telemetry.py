@@ -1765,12 +1765,13 @@ class Telemetry:
         else:
             s["cpu"] = self.fallback.cpu()
             s["ram_used"], s["ram_total"] = self.fallback.ram()
-        if getattr(self, "quota", False):                # (a Telemetry made without __init__, as a test does, has none)
-            s["cpu"] = self.cgroup.cpu()
-        if self.cgroup.mem and s.get("ram_total") and self.cgroup.mem < s["ram_total"]:
-            used = self.cgroup.ram_used()
+        cg = getattr(self, "cgroup", None)               # (a Telemetry made without __init__, as a test does, has none)
+        if cg is not None and getattr(self, "quota", False):
+            s["cpu"] = cg.cpu()
+        if cg is not None and cg.mem and s.get("ram_total") and cg.mem < s["ram_total"]:
+            used = cg.ram_used()
             if used is not None:
-                s["ram_used"], s["ram_total"] = used, self.cgroup.mem
+                s["ram_used"], s["ram_total"] = used, cg.mem
         s["disk_read_mb"], s["disk_write_mb"] = self._disk()
         if self.extra:
             try:
