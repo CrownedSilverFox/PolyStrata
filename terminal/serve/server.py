@@ -4401,7 +4401,7 @@ class Service:
                     old.unload()
             freed = self.free_vram_mib() if debug else None
             try:
-                engine, vision, sampling_defaults, effort_end, groups = start_model(cfg, tok)
+                engine, vision, sampling_defaults, effort_end, groups = start_model(cfg, tok, offline=self.offline)
             except (Exception, SystemExit) as e:
                 print(f"[strata] {target['id']} did not start ({e}); starting {old_name} again ...", flush=True)
                 try:
@@ -8983,13 +8983,13 @@ def engine_exe(cfg: dict) -> str:
     return cfg["exe"] if os.path.isabs(cfg["exe"]) else os.path.abspath(os.path.join(cfg.get("cwd") or ".", cfg["exe"]))
 
 
-def start_model(cfg: dict, tok, lazy: bool = False):
+def start_model(cfg: dict, tok, lazy: bool = False, *, offline: bool = False):
     """A run config's engine, started (with `lazy`: left for the first request to start), and its vision encoder:
     (engine, vision, sampling defaults, the engine's arguments for an effort at the end or None, and the replica
     card groups).  SystemExit for
     a config that cannot be used, RuntimeError for an engine that does not start."""
     vision = None
-    env = child_env(cfg)
+    env = child_env(cfg, offline=offline)
     sampling_defaults = sampling_defaults_from_config(cfg)
     if sampling_defaults:
         pretty = ", ".join(f"{k}={v}" for k, v in sampling_defaults.items())
@@ -9016,7 +9016,7 @@ def start_model(cfg: dict, tok, lazy: bool = False):
                         env=vision_env(cfg, env), lazy=lazy)
     print("model unloaded; the first request loads it ..." if lazy else
           "loading the model (the first start takes a minute or two) ...", flush=True)
-    warn_budget_over_ram(engine_args(cfg) if "args" in cfg else [])      # #1080
+    warn_budget_over_ram(engine_args(cfg, announce=False) if "args" in cfg else [])      # #1080
     if layer_split_of(cfg):
         try:
             split = layer_split_value(cfg)          # #644: before the (minutes-long) start
@@ -9041,10 +9041,9 @@ def start_model(cfg: dict, tok, lazy: bool = False):
     except rp.ReplicaConfigError as e:
         raise SystemExit(f"[strata] config {e}")
     if groups:
-        engine = start_replicas(cfg, groups, exe, effort_end or [], lazy)
+        engine = start_replicas(cfg, groups, exe, effort_end or [], lazy, offline=offline)
     else:
-        engine = StrataEngine(exe, engine_args(cfg) + (effort_end or []), cwd=cfg.get("cwd"), log=cfg.get("log"),
-                              env=env, lazy=lazy)
+        engine = start_engine_or_fallback(cfg, exe, effort_end, env, lazy, tok, offline=offline)
     engine.silence_s = silence                      # an attribute of its own: restart() keeps it
     warn_tight_ram(engine.info.get("arena_mib"))
     note = desktop_vram_note(cfg.get("backend"), engine.info.get("vram_free_mib"), engine.spawn[1],
