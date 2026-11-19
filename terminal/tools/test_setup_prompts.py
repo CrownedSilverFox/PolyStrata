@@ -126,7 +126,7 @@ class VisualStudio(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             old, new = self.vs(Path(t) / "2022", "14.44.35207", "14.44.35207"), \
                 self.vs(Path(t) / "2026", "14.51.36231", "14.44.35207")
-            both = {"[16.0,18.0)": str(Path(t) / "2022"), "": str(Path(t) / "2026")}
+            both = {"[17.0,18.0)": str(Path(t) / "2022"), "": str(Path(t) / "2026")}
             self.assertEqual(self.found(t, both), old)
             self.assertEqual(self.found(t, {"": str(Path(t) / "2026")}), new)
 

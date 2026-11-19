@@ -376,16 +376,17 @@ BACKEND_LISTS = {
     "cuda": {"gu": {16, 17, 18, 21, 22, 23, 29, 42, 12, 13, 14, 6, 2, 3, 8, 40, 144, 145, 147, 148, 149},
              "down": {20, 23, 42, 7, 6, 2, 3, 8, 13, 14, 40, 144, 146, 147, 148, 149},
              "is_iq": {16, 17, 18, 20, 21, 22, 23, 29, 42, 11, 12, 13, 14, 7, 6, 2, 3, 8, 40, 144, 145, 146, 147, 148, 149},
-             "mmvq": MMVQ, "embed_extra": {30, 14}},
+             "mmvq": MMVQ | {10, 39, 40},        # PolyStrata: Q2_K, MXFP4 and NVFP4 too (strata-poly's models)
+             "embed_extra": {30, 14}},
     # sycl/src/kernels/cuda/iq_kernels.dp.cpp (the SYCL port; it has no NVFP4 or the Gyro-L pair-trellis types)
     "sycl": {"gu": {16, 17, 18, 21, 22, 23, 29, 42, 12, 13, 14, 6, 2, 3, 8, 144, 145},
              "down": {20, 23, 42, 7, 6, 2, 3, 8, 13, 14, 144, 146},
              "is_iq": {144, 145, 146, 16, 17, 18, 20, 21, 22, 23, 29, 42, 11, 12, 13, 14, 7, 6, 2, 3, 8},
              "mmvq": MMVQ, "embed_extra": {30}},
     # metal/src/engine/iq_host.cpp (host helpers; the kernels are mac-kern's, metal/src/engine/window.cpp: not audited)
-    "metal": {"gu": {16, 17, 18, 21, 22, 23, 29, 12, 13, 14, 42, 144, 145, 147, 148, 149, 8},
-              "down": {23, 42, 144, 146, 147, 148, 149, 20, 7, 6, 8, 11, 12, 13, 14, 21},
-              "is_iq": {16, 17, 18, 20, 21, 22, 23, 29, 42, 11, 12, 13, 14, 7, 6, 2, 3, 8, 144, 145, 146, 147, 148, 149},
+    "metal": {"gu": {16, 17, 18, 21, 22, 23, 29, 12, 13, 14, 42, 144, 145, 147, 148, 149, 8, 40},    # 40: PolyStrata, NVFP4 from a ready pack
+              "down": {23, 42, 144, 146, 147, 148, 149, 20, 7, 6, 8, 11, 12, 13, 14, 21, 40},
+              "is_iq": {16, 17, 18, 20, 21, 22, 23, 29, 42, 11, 12, 13, 14, 7, 6, 2, 3, 8, 40, 144, 145, 146, 147, 148, 149},
               "mmvq": MMVQ, "embed_extra": {30}},
 }
 BACKEND_LISTS["hip"] = BACKEND_LISTS["cuda"]

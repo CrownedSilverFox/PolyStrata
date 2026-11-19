@@ -38,6 +38,7 @@ KEEP = "|".join((
     r"class Strata\b|: Strata(?=[,)])|\bStrata\(|(?<=\w)\.Strata\b",   # the MCP server's class
     r"needs a newer Strata engine: update Strata to use it",   # the update feed's words (terminal/strata_control, not renamed)
     r"this Strata version doesn't know this model yet: update Strata to use it",
+    r"The AMD build of Strata can use it",              # strata_control/gpu_fit.py's line, quoted by a test
     r"Desktop[\\/]Strata",                              # a path on a developer's own PC
     r"\\\(Strata SYCL engine",                          # a label the Intel page strips; another program writes it
     r'replace\("Strata ",',                             # the engine's own build_info, which the benchmark strips

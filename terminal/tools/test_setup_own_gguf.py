@@ -100,7 +100,9 @@ class OwnGguf(unittest.TestCase):
     def test_a_wrong_hash_deletes_only_what_setup_downloaded(self):
         gguf(self.f, "qwen35moe")
         size = self.f.stat().st_size
-        self.assertEqual(quiet(setup.verify_sha256, self.f, size, "0" * 64, own=True)[0], "stopped")
+        code, out = quiet(setup.verify_sha256, self.f, size, "0" * 64, own=True)
+        self.assertEqual(code, "ok")               # their own complete GGUF is used as it is, with a warning (since the 0.2.16 merge)
+        self.assertIn("is not the published file", out)
         self.assertTrue(self.f.exists())           # the user's own folder: left alone
         self.assertEqual(quiet(setup.verify_sha256, self.f, size, "0" * 64)[0], "stopped")
         self.assertFalse(self.f.exists())          # setup's download: deleted so the next run fetches it again

@@ -88,7 +88,7 @@ class SetupFitRule(unittest.TestCase):
         self.assertIn("never split across NVIDIA and AMD cards", out)
         self.assertIn("two models at the same", out)
         self.assertIn("not supported yet", out)
-        self.assertIn("This computer also has an AMD AI PRO R9700 (32 GB). The AMD build of PolyStrata can use it", out)
+        self.assertIn("This computer also has an AMD AI PRO R9700 (32 GB). The AMD build of Strata can use it", out)
         self.assertNotIn("Which GPUs?", " ".join(asked))              # one NVIDIA card: no split question
         self.assertEqual(cfg.get("gpu", 0), 0)
 

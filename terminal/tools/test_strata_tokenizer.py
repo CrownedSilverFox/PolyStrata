@@ -407,7 +407,8 @@ class PreTokenizerType(unittest.TestCase):
             self.assertEqual(ST.pre_tokenizer_kind(p), "deepseek3", p)
 
     def test_unknown_types_are_refused_with_the_name(self):
-        for p in ("qwen2", "qwen3", "qwen4", "default", "gpt2", "llama-bpe", "joyai-llm", "Qwen35", " qwen35"):
+        self.assertEqual(ST.pre_tokenizer_kind("joyai-llm"), "poly")     # PolyStrata: DeepSeek V4 Flash's, split by its own rule
+        for p in ("qwen2", "qwen3", "qwen4", "default", "gpt2", "llama-bpe", "Qwen35", " qwen35"):
             with self.subTest(p):
                 self.assertIsNone(ST.pre_tokenizer_kind(p))
                 with self.assertRaises(ST.UnknownPreTokenizer) as cm:

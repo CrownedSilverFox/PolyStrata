@@ -169,7 +169,7 @@ class Vision(unittest.TestCase):
         self.assertIn("mmproj-Qwen3.8-Flash-Next-BF16.gguf", M.VISION_SHA256)
         src = (ROOT.parent / "engine" / "metal" / "setup_mac.py").read_text(encoding="utf-8")
         self.assertIn('"-DSTRATA_VISION_CUDA=OFF"', src)
-        self.assertIn('"-DGGML_METAL=ON"', src)
+        self.assertIn('"-DSTRATA_VISION_METAL=ON"', src)      # the Strata project's own picture reader, on the Mac's GPU
         self.assertIn('cfg["args"] += ["--vision"]', src)
 
 
@@ -894,7 +894,10 @@ class FullCatalog(unittest.TestCase):
                     if fam.get("ready"):
                         paths=setup.ready_paths(model,root)
                         self.assertEqual(args[args.index("--pack")+1],str(paths["pack"]))
-                        self.assertEqual(args[args.index("--embd-gguf")+1],str(paths["embd"]))
+                        if "embd" in paths:            # (a prepared pack has its embedding in the dense GGUF)
+                            self.assertEqual(args[args.index("--embd-gguf")+1],str(paths["embd"]))
+                        else:
+                            self.assertNotIn("--embd-gguf", args)
                         self.assertEqual(cfg["env"]["STRATA_METAL_STREAM"],"1")
                         self.assertEqual(verify.call_count,len(setup.ready_files(model)))
 

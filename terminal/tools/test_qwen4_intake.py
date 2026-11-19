@@ -188,8 +188,8 @@ class RealSets(unittest.TestCase):
         text = "\n".join(v["blockers"])
         self.assertIn("deepseek41", text)
         self.assertIn("strata-dsv41", text)
-        self.assertIn("joyai-llm", text)           # the pre-tokenizer
-        self.assertIn("MXFP4", text)               # a quant type with no kernel in any Qwen path list
+        self.assertNotIn("joyai-llm", text)        # PolyStrata's tokenizer splits it (DeepSeek V4 Flash on strata-poly): not a blocker here
+        self.assertNotIn("MXFP4", text)            # PolyStrata's native_mmvq has an MXFP4 kernel (strata-poly's models): not a blocker here
         self.assertEqual(v["backends"], [])
         self.assertEqual(len(r["files"]), 9)
 
@@ -333,11 +333,11 @@ class SyntheticSets(unittest.TestCase):
             for f in files:
                 for t in f["tensors"]:
                     if t[0] == "blk.5.attn_qkv.weight":
-                        t[2] = 10                     # Q2_K as a dense projection: not in any native_mmvq_supported list
+                        t[2] = 19                     # IQ1_S as a dense projection: not in any native_mmvq_supported list (PolyStrata's has Q2_K)
         r = analyse(files_for("fn_unsloth_ud_q4_k_xl", "q2k", retype))
         v = r["verdict"]
         self.assertEqual(v["case"], "C")
-        self.assertTrue(any("Q2_K" in b for b in v["blockers"]), v["blockers"])
+        self.assertTrue(any("IQ1_S" in b for b in v["blockers"]), v["blockers"])
 
     def test_an_unknown_pre_tokenizer_is_case_c(self):
         r = analyse(files_for("fn_unsloth_ud_q4_k_xl", "pre", lambda fs: fs[0]["metadata"].__setitem__("tokenizer.ggml.pre", "qwen4")),
@@ -535,9 +535,10 @@ class TablesMatchTheSources(unittest.TestCase):
         self.assertRegex(_read("CMakeLists.txt"), r'option\(STRATA_Q6K_EXPERTS "[^"]*" ON\)')
 
     def test_mmvq_lists(self):
-        for rel in ("src/kernels/cuda/native_mmvq.cu", "sycl/src/kernels/cuda/native_mmvq.dp.cpp", "metal/src/engine/mmvq_host.cpp"):
+        for be, rel in (("cuda", "src/kernels/cuda/native_mmvq.cu"), ("sycl", "sycl/src/kernels/cuda/native_mmvq.dp.cpp"),
+                        ("metal", "metal/src/engine/mmvq_host.cpp")):
             with self.subTest(rel):
-                self.assertEqual(_ints(_func(_read(rel), "bool native_mmvq_supported"), r"ggml_type == (\d+)"), Q.MMVQ)
+                self.assertEqual(_ints(_func(_read(rel), "bool native_mmvq_supported"), r"ggml_type == (\d+)"), Q.BACKEND_LISTS[be]["mmvq"])
 
     def test_sycl_lists(self):
         text = _read("sycl/src/kernels/cuda/iq_kernels.dp.cpp")

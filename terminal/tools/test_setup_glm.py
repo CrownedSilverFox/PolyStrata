@@ -171,8 +171,8 @@ class Config(unittest.TestCase):
             with mock.patch.object(sys, "executable", str(mine / "python")), \
                     mock.patch.object(setup.shutil, "which", lambda n: "/usr/bin/" + n), \
                     mock.patch.object(setup.Path, "home", lambda: Path(t) / "home"), \
-                    mock.patch.object(setup, "out", lambda c: "cmake version 3.31.6\n"), \
-                    mock.patch.object(setup, "run") as run:
+                    mock.patch.object(setup, "_tool_version", lambda path, name: (True, (3, 31, 6))), \
+                    mock.patch.object(setup, "run") as run:        # (find_tool asks each one for its version: they all "run" here)
                 self.assertEqual(setup.find_tool("cmake"), "/usr/bin/cmake")       # none of its own: PATH's
                 (mine / name).write_text("")
                 self.assertEqual(setup.find_tool("cmake"), str(mine / name))
@@ -200,8 +200,11 @@ class Config(unittest.TestCase):
             mine, name = Path(t) / "bin", "cmake" + (".exe" if setup.WIN else "")
             mine.mkdir()
             (mine / name).write_text("")
+            answers = [(False, ()), (True, (3, 31, 6))]        # it does not start; installed again, it does
             with mock.patch.object(sys, "executable", str(mine / "python")), \
-                    mock.patch.object(setup, "out", lambda c: ""), \
+                    mock.patch.object(setup.shutil, "which", lambda n: None), \
+                    mock.patch.object(setup.Path, "home", lambda: Path(t) / "home"), \
+                    mock.patch.object(setup, "_tool_version", lambda path, name: answers.pop(0)), \
                     mock.patch("importlib.metadata.version", lambda n: "3.31.6"), \
                     mock.patch.object(setup, "run") as run, \
                     mock.patch.object(setup, "say"):

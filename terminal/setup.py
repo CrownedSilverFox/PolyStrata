@@ -3038,6 +3038,7 @@ def find_tool(name):
     one CMakeLists.txt needs while another is found; with only an older one it is returned and the build says so."""
     exe = name + (".exe" if WIN else "")
     candidates = [str(d / exe) for d in (Path(sys.executable).parent / "Scripts", Path(sys.executable).parent) if (d / exe).exists()]
+    own = len(candidates)                              # the ones pip installed beside this Python
     on_path = shutil.which(name)
     if on_path and on_path not in candidates:
         candidates.append(on_path)
@@ -3045,8 +3046,20 @@ def find_tool(name):
     if local.exists() and str(local) not in candidates:
         candidates.append(str(local))
     older = None
-    for c in candidates:
+    for i, c in enumerate(candidates):
         runs, version = _tool_version(c, name)
+        if not runs and i < own:
+            # pip's launcher names the Python it was installed with, so in a folder moved after setup it does not start
+            # ("Fatal error in launcher", issue 78): the same version installed again writes it for this folder
+            say(f"  {exe} does not start (was this folder moved?): installing it again")
+            try:
+                import importlib.metadata as md
+                spec = f"{name}=={md.version(name)}"
+            except Exception:
+                spec = name
+            run([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+                 "--force-reinstall", "--no-deps", spec])
+            runs, version = _tool_version(c, name)
         if not runs:
             continue
         if name == "cmake" and version and version[:2] < CMAKE_MIN:
@@ -4189,7 +4202,6 @@ def verify_sha256(s: Path, size: int, sha: str, own: bool = False, repair=None, 
             hint = "run setup again: the kept file is checked once more, and if it still differs it is downloaded again and the kept one is removed"
         fail(f"{s.name} does not match the pinned SHA-256 (it is {digest}, PolyStrata expects {sha}); the file was kept as {s.name}.bad", hint)
     mark(s, f"sha256 {sha}")
-    return True
 
 
 def sha256_matches(s: Path, size: int, sha: str) -> bool:
@@ -9914,7 +9926,7 @@ def build_engine_poly_hip(gpu, llama, portable=False) -> Path:
     os.environ.update({"HIP_PLATFORM": "amd", "HIP_COMPILER": "clang", "HIP_RUNTIME": "rocclr", "ROCM_PATH": str(root),
                        "HIP_PATH": str(root)})
     os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(dirs + [os.environ.get("LD_LIBRARY_PATH", "")]).rstrip(os.pathsep)
-    os.environ["PATH"] = os.pathsep.join([str(root / "bin"), str(root / "llvm" / "bin"), os.environ.get("PATH", "")])
+    os.environ["PATH"] = os.pathsep.join([str(root / "bin"), str(rocm_clang(root).parent), os.environ.get("PATH", "")])
     say("  strata-poly's source changed: compiling it again (only what changed, a few minutes) ..."
         if meta.get("backend") == "hip" and (eng / POLY_EXE).exists()
         else f"  Compiling the strata-poly engine for your AMD GPU ({', '.join(archs)}; some minutes, once) ...")
@@ -9922,7 +9934,7 @@ def build_engine_poly_hip(gpu, llama, portable=False) -> Path:
                 ["-DSTRATA_ENABLE_HIP=ON", "-DSTRATA_ENABLE_CUDA=OFF", "-DSTRATA_BUILD_TESTS=OFF",
                  f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}",
                  "-DCMAKE_HIP_ARCHITECTURES=" + ";".join(archs),
-                 f"-DCMAKE_HIP_COMPILER={root / 'llvm' / 'bin' / 'clang++'}", f"-DCMAKE_HIP_COMPILER_ROCM_ROOT={root}",
+                 f"-DCMAKE_HIP_COMPILER={rocm_clang(root)}", f"-DCMAKE_HIP_COMPILER_ROCM_ROOT={root}",
                  "-DCMAKE_PREFIX_PATH=" + ";".join([str(root), *libs]),
                  f"-DCMAKE_HIP_FLAGS=--rocm-path={root} --rocm-device-lib-path={bitcode}",
                  f"-DSTRATA_GGML_DIR={llama}"], None, "")
