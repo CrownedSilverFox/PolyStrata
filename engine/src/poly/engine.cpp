@@ -4360,12 +4360,17 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         int32_t host_e[kCpuRows * kMaxUsed], host_k[kCpuRows * kMaxUsed];   // a host entry's expert and its place
         float host_rel[kCpuRows * kMaxUsed];   // and its weight's share of its token's experts' weight
         int n_host = 0, n_cached = 0;
-        for (int t = 0; t < m; ++t) {
-            int ids[kMaxUsed];
-            float w[kMaxUsed];
+        // A row's routing is a softmax over every expert and a search for the likeliest: 3.4 us a row of Qwen3.6's
+        // 256, which on this thread was 27 us of a step's half of 8 rows.  The workers take a row each, as a prompt's
+        // rows (moe_rows()); --cache-bias's scores are in one buffer, so its rows go one by one here.
+        int ids_of[kCpuRows][kMaxUsed];
+        float w_of[kCpuRows][kMaxUsed];
+        const auto route_row = [&](int t) {
+            int* ids = ids_of[t];
+            float* w = w_of[t];
             const float* scores = h_rl_ + (size_t) (at + t) * n_expert_;
             route(il, opt_.cache_bias > 0.f ? biased(L, scores) : scores, tok_ ? tok_[at + t] : -1, ids, w,
-                  route_tmp_.data());
+                  route_tmp_.data() + (size_t) t * 2 * n_expert_);
             if (opt_.cache_bias > 0.f) {
                 // --cache-bias: the biased scores chose the experts; the weights are the router's own, a softmax of
                 // the scores it gave the chosen ones
@@ -4374,6 +4379,14 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                 for (int k = 0; k < n_used_; ++k) sum += w[k] = std::exp(scores[ids[k]] - mx);
                 for (int k = 0; k < n_used_; ++k) w[k] /= sum;
             }
+        };
+        if (m > 1 && opt_.cache_bias <= 0.f && route_tmp_.size() >= (size_t) m * 2 * n_expert_)
+            workers_->run(m, route_row);
+        else
+            for (int t = 0; t < m; ++t) route_row(t);
+        for (int t = 0; t < m; ++t) {
+            const int* ids = ids_of[t];
+            const float* w = w_of[t];
             float w_all = 0.f;
             for (int k = 0; k < n_used_; ++k) w_all += w[k];
             for (int k = 0; k < n_used_; ++k) {
