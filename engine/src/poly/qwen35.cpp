@@ -624,6 +624,44 @@ void Qwen35::attn_rows(Block& B, int n) {
     const float scale = 1.f / std::sqrt((float) head_dim_);
     const bool q8 = opt_.kv_format == KvFmt::kQ8_0;
     const size_t kv = (size_t) n_kv_ * head_dim_, hq = (size_t) n_head_ * head_dim_;
+#if !defined(STRATA_GPU_METAL)
+    // Under a q8_0 cache the turns and the stores are a row's alone: every row of every sequence in one launch
+    // each, a row's own turn and cache from at_ and seq_buf().  Then the attention, a sequence at a time.
+    if (q8 && n <= RowCaches::kMax) {
+        head_norm_rope_rows(qg_, 2 * head_dim_, fp(B.q_norm), q_, head_dim_, n_head_, n_rot_, theta_scale_, n,
+                            rms_eps_, st_, sections_, at + 1);
+        head_norm_rope_rows(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, n, rms_eps_,
+                            st_, sections_, at + 1);
+        RowCaches keys, vals;
+        for (int r = 0; r < n; ++r) {
+            keys.codes[r] = (int8_t*) seq_buf(rows_of_[r].seq, B.k_codes);
+            keys.scales[r] = (uint16_t*) seq_buf(rows_of_[r].seq, B.k_scales);
+            vals.codes[r] = (int8_t*) seq_buf(rows_of_[r].seq, B.v_codes);
+            vals.scales[r] = (uint16_t*) seq_buf(rows_of_[r].seq, B.v_scales);
+        }
+        store_q8_rows(k_, keys, (int) kv, at, n, st_);
+        store_q8_rows(v_, vals, (int) kv, at, n, st_);
+        for (int i = 0, m; i < n; i += m) {
+            const Row& r = rows_of_[i];
+            const long long* ai = at + 2 * i;
+            m = i + 1 < n && rows_of_[i + 1].seq == r.seq ? 2 : 1;
+            const Kvq8 kq{keys.codes[i], keys.scales[i]}, vq{vals.codes[i], vals.scales[i]};
+            const int64_t keep = pos_;
+            pos_ = r.pos;
+            const int sized = room(m);
+            pos_ = keep;
+            const size_t sf = (size_t) chunk_ * n_head_ * opt_.max_context;
+            if (!(fdec_ && r.pos >= fdec_from_ &&
+                  fdec_q8(q_ + i * hq, kq, vq, r.pos, m, ai, sized, att_ + i * hq, head_dim_, n_head_, n_kv_, scale,
+                          score_, sf, st_)))
+                attend(q_ + i * hq, nullptr, nullptr, r.pos, m, score_, chunk_, att_ + i * hq, head_dim_, n_head_,
+                       n_kv_, scale, st_, 0, 0, false, ai, sized, 0, kq, vq);
+        }
+        mul_sigmoid(att_, qg_ + head_dim_, head_dim_, n * n_head_, 2 * head_dim_, false, st_);
+        lin(B.wo, att_, ao_, n);
+        return;
+    }
+#endif
     for (int i = 0, m; i < n; i += m) {
         const Row& r = rows_of_[i];
         const long long* ai = at + 2 * i;

@@ -127,6 +127,14 @@ void store_q8(const float* x, int8_t* codes, uint16_t* scales, int n, int64_t po
 /// The same from the row the card holds at `at` when the launch runs; with `ring`, a row is its number % ring.
 void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const long long* at, int rows, int ring,
                  void* stream);
+/// store_q8_at() for rows of different sequences: row r into codes[r] and scales[r] at the row at[2 * r] (step()'s
+/// pairs of position and turn).  Each row gets the bits a call of its own gives.  CUDA only.
+struct RowCaches {
+    static constexpr int kMax = 32;
+    int8_t* codes[kMax] = {};
+    uint16_t* scales[kMax] = {};
+};
+void store_q8_rows(const float* x, const RowCaches& caches, int n, const long long* at, int rows, void* stream);
 /// Attention over cached latents for the tokens from position `pos`.  q: n_head * rank absorbed queries a token.
 /// The first dense_rows tokens attend to every cache row up to their own.  The others each have a list in sel
 /// (sel_stride apart): top_rows cache rows, then the rows of the pool their own position is still filling.
@@ -244,6 +252,10 @@ void add_bias(const float* b, float* acc, int n, int rows, void* stream);
 void head_norm_rope(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
                     float theta_scale, int64_t pos, int rows, float eps, void* stream, const float* freq = nullptr,
                     const int32_t* axes = nullptr, int sections = 1, const long long* at = nullptr);
+/// head_norm_rope() for rows of different sequences: row r turns by turns[2 * r] (step()'s pairs of position and
+/// turn, from the turn of the first), the bits a call of its own gives the row.  CUDA only.
+void head_norm_rope_rows(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
+                         float theta_scale, int rows, float eps, void* stream, int sections, const long long* turns);
 /// An attention cache stored as ggml Q8_0: a row is `n` int8 codes and `n / 32` fp16 scales with
 /// `n = kv_heads * dim`, row-major (`codes[row * n + blk * 32 + j]`, `scales[row * (n / 32) + blk]`).
 /// A q8 read is active wherever `codes` is not null.  The value a block holds is

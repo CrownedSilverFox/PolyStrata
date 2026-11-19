@@ -1117,7 +1117,7 @@ __global__ void head_norm_rope_kernel(const float* __restrict__ x, int x_stride,
                                       float* __restrict__ y, int dim, int heads, int n_rot, float theta_scale,
                                       const float* __restrict__ freq, long long pos, float eps,
                                       const int* __restrict__ axes, int sections,
-                                      const long long* __restrict__ at) {
+                                      const long long* __restrict__ at, int at_stride = 0) {
     __shared__ float part[8];
     const float* xr = x + size_t(blockIdx.x) * x_stride;
     float* yr = y + size_t(blockIdx.x) * dim;
@@ -1126,7 +1126,8 @@ __global__ void head_norm_rope_kernel(const float* __restrict__ x, int x_stride,
     ss = block_sum(ss, part);
     const float scale = 1.0f / sqrtf(ss / float(dim) + eps);
     const int tok = blockIdx.x / heads;
-    const float own = float((at ? *at : pos) + tok);
+    // at_stride: a row of its own sequence, its turn at[tok * at_stride] (head_norm_rope_rows())
+    const float own = at_stride ? float(at[size_t(tok) * at_stride]) : float((at ? *at : pos) + tok);
     const int half = n_rot / 2;
     for (int i = threadIdx.x; i < dim; i += blockDim.x) {
         if (i >= n_rot) {
@@ -2937,6 +2938,36 @@ void store_q8(const float* x, int8_t* codes, uint16_t* scales, int n, int64_t po
                                                             (half*) scales + (size_t) pos * nb, n, rows, nb);
 }
 
+// store_q8_at_kernel for rows of different sequences: the same code on row trow's own cache and row.
+__global__ void store_q8_rows_kernel(const float* __restrict__ x, const RowCaches caches, int n, int rows, int nb,
+                                     const long long* __restrict__ at) {
+    const int gb = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gb >= nb * rows) return;
+    const int trow = gb / nb, blk = gb % nb;
+    const long long row = at[2 * size_t(trow)];
+    const float* xr = x + (size_t) trow * n + blk * 32;
+    float amax = 0.f;
+#pragma unroll
+    for (int j = 0; j < 32; ++j) amax = fmaxf(amax, fabsf(xr[j]));
+    const float d = amax / 127.0f;
+    const float id = d > 0.f ? 1.0f / d : 0.0f;
+    ((half*) caches.scales[trow])[(size_t) row * nb + blk] = __float2half(d);
+    int8_t* cr = caches.codes[trow] + (size_t) row * n + blk * 32;
+#pragma unroll
+    for (int j = 0; j < 32; ++j) {
+        float q = rintf(xr[j] * id);
+        q = fminf(fmaxf(q, -127.0f), 127.0f);
+        cr[j] = (int8_t) q;
+    }
+}
+
+void store_q8_rows(const float* x, const RowCaches& caches, int n, const long long* at, int rows, void* stream) {
+    if ((n & 31) != 0) throw std::invalid_argument("store_q8_rows: n is not a multiple of 32");
+    if (rows < 1 || rows > RowCaches::kMax) throw std::invalid_argument("store_q8_rows: 1 to 32 rows");
+    const int nb = n >> 5;
+    store_q8_rows_kernel<<<grid((size_t) nb * rows, 256), 256, 0, cs(stream)>>>(x, caches, n, rows, nb, at);
+}
+
 void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const long long* at, int rows, int ring,
                  void* stream) {
     if ((n & 31) != 0) throw std::invalid_argument("store_q8_at: n is not a multiple of 32");
@@ -3105,6 +3136,12 @@ void head_norm_rope(const float* x, int x_stride, const float* w, float* y, int 
                     const int32_t* axes, int sections, const long long* at) {
     head_norm_rope_kernel<<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
         x, x_stride, w, y, dim, heads, n_rot, theta_scale, freq, (long long) pos, eps, axes, sections, at);
+}
+
+void head_norm_rope_rows(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
+                         float theta_scale, int rows, float eps, void* stream, int sections, const long long* turns) {
+    head_norm_rope_kernel<<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
+        x, x_stride, w, y, dim, heads, n_rot, theta_scale, nullptr, 0LL, eps, nullptr, sections, turns, 2);
 }
 
 void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int64_t pos, int rows, float* score,
