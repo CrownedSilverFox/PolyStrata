@@ -11648,8 +11648,9 @@ def main() -> int:
     _peek = lambda flag: next((v.split("=", 1)[1] if v.startswith(flag + "=") else sys.argv[i + 2] if i + 2 < len(sys.argv) else None   # noqa: E731
                                for i, v in enumerate(sys.argv[1:]) if v == flag or v.startswith(flag + "=")), None)
     from strata_control import retired
-    if retired.is_name(_peek("--family")) or (_peek("--model") and retired.is_name(_peek("--model"))
-                                              and (not _peek("--family") or retired.is_name(_peek("--family")))):
+    _own = FAMILIES.get(_peek("--family") or "", {}).get("engine") == "poly"   # our deepseek family is strata-poly's DeepSeek V4 Flash
+    if not _own and (retired.is_name(_peek("--family")) or (_peek("--model") and retired.is_name(_peek("--model"))
+                                              and (not _peek("--family") or retired.is_name(_peek("--family"))))):
         say("  " + retired.NOT_OFFERED)                # DeepSeek: no longer offered (strata_control/retired.py)
         return 2
     if sys.platform == "darwin" and not CONTROL:       # a Mac: metal/setup_mac.py (the Metal engine); the app (Control mode) goes on below.

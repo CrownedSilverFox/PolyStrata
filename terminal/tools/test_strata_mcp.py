@@ -171,7 +171,7 @@ class FakeRoot(unittest.TestCase):
         self.strata.disk_free = lambda p: 1000.0
         self.tools = M.Tools(self.strata)
         self.extra = []
-        # the tests must never see a PolyStrata server that happens to run on the real default port on this PC
+        # the tests must never see a Strata server that happens to run on the real default port on this PC
         self._default_port = M.DEFAULT_PORT
         M.DEFAULT_PORT = free_port()
 
@@ -361,17 +361,17 @@ class Validation(FakeRoot):
     @unittest.skipIf(M.WIN, "POSIX paths")
     def test_a_drive_the_desktop_mounted_is_not_a_system_folder(self):
         """/run/media/<user>/<drive> sits inside /run, but it is where an external drive is mounted."""
-        for raw in ("/run/media/ann/Backup/PolyStrata-data", "/run/media/ann/Backup/PolyStrata"):
+        for raw in ("/run/media/ann/Backup/Strata-data", "/run/media/ann/Backup/Strata"):
             self.assertTrue(M.mounted_drive(M.norm(raw)), raw)
-        for raw in ("/run", "/run/media", "/run/user/1000/PolyStrata-data", "/run/systemd/PolyStrata-data", "/etc/PolyStrata-data"):
+        for raw in ("/run", "/run/media", "/run/user/1000/Strata-data", "/run/systemd/Strata-data", "/etc/Strata-data"):
             self.assertFalse(M.mounted_drive(M.norm(raw)), raw)
 
     def test_the_persons_own_data_folder_is_accepted_whatever_it_is_called(self):
         """The app writes the folder the person chose into the settings file (apps/host model-folder.mjs); an AI tool naming a new
-        folder still needs a PolyStrata... name."""
+        folder still needs a Strata... name."""
         chosen = self.root.parent / "my-big-disk"
         chosen.mkdir()
-        self.assertRejected("strata_install", {"data_dir": str(chosen)}, "named PolyStrata")
+        self.assertRejected("strata_install", {"data_dir": str(chosen)}, "named Strata")
         settings = self.tools.s.settings_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps({"data_dir": str(chosen)}))
@@ -921,7 +921,7 @@ class MacCatalog(unittest.TestCase):
             import pwd
             real_home = pwd.getpwuid(os.getuid()).pw_dir
         with tempfile.TemporaryDirectory(dir=real_home) as t:
-            target = Path(t) / "PolyStrata-data"
+            target = Path(t) / "Strata-data"
             target.mkdir()
             plan, args = M.Tools(s).install_plan("unsloth", "UD-IQ1_M", None, "no", "int8", 0, None, None, "auto", None, str(target))
             plain, _ = M.Tools(s).install_plan("qwen", "Q2_0", None, "no", "int8", 0, None, None, "auto", None, str(target))
@@ -930,7 +930,7 @@ class MacCatalog(unittest.TestCase):
         self.assertEqual(args[:6], ["--yes", "--no-start", "--family", "unsloth", "--model", "UD-IQ1_M"])
         s.disk_free = lambda p: 100.0
         with tempfile.TemporaryDirectory(dir=real_home) as t:              # (the same reason as above)
-            target = Path(t) / "PolyStrata-data"
+            target = Path(t) / "Strata-data"
             target.mkdir()
             short, _ = M.Tools(s).install_plan("unsloth", "UD-IQ1_M", None, "no", "int8", 0, None, None, "auto", None, str(target))
         self.assertIn("not enough free disk space", short["disk_short"])
@@ -1008,7 +1008,7 @@ class MixedGraphics(unittest.TestCase):
                        {"vendor": "amd", "index": 2, "name": "AMD Radeon RX 9070 XT", "arch": "gfx1201", "usable": True, "problem": None},
                        {"vendor": "nvidia", "index": 0, "name": "NVIDIA GeForce RTX 3060", "arch": "86", "usable": True, "problem": None}]}
         with mock.patch("strata_control.engine_component.status", lambda: status):
-            M.PolyStrata._engine_code(hw)
+            M.Strata._engine_code(hw)
         by = {g["name"]: g for g in hw["gpus"]}
         self.assertFalse(by["AMD Radeon RX 6800 XT"]["usable"])
         self.assertIn("no code for gfx1030", by["AMD Radeon RX 6800 XT"]["problem"])
@@ -1019,7 +1019,7 @@ class MixedGraphics(unittest.TestCase):
         for other in ({"usable": False}, {"usable": True, "engine": {"backend": "cuda", "archs": ["sm_86"]}}):
             again = {"gpus": [{"vendor": "amd", "index": 1, "name": "x", "arch": "gfx1030", "usable": True, "problem": None}]}
             with mock.patch("strata_control.engine_component.status", lambda other=other: other):
-                M.PolyStrata._engine_code(again)
+                M.Strata._engine_code(again)
             self.assertTrue(again["gpus"][0]["usable"])
 
     @mock.patch("strata_control.engine_component.status", lambda: {"usable": False})   # not this PC's installed (CUDA) engine
@@ -1205,7 +1205,7 @@ class DraftLayerAndCancel(unittest.TestCase):
     """#3257: the draft layer's download shows real progress, and a cancel ends the whole tree."""
 
     def test_step_6_shows_the_draft_layer_download_added_to_the_finished_model_files(self):
-        lines = ["=== Step 6: preparing the model for PolyStrata ===", "  > python mtp_fetch.py fetch",
+        lines = ["=== Step 6: preparing the model for Strata ===", "  > python mtp_fetch.py fetch",
                  "  MTP draft layer:   2.00 / 5.00 GB (40%)"]
         with tempfile.TemporaryDirectory() as d:
             shard = Path(d) / "m-00001-of-00001.gguf"

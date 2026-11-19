@@ -127,6 +127,9 @@ def config_reason(cfg: Any) -> str | None:
     names no arch, the first megabyte of its tokenizer.json."""
     if not isinstance(cfg, Mapping):
         return None
+    exe = cfg.get("exe")
+    if isinstance(exe, str) and re.split(r"[\\/]", exe)[-1].lower().startswith("strata-poly"):
+        return None            # PolyStrata: DeepSeek V4 Flash on strata-poly is offered; what is retired is strata-dsv41's V4.1
     arch = cfg.get("arch")
     if isinstance(arch, str) and arch.strip().lower().startswith("deepseek"):
         return "arch"
