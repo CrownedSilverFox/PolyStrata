@@ -406,8 +406,7 @@ void Qwen35::load_card_rows(const uint8_t* src, int64_t from, int64_t count, int
 // The gated delta net.  One projection gives the queries, keys and values, which a convolution over the last
 // four tokens mixes; another gives the gate of the output.
 void Qwen35::gdn(Block& B, int n) {
-    lin(B.wqkv, xn_, proj_, n, xq_);
-    lin(B.wz, xn_, z_, n, xq_);
+    lin_pair(B.wqkv, B.wz, xn_, proj_, z_, n, xq_);
     lin_pair(B.alpha, B.beta, xn_, alpha_, beta_, n, xq_);
 #if !defined(STRATA_GPU_METAL)
     if (rows_of_) {   // step(): each sequence's rows with its own convolution and state, all sequences a launch

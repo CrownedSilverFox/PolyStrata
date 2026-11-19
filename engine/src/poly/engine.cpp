@@ -3671,9 +3671,10 @@ void Engine::lin(const Dev& w, const float* x, float* y, int n, const void* xq, 
     if (w.scale != 1.0f) axpy(y, w.scale, y, n * w.n_out, false, st_);
 }
 
-// Two Q8_0 matrices of one shape on one input, a few tokens' worth (Unsloth's files keep attention, the recurrent
-// layers' projections and the shared expert in Q8_0): one launch, each output the bits of its own launch.  A small
-// matrix alone (a recurrent layer's alpha and beta, 32 outputs) leaves most of the card idle for its launch.
+// Two Q8_0 matrices on one input, a few tokens' worth (Unsloth's files keep attention, the recurrent layers'
+// projections and the shared expert in Q8_0): one launch, each output the bits of its own launch, the second
+// matrix's rows after the first's (a recurrent layer's 8,192 rows of queries, keys and values and 4,096 of its
+// output gate).  A small matrix alone leaves most of the card idle for its launch.
 void Engine::lin_pair(const Dev& w1, const Dev& w2, const float* x, float* y1, float* y2, int n, const void* xq) {
 #if !defined(STRATA_GPU_METAL)
     // F32 or BF16, the few tokens' products of gemv_f32() or gemv_bf16(): a recurrent layer's alpha and beta, a
@@ -3683,9 +3684,10 @@ void Engine::lin_pair(const Dev& w1, const Dev& w2, const float* x, float* y1, f
         gemv_pair(w1.type == kTypeBF16 ? 1 : 0, w1.p, w2.p, x, y1, y2, w1.n_in, w1.n_out, w2.n_out, n, st_);
         return;
     }
-    const bool pair = xq && n >= 2 && n <= 8 && w1.type == w2.type && w1.n_in == w2.n_in && w1.n_out == w2.n_out &&
-                      w1.scale == 1.0f && w2.scale == 1.0f && !(mmq_ && n >= kStageRows);
-    if (pair && kernels::native_mmvq_pair((int) w1.type, w1.p, w2.p, xq, y1, y2, w1.n_in, w1.n_out, n, st_)) return;
+    const bool pair = xq && n >= 2 && n <= 8 && w1.type == w2.type && w1.n_in == w2.n_in && w1.scale == 1.0f &&
+                      w2.scale == 1.0f && !(mmq_ && n >= kStageRows);
+    if (pair && kernels::native_mmvq_pair((int) w1.type, w1.p, w2.p, xq, y1, y2, w1.n_in, w1.n_out, n, st_, w2.n_out))
+        return;
 #endif
     lin(w1, x, y1, n, xq);
     lin(w2, x, y2, n, xq);

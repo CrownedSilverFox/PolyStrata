@@ -1423,20 +1423,21 @@ static bool s26_tsum_on() {
     return on;
 }
 
-// S26 STRATA_LFUSE (PAIR): blocks n_out.. compute the same rows of w2 into y2 (two matrices of one shape on one
-// input in one launch; each output's code is the single matrix's)
+// S26 STRATA_LFUSE (PAIR): blocks n_out.. compute the rows of w2 into y2 (two matrices on one input in one launch;
+// each output's code is the single matrix's).  w2 has n_out2 rows, or n_out when that is 0.
 template<typename F, int NCOLS, int NW, int ROWS, bool TS = false, bool PAIR = false>
 __launch_bounds__(NW * WARP, (ROWS <= 2 ? 4 : 1))
 __global__ void native_mmvq_multi_kernel(const typename F::Block* __restrict__ w, const Q81Block* x_, float* y_,
                                          int n_in, int n_out,
-                                         const typename F::Block* __restrict__ w2 = nullptr, float* __restrict__ y2 = nullptr) {
+                                         const typename F::Block* __restrict__ w2 = nullptr, float* __restrict__ y2 = nullptr,
+                                         int n_out2 = 0) {
     const Q81Block* STRATA_PDL_RESTRICT x = x_;   // __restrict__ below sm_70 only (pdl.hpp, #1469)
     float* STRATA_PDL_RESTRICT y = y_;
     constexpr int BPI = F::BPI * NW / WARPS;           // blocks per iteration scale with the warp count
     const int tid = WARP * int(threadIdx.y) + int(threadIdx.x);
     int bxi = int(blockIdx.x);
     if constexpr (PAIR) {
-        if (bxi >= n_out / ROWS) { bxi -= n_out / ROWS; w = w2; y = y2; }
+        if (bxi >= n_out / ROWS) { bxi -= n_out / ROWS; w = w2; y = y2; if (n_out2) n_out = n_out2; }
     }
     const int row0 = ROWS * bxi;
     const int blocks_per_row = n_in / F::DIV;
@@ -1737,7 +1738,7 @@ void launch_multi_n(const void* weights, const void* x_q8_1, float* y, int n_in,
         constexpr int NW = NCOLS <= 4 ? 4 : 2;
         const unsigned blocks = unsigned((std::size_t(n_out) + 1) / 2);
         launch_pdl(native_mmvq_multi_kernel<F, NCOLS, NW, 2, false, false>, dim3(blocks), dim3(WARP, NW), 0, s, w, x, y, n_in, n_out,
-                   (const typename F::Block*) nullptr, (float*) nullptr);
+                   (const typename F::Block*) nullptr, (float*) nullptr, 0);
         return;
     }
     const dim3 threads(WARP, WARPS);
@@ -1751,14 +1752,14 @@ void launch_multi_n(const void* weights, const void* x_q8_1, float* y, int n_in,
         return v != nullptr && v[0] != '\0' && v[0] != '0';
     }();
     if ((rows1 || q8_0_rows1<F>(n_in, n_out)) && n_in / F::DIV >= F::BPI) {
-        if (s26_tsum_on()) launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, true, false>, dim3(unsigned(n_out)), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2);
-        else launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, false, false>, dim3(unsigned(n_out)), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2);
+        if (s26_tsum_on()) launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, true, false>, dim3(unsigned(n_out)), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2, 0);
+        else launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, false, false>, dim3(unsigned(n_out)), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2, 0);
         return;
     }
     constexpr int ROWS = 2;
     const unsigned blocks = unsigned((std::size_t(n_out) + ROWS - 1) / ROWS);
-    if (s26_tsum_on()) launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS, true, false>, dim3(blocks), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2);
-    else launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS, false, false>, dim3(blocks), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2);
+    if (s26_tsum_on()) launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS, true, false>, dim3(blocks), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2, 0);
+    else launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS, false, false>, dim3(blocks), threads, 0, s, w, x, y, n_in, n_out, no_w2, no_y2, 0);
 }
 
 template<typename F>
@@ -3809,17 +3810,19 @@ void native_q5_0_f32(const void* weights, const float* x, void* scratch_q8_1,
 
 template<int NCOLS>
 void q8_0_pair_launch(const Q80Block* w1, const Q80Block* w2, const Q81Block* x, float* y1, float* y2, int n_in, int n_out,
-                      cudaStream_t s) {
+                      int n_out2, cudaStream_t s) {
     using F = SmallTraits<Q80Block, 8>;
     const dim3 threads(WARP, WARPS);
+    const unsigned blocks = unsigned(n_out + n_out2);
     if (s26_tsum_on())
-        native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, true, true><<<unsigned(2 * n_out), threads, 0, s>>>(w1, x, y1, n_in, n_out, w2, y2);
+        native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, true, true><<<blocks, threads, 0, s>>>(w1, x, y1, n_in, n_out, w2, y2, n_out2);
     else
-        native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, false, true><<<unsigned(2 * n_out), threads, 0, s>>>(w1, x, y1, n_in, n_out, w2, y2);
+        native_mmvq_multi_kernel<F, NCOLS, WARPS, 1, false, true><<<blocks, threads, 0, s>>>(w1, x, y1, n_in, n_out, w2, y2, n_out2);
 }
 
 bool native_mmvq_pair(int ggml_type, const void* w1, const void* w2, const void* x_q8_1, float* y1, float* y2,
-                      int n_in, int n_out, int ncols, void* stream) {
+                      int n_in, int n_out, int ncols, void* stream, int n_out2) {
+    if (n_out2 <= 0) n_out2 = n_out;
     using F = SmallTraits<Q80Block, 8>;
     // only where both calls would run native_mmvq_multi_kernel<F, ncols, WARPS, 1> (exact layout, not packed)
     if (ggml_type != 8 || !g_multi_exact || ncols < 2 || ncols > 8 || n_out <= 0 || n_in <= 0 || n_in % 32 != 0 ||
@@ -3832,13 +3835,13 @@ bool native_mmvq_pair(int ggml_type, const void* w1, const void* w2, const void*
     const auto* x = static_cast<const Q81Block*>(x_q8_1);
     const auto s = static_cast<cudaStream_t>(stream);
     switch (ncols) {
-        case 2: q8_0_pair_launch<2>(a, b, x, y1, y2, n_in, n_out, s); break;
-        case 3: q8_0_pair_launch<3>(a, b, x, y1, y2, n_in, n_out, s); break;
-        case 4: q8_0_pair_launch<4>(a, b, x, y1, y2, n_in, n_out, s); break;
-        case 5: q8_0_pair_launch<5>(a, b, x, y1, y2, n_in, n_out, s); break;
-        case 6: q8_0_pair_launch<6>(a, b, x, y1, y2, n_in, n_out, s); break;
-        case 7: q8_0_pair_launch<7>(a, b, x, y1, y2, n_in, n_out, s); break;
-        default: q8_0_pair_launch<8>(a, b, x, y1, y2, n_in, n_out, s); break;
+        case 2: q8_0_pair_launch<2>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
+        case 3: q8_0_pair_launch<3>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
+        case 4: q8_0_pair_launch<4>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
+        case 5: q8_0_pair_launch<5>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
+        case 6: q8_0_pair_launch<6>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
+        case 7: q8_0_pair_launch<7>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
+        default: q8_0_pair_launch<8>(a, b, x, y1, y2, n_in, n_out, n_out2, s); break;
     }
     launch_check();
     return true;
