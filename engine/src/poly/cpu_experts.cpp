@@ -227,6 +227,7 @@ void Aside::loop() {
 }
 
 void Aside::start(const std::function<void()>& fn) {
+    finish();   // one function at a time: the one before is done first
     fn_ = &fn;
     posted_.fetch_add(1);
     if (sleeping_.load()) posted_.notify_one();

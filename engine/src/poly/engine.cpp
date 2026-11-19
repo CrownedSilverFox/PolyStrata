@@ -724,7 +724,8 @@ Engine::~Engine() {
     for (unsigned long long h : vpool_) cuMemRelease(h);   // the pool goes back to the card with the engine
     vpool_.clear();
     for (void* p : host_allocs_) cudaFreeHost(p);
-    for (void* e : {ev_stage_[0], ev_stage_[1], ev_ahead_, ev_free_, ev_in_[0], ev_in_[1], ev_out_[0], ev_out_[1], ev_hr_})
+    for (void* e : {ev_stage_[0], ev_stage_[1], ev_ahead_, ev_free_, ev_in_[0], ev_in_[1], ev_out_[0], ev_out_[1], ev_hr_,
+                    ev_saved_})
         if (e) cudaEventDestroy((cudaEvent_t) e);
     for (void* e : swap_pin_ev_)
         if (e) cudaEventDestroy((cudaEvent_t) e);
@@ -3096,6 +3097,9 @@ void Engine::load(const Options& o) {
         h_state_bytes_ = card_state_bytes();
         h_state_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
         h_mark_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
+        cudaEvent_t ev = nullptr;
+        ck(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming), "cudaEventCreate");
+        ev_saved_ = ev;
     }
     route_tmp_.assign((size_t) workers_->threads() * 2 * n_expert_, 0.f);
     if (opt_.cache_bias > 0.f) bias_rl_.assign((size_t) n_expert_, 0.f);
@@ -6336,6 +6340,29 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         // On several cards the next one takes a call on a thread of its own, while this one runs the call after
         // it.  Each card runs the calls as eval() does, in the same order.
         Behind behind;
+        // On one card a checkpoint's state goes to pinned memory in the stream, behind its call, and from there to
+        // the checkpoint on aside_ while the card reads the next call.  As save_state() it held the card 8 ms a
+        // checkpoint of Qwen3.6 (66 MB), most of it the copy into the checkpoint's fresh pageable memory.
+        const bool behind_states = !next_ && aside_ && ev_saved_ && h_state_bytes_ >= card_state_bytes();
+        uint8_t* stage = h_state_;
+        uint8_t* stage_to = nullptr;
+        const std::function<void()> state_copy = [&] {
+            ck(cudaEventSynchronize((cudaEvent_t) ev_saved_), "read");
+            std::memcpy(stage_to, stage, card_state_bytes());
+        };
+        struct Settle {   // the copy is done before the checkpoint is anyone's, however the read ends
+            Aside* a;
+            bool on = false;
+            void now() {
+                if (std::exchange(on, false)) a->finish();
+            }
+            ~Settle() {
+                try {
+                    now();
+                } catch (...) {
+                }
+            }
+        } settle{aside_.get()};
         for (int c = 0; c < n_calls; ++c) {
             const Call& call = calls_[(size_t) c];
             if (next_) {
@@ -6348,16 +6375,28 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
             } else {
                 eval(tokens + call.at, call.m, false);
             }
-            if (call.mark >= 0 && marks[call.mark].state) {
+            if (call.mark >= 0 && marks[call.mark].state && behind_states) {
+                settle.now();
+                stage = stage == h_state_ ? h_mark_ : h_state_;
+                stage_to = marks[call.mark].state;
+                for (int il = 0; il < (int) layers_.size(); ++il)
+                    if (runs(il)) save_layer(il, pos_, stage);
+                save_last(stage);
+                ck(cudaEventRecord((cudaEvent_t) ev_saved_, cs(st_)), "read");
+                aside_->start(state_copy);
+                settle.on = true;
+            } else if (call.mark >= 0 && marks[call.mark].state) {
                 behind.wait();
                 save_state(marks[call.mark].state);
             }
             if (turn && c + 1 < n_calls && !(*turn)(c + 1, n_calls)) {
                 behind.wait();
+                settle.now();
                 return false;
             }
         }
         behind.wait();
+        settle.now();
         return true;
     }
     widen_stage();
