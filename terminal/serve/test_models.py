@@ -614,7 +614,7 @@ class Start(unittest.TestCase):
 
     def test_main_reaches_ready(self):
         out, _ = self.start()
-        self.assertIn("ready: http://127.0.0.1:0/v1", out)
+        self.assertRegex(out, r"ready: http://127\.0\.0\.1:\d+/v1")      # (--port 0: the port the OS gave)
 
     def test_the_config_settings_are_as_before(self):
         """#37 moved the model's settings into model_settings(): main() sets what it set before (0.1.44.1-poly.6)."""

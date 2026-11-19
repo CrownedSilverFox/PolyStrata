@@ -4401,7 +4401,8 @@ class Service:
                     old.unload()
             freed = self.free_vram_mib() if debug else None
             try:
-                engine, vision, sampling_defaults, effort_end, groups = start_model(cfg, tok, offline=self.offline)
+                cfg = apply_vision_defaults(with_component_engine(cfg))   # as _main() does before the first start
+                engine, vision, sampling_defaults, effort_end, groups = start_model(cfg, tok)
             except (Exception, SystemExit) as e:
                 print(f"[strata] {target['id']} did not start ({e}); starting {old_name} again ...", flush=True)
                 try:
@@ -8983,40 +8984,63 @@ def engine_exe(cfg: dict) -> str:
     return cfg["exe"] if os.path.isabs(cfg["exe"]) else os.path.abspath(os.path.join(cfg.get("cwd") or ".", cfg["exe"]))
 
 
-def start_model(cfg: dict, tok, lazy: bool = False, *, offline: bool = False):
+_start_options = {"offline": False, "batch_telemetry": None}   # the command line's: the same for every model this process starts
+
+
+def start_model(cfg: dict, tok, lazy: bool = False):
     """A run config's engine, started (with `lazy`: left for the first request to start), and its vision encoder:
     (engine, vision, sampling defaults, the engine's arguments for an effort at the end or None, and the replica
     card groups).  SystemExit for
     a config that cannot be used, RuntimeError for an engine that does not start."""
+    offline, batch_telemetry = _start_options["offline"], _start_options["batch_telemetry"]
     vision = None
+    # The engine's own environment. It carries the offline policy too: an engine that fetched a
+    # missing shard or a plugin would break the promise the flag makes.
     env = child_env(cfg, offline=offline)
+    configure_batch_telemetry_env(env, cfg, batch_telemetry)
     sampling_defaults = sampling_defaults_from_config(cfg)
     if sampling_defaults:
         pretty = ", ".join(f"{k}={v}" for k, v in sampling_defaults.items())
         print(f"[strata] sampling defaults from the config: {pretty}", flush=True)
+    for line in card_roles_lines(cfg):             # the card roles: said first; every card Off stops here, before anything touches a card
+        print(line, flush=True)
     if cfg.get("vision"):
+        elastic = cfg["vision"].get("elastic") is True
+        print("the vision encoder starts with the first picture (elastic) ..." if elastic else
+              "loading the vision encoder ..." if not lazy else
+              "vision encoder unloaded; it starts with the model ...", flush=True)
         # relative paths are the config's cwd's, as for the engine below
         vcfg = {k: (os.path.abspath(os.path.join(cfg.get("cwd") or ".", v))
                     if k in ("exe", "mmproj", "model") and isinstance(v, str) and not os.path.isabs(v) else v)
-                for k, v in cfg["vision"].items()}
+                for k, v in cfg["vision"].items() if not (k == "exe" and engine_component.is_reference(v))}
+        if engine_component.is_reference(cfg["vision"].get("exe")):     # the engine from the component folder
+            vcfg["exe"] = _component_exe(cfg["vision"]["exe"], cfg)
         if vcfg.get("elastic") is True and vcfg.get("gpu") and poly_engine(cfg):
             # the turns around the encoder ask for a reserve of 0: the whole cache for the Strata project's engine,
             # strata-poly's smallest reserve (256 MiB, under the one it started with)
             print('[strata] the vision section\'s "elastic" does not start a GPU encoder on demand with strata-poly: '
                   "the encoder starts with the model (an encoder on the CPU starts with the first picture)", flush=True)
             vcfg["elastic"] = False
-        elif vcfg.get("elastic") is True and vcfg.get("gpu") and cfg.get("vram_elastic") is not True:
-            print('[strata] the vision section\'s "elastic" needs "vram_elastic": true (the expert cache gives the '
-                  "encoder its VRAM): the encoder starts with the model instead", flush=True)
-            vcfg["elastic"] = False
-        print("the vision encoder starts with the first picture (elastic) ..." if Vision.elastic_of(vcfg) else
-              "loading the vision encoder ..." if not lazy else
-              "vision encoder unloaded; it starts with the model ...", flush=True)
+        elif vcfg.get("elastic") is True and layer_split_of(cfg):
+            # the engine turns --vram-elastic off on a layer split (a cache per GPU): the encoder still starts
+            # with the first picture and stops when idle, but its VRAM has to be free already
+            print('[strata] images: on a layer split the expert cache cannot make room for the image encoder (the '
+                  'engine turns --vram-elastic off); keep its VRAM free with "--vram-reserve-mib" on the '
+                  "encoder's GPU, or the first picture may not get it", flush=True)
         vision = Vision(vcfg, log=open(cfg["log"], "a", encoding="utf-8") if cfg.get("log") else None,
                         env=vision_env(cfg, env), lazy=lazy)
     print("model unloaded; the first request loads it ..." if lazy else
           "loading the model (the first start takes a minute or two) ...", flush=True)
     warn_budget_over_ram(engine_args(cfg, announce=False) if "args" in cfg else [])      # #1080
+    note = card_note(cfg, env)
+    if note:
+        print(note, flush=True)
+    arch_line = engine_arch_note(cfg)
+    if arch_line:
+        print(arch_line, flush=True)
+    igpu_line = igpu_split_warning(cfg)
+    if igpu_line:
+        print(igpu_line, flush=True)
     if layer_split_of(cfg):
         try:
             split = layer_split_value(cfg)          # #644: before the (minutes-long) start
@@ -9026,9 +9050,15 @@ def start_model(cfg: dict, tok, lazy: bool = False, *, offline: bool = False):
     elif len(gpu_list(cfg)) > 1:
         print(f"[strata] GPUs {gpu_list(cfg)}: the later card(s) serve as the peer expert tier (--peer-device)",
               flush=True)
-    exe = engine_exe(cfg)
+    # a relative "exe" is the config's cwd's: Windows' CreateProcess resolves "engine/strata.exe" against nothing
+    # it is told about (WinError 2), so it is made absolute here
+    if engine_component.is_reference(cfg["exe"]):      # "component:strata-engine": the engine package for this PC
+        exe = _component_exe(cfg["exe"], cfg)
+    else:
+        exe = cfg["exe"] if os.path.isabs(cfg["exe"]) else os.path.abspath(os.path.join(cfg.get("cwd") or ".", cfg["exe"]))
     try:
         silence = engine_silence_s(cfg)             # #481: checked before the (minutes-long) start
+        apply_ready_timeout(cfg)
     except ValueError as e:
         raise SystemExit(f"[strata] config {e}")
     try:
@@ -9040,14 +9070,23 @@ def start_model(cfg: dict, tok, lazy: bool = False, *, offline: bool = False):
         groups = rp.gpu_groups(cfg)
     except rp.ReplicaConfigError as e:
         raise SystemExit(f"[strata] config {e}")
+    from serve import split as split_mod
+    try:
+        split = split_mod.split_spec(cfg)
+        if split:
+            split_mod.check_cfg(cfg, split)
+    except split_mod.SplitConfigError as e:
+        raise SystemExit(f"[strata] config {e}")
     if groups:
         engine = start_replicas(cfg, groups, exe, effort_end or [], lazy, offline=offline)
+    elif split:
+        engine = start_split(cfg, split, exe, effort_end or [], lazy, offline=offline)
     else:
-        engine = start_engine_or_fallback(cfg, exe, effort_end, env, lazy, tok, offline=offline)
+        engine = start_engine_or_fallback(cfg, exe, effort_end, env, lazy, tok, offline=offline, batch_telemetry=batch_telemetry)
     engine.silence_s = silence                      # an attribute of its own: restart() keeps it
     warn_tight_ram(engine.info.get("arena_mib"))
     note = desktop_vram_note(cfg.get("backend"), engine.info.get("vram_free_mib"), engine.spawn[1],
-                             linux_desktop()) if not groups else None
+                             linux_desktop()) if not groups and not split else None
     if note:                                        # #560 #516: before --open starts a browser on that card
         print(note, flush=True)
     return engine, vision, sampling_defaults, effort_end, groups
@@ -9322,97 +9361,13 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
         if not cfg:
             ap.error("--engine strata needs --config")
         cfg = apply_vision_defaults(with_component_engine(cfg))
-        vision = None
-        # The engine's own environment. It carries the offline policy too: an engine that fetched a
-        # missing shard or a plugin would break the promise the flag makes.
-        env = child_env(cfg, offline=a.offline)
-        configure_batch_telemetry_env(env, cfg, a.batch_telemetry)
-        sampling_defaults = sampling_defaults_from_config(cfg)
-        if sampling_defaults:
-            pretty = ", ".join(f"{k}={v}" for k, v in sampling_defaults.items())
-            print(f"[strata] sampling defaults from the config: {pretty}", flush=True)
+        _start_options.update(offline=a.offline, batch_telemetry=a.batch_telemetry)
         lazy = a.lazy or cfg.get("lazy_load") is True
-        for line in card_roles_lines(cfg):             # the card roles: said first; every card Off stops here, before anything touches a card
-            print(line, flush=True)
-        if cfg.get("vision"):
-            elastic = cfg["vision"].get("elastic") is True
-            print("the vision encoder starts with the first picture (elastic) ..." if elastic else
-                  "loading the vision encoder ..." if not lazy else
-                  "vision encoder unloaded; it starts with the model ...", flush=True)
-            # relative paths are the config's cwd's, as for the engine below
-            vcfg = {k: (os.path.abspath(os.path.join(cfg.get("cwd") or ".", v))
-                        if k in ("exe", "mmproj", "model") and isinstance(v, str) and not os.path.isabs(v) else v)
-                    for k, v in cfg["vision"].items() if not (k == "exe" and engine_component.is_reference(v))}
-            if engine_component.is_reference(cfg["vision"].get("exe")):     # the engine from the component folder
-                vcfg["exe"] = _component_exe(cfg["vision"]["exe"], cfg)
-            if vcfg.get("elastic") is True and layer_split_of(cfg):
-                # the engine turns --vram-elastic off on a layer split (a cache per GPU): the encoder still starts
-                # with the first picture and stops when idle, but its VRAM has to be free already
-                print('[strata] images: on a layer split the expert cache cannot make room for the image encoder (the '
-                      'engine turns --vram-elastic off); keep its VRAM free with "--vram-reserve-mib" on the '
-                      "encoder's GPU, or the first picture may not get it", flush=True)
-            vision = Vision(vcfg, log=open(cfg["log"], "a", encoding="utf-8") if cfg.get("log") else None,
-                            env=vision_env(cfg, env), lazy=lazy)
-        print("model unloaded; the first request loads it ..." if lazy else
-              "loading the model (the first start takes a minute or two) ...", flush=True)
-        warn_budget_over_ram(engine_args(cfg, announce=False) if "args" in cfg else [])      # #1080
-        note = card_note(cfg, env)
-        if note:
-            print(note, flush=True)
-        arch_line = engine_arch_note(cfg)
-        if arch_line:
-            print(arch_line, flush=True)
-        igpu_line = igpu_split_warning(cfg)
-        if igpu_line:
-            print(igpu_line, flush=True)
-        if layer_split_of(cfg):
-            try:
-                split = layer_split_value(cfg)          # #644: before the (minutes-long) start
-            except ValueError as e:
-                raise SystemExit(f"[strata] config {e}")
-            print(f"[strata] layer split across GPUs {gpu_list(cfg)} ({split})", flush=True)
-        elif len(gpu_list(cfg)) > 1:
-            print(f"[strata] GPUs {gpu_list(cfg)}: the later card(s) serve as the peer expert tier (--peer-device)",
-                  flush=True)
-        # a relative "exe" is the config's cwd's: Windows' CreateProcess resolves "engine/strata.exe" against nothing
-        # it is told about (WinError 2), so it is made absolute here
-        if engine_component.is_reference(cfg["exe"]):      # "component:strata-engine": the engine package for this PC
-            exe = _component_exe(cfg["exe"], cfg)
-        else:
-            exe = cfg["exe"] if os.path.isabs(cfg["exe"]) else os.path.abspath(os.path.join(cfg.get("cwd") or ".", cfg["exe"]))
-        try:
-            silence = engine_silence_s(cfg)             # #481: checked before the (minutes-long) start
-            apply_ready_timeout(cfg)
-        except ValueError as e:
-            raise SystemExit(f"[strata] config {e}")
-        try:
-            effort_end = effort_end_args(cfg, exe, tok)  # #458
-        except ValueError as e:
-            raise SystemExit(f"[strata] config {e}")
-        from serve import replicas as rp
-        try:
-            groups = rp.gpu_groups(cfg)
-        except rp.ReplicaConfigError as e:
-            raise SystemExit(f"[strata] config {e}")
+        env = child_env(cfg, offline=a.offline)        # for the monitor's lines below; start_model() makes the engine's own
+        # one start for the first model and for a switch to another: start_model()
+        engine, vision, sampling_defaults, effort_end, groups = start_model(cfg, tok, lazy)
         from serve import split as split_mod
-        try:
-            split = split_mod.split_spec(cfg)
-            if split:
-                split_mod.check_cfg(cfg, split)
-        except split_mod.SplitConfigError as e:
-            raise SystemExit(f"[strata] config {e}")
-        if groups:
-            engine = start_replicas(cfg, groups, exe, effort_end or [], lazy, offline=a.offline)
-        elif split:
-            engine = start_split(cfg, split, exe, effort_end or [], lazy, offline=a.offline)
-        else:
-            engine = start_engine_or_fallback(cfg, exe, effort_end, env, lazy, tok, offline=a.offline, batch_telemetry=a.batch_telemetry)
-        engine.silence_s = silence                      # an attribute of its own: restart() keeps it
-        warn_tight_ram(engine.info.get("arena_mib"))
-        note = desktop_vram_note(cfg.get("backend"), engine.info.get("vram_free_mib"), engine.spawn[1],
-                                 linux_desktop()) if not groups and not split else None
-        if note:                                        # #560 #516: before --open starts a browser on that card
-            print(note, flush=True)
+        split = None if groups else split_mod.split_spec(cfg)     # (start_model() has checked it)
     else:
         effort_end = None
         engine, vision, sampling_defaults = MockEngine(tok, a.script or [
@@ -9443,11 +9398,11 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
                         pass
         per_replica = requested if isinstance(requested, int) and not isinstance(requested, bool) and requested > 0 else 1
         svc.requested_slots = per_replica * len(groups) if groups else per_replica
-    # #37: the command line's options a switch to another model applies again, and the settings only PolyStrata's
-    # configs carry; what the lines below set from the config, they set as the Strata project's server does
+    # #37: the command line's options a switch to another model applies again, and the model's own settings
+    # (model_settings()): here, so that the lines below can say them, and once more after those lines, which set
+    # some of the same attributes from the config as the Strata project's server does
     svc.overrides, svc.cfg_overrides = overrides, cfg_overrides
-    svc.apply_settings({k: settings[k] for k in ("drop_oldest", "truncate_middle", "preserve_thinking", "aliases",
-                                                 "warm_start", "memory_debug")})
+    svc.apply_settings(settings)                        # (the lines below say some of them; applied again before serve())
     if a.engine != "strata" or poly_engine(cfg):        # the mock engine and strata-poly's models: no model card's sampling
         svc.model_arch = None
     svc.answer_room = cfg.get("answer_room") is not False
@@ -9600,6 +9555,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
               f"chat: {', '.join(hub.servers)}", flush=True)
         hub.start()
         atexit.register(hub.close)                      # the servers PolyStrata started end with it
+    svc.apply_settings(settings)                        # #37: the model's own settings last, as a switch to it applies them
     svc.start_warm()                                    # before serve(): a first request finds its stop event
     httpd = serve(svc, host=a.host, port=a.port)
     bound_port = httpd.server_address[1]               # --port 0: report the port the OS actually assigned
