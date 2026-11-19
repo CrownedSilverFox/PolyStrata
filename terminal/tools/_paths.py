@@ -1,6 +1,6 @@
 """tools/_paths.py - where the tools find a GGUF library.
 
-The preparation tools use Strata's own reader/writer and quantizers (tools/strata_gguf.py, tools/strata_quants.py): gguf_lib() returns it.
+The preparation tools use PolyStrata's own reader/writer and quantizers (tools/strata_gguf.py, tools/strata_quants.py): gguf_lib() returns it.
 $STRATA_GGUF_PY (a folder that holds llama.cpp's `gguf` package) still selects that package instead, for two releases (the byte-identical
 A/B of the pack tools runs both); llama.cpp's HF converter (NVFP4-local) imports gguf-py itself and always uses the vendored copy.
 
@@ -45,12 +45,12 @@ def _install_dirs() -> list[Path]:
 
 def gguf_py() -> str:
     cands = [os.environ.get("STRATA_GGUF_PY"), _vendored(),
-             ENGINE.parents[min(1, len(ENGINE.parents) - 1)] / ".ref" / "llama.cpp" / "gguf-py"]   # the dev tree; a shallow install (G:\Strata) has no grandparent
+             ENGINE.parents[min(1, len(ENGINE.parents) - 1)] / ".ref" / "llama.cpp" / "gguf-py"]   # the dev tree; a shallow install (G:\PolyStrata) has no grandparent
     cands += [d / "third_party" / "strata-gguf-py" for d in _install_dirs()]
     for c in cands:
         if c and (Path(c) / "gguf").is_dir():
             return str(c)
-    sys.exit("gguf-py was not found. It ships with Strata in third_party/strata-gguf-py; set STRATA_GGUF_PY to the folder that holds the "
+    sys.exit("gguf-py was not found. It ships with PolyStrata in third_party/strata-gguf-py; set STRATA_GGUF_PY to the folder that holds the "
              "`gguf` package (for example <llama.cpp>/gguf-py) to use another copy")
 
 

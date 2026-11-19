@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Strata CUDA engine for an NVIDIA DGX Spark (GB10, sm_121, arm64 Linux) into a ready-made engine folder.
+# Build the PolyStrata CUDA engine for an NVIDIA DGX Spark (GB10, sm_121, arm64 Linux) into a ready-made engine folder.
 #
 # Runs on arm64 Linux with a CUDA 13 toolkit (13.0 is the release toolkit), on the Spark itself.
 #
@@ -9,7 +9,7 @@
 #   SHAPE=q4_lite engine/spark/build_engine.sh      # the engine of a model shape (tools/packaging/shape_build.sh)
 #   STRATA_CMAKE_EXTRA="-DSTRATA_GEOMETRY_FILE=/abs/path/geometry.hpp"   more configure arguments for the engine build
 #
-# The result is the folder setup.py keeps a ready-made engine in: copy it to Strata/engine on the Spark and run
+# The result is the folder setup.py keeps a ready-made engine in: copy it to PolyStrata/engine on the Spark and run
 # ./setup.sh there (docs/DGX_SPARK_LINUX.md).  tools/packaging/build_cuda_linux_aarch64.sh runs this and then makes the engine
 # package for the signed feed.  The flags are tools/packaging/build_cuda_linux.sh's (the release build), for arm64:
 # STRATA_PORTABLE makes ggml-cpu a baseline Armv8.2 build (dotprod + fp16 + i8mm, what a Grace CPU has) instead of the build
@@ -53,7 +53,7 @@ cd "$repo"
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_SKIP_BUILD_RPATH=OFF '-DCMAKE_INSTALL_RPATH=$ORIGIN' \
     "-DCMAKE_CUDA_ARCHITECTURES=${real};${last}-virtual" $ggml ${STRATA_CMAKE_EXTRA:-} $shape_cmake
 # without llama.cpp's MMQ, as the x86 release builds since 0.2.14 (the MMQ build path left the tree in 0.2.16).
-# Such a build turns Strata's fused prompt kernels on for every layer they cover (engine/src/prefill/prefill.cpp, own_only_switches.hpp), on the
+# Such a build turns PolyStrata's fused prompt kernels on for every layer they cover (engine/src/prefill/prefill.cpp, own_only_switches.hpp), on the
 # GB10 too: IQ3_S, UD-IQ4_XS and UD-Q4_K_XL ran 48 of 48 layers on them on a GB10 (par/RESULTS-SPARK-R1.md, 11-14 / 11-15), the rest
 # takes the FP16 path.  On a GB10 (11-16, users' launch lines) this build gave the same tokens as the same source built with MMQ (IQ3_S and
 # UD-Q4_K_XL, 125 of 125 requests each) and the same forced-token KL against the FP16 prompt path at 8,192 tokens (IQ3_S, bit-identical);
@@ -65,7 +65,7 @@ targets=$(engine_targets "$cmake" "$build")
 "$cmake" --build "$build" --target $targets -j "$jobs"
 
 if [ "${BUILD_VISION:-1}" = 1 ]; then
-  # strata-vision is Strata's own reader (terminal/tools/vision/own): no llama.cpp source, STRATA_GGML_DIR does not reach it
+  # strata-vision is PolyStrata's own reader (terminal/tools/vision/own): no llama.cpp source, STRATA_GGML_DIR does not reach it
   "$cmake" -G Ninja -S terminal/tools/vision -B "$vision_dir" -DCMAKE_BUILD_TYPE=Release \
       -DSTRATA_VISION_CUDA=ON -DSTRATA_PORTABLE=ON \
       "-DCMAKE_CUDA_ARCHITECTURES=${real};${last}-virtual"

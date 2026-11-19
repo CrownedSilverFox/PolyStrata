@@ -1,6 +1,6 @@
-# Strata in Docker
+# PolyStrata in Docker
 
-Run Strata in a container with a prebuilt engine. Install Docker, the host GPU driver and the GPU-access
+Run PolyStrata in a container with a prebuilt engine. Install Docker, the host GPU driver and the GPU-access
 requirements in the table below. NVIDIA and AMD images can download and prepare a model on first start;
 Intel Arc needs prepared model files. Keep the data volume to reuse downloads and settings.
 
@@ -38,7 +38,7 @@ tag if you want updates only when you decide. The examples below use these image
 
 ## One command per card
 
-Each command runs Strata in the background, keeps your files in the volume `strata-data`, and listens only on this computer
+Each command runs PolyStrata in the background, keeps your files in the volume `strata-data`, and listens only on this computer
 (`127.0.0.1:8080`). Choose `FAMILY` and `MODEL`, and generate your own key. The examples select ISTA-DASLab originals explicitly. The first start downloads the model (tens of GB): watch it with
 `docker logs -f strata`. Already have the model's GGUF files? Add `-e MODEL_PATH=/models -v /your/folder:/models:ro` and nothing is
 downloaded for the model itself ([Files you already have](#files-you-already-have)).
@@ -73,7 +73,7 @@ docker run -d --name strata --device /dev/dri --group-add $(getent group render 
 
 What the options are for: `--ulimit memlock=-1:-1` lets the engine pin the RAM it uses for the model, `--shm-size 2g` gives
 it shared memory, and `--stop-timeout 120` gives the model two minutes to unload when you stop the container (Docker's
-default 10 seconds is too short for a big model). Do not put a memory limit on the container: Strata plans from the whole
+default 10 seconds is too short for a big model). Do not put a memory limit on the container: PolyStrata plans from the whole
 computer's RAM and loads tens of GB.
 
 To print the key you made: `echo` it before you start (it is in your shell history otherwise), or ask the running container:
@@ -81,9 +81,9 @@ To print the key you made: `echo` it before you start (it is in your shell histo
 
 ### Intel Arc
 
-Strata's downloader prepares NVIDIA and AMD cards. For an Arc card the container **uses prepared model files**: the model's
+PolyStrata's downloader prepares NVIDIA and AMD cards. For an Arc card the container **uses prepared model files**: the model's
 GGUF files in a folder you mount (`-v /srv/gguf/IQ3_S:/models:ro` and `-e MODEL_PATH=/models`), and the prepared pack and MTP
-layer in the data volume (`/data/Strata-data/packs/<model>` and `/data/Strata-data/mtp/rt`, made by the Intel installer on
+layer in the data volume (`/data/PolyStrata-data/packs/<model>` and `/data/PolyStrata-data/mtp/rt`, made by the Intel installer on
 this or another computer, see [INTEL.md](INTEL.md)). Without them the container tells you which file is missing and stops.
 Nothing is downloaded or prepared for Arc inside the container. Arc B-series cards (xe driver) stream the experts from the
 GGUF files, so the GGUF folder should be on a fast SSD.
@@ -112,7 +112,7 @@ screens; leave out what you do not care about.
 
 | Variable | What it does | Default |
 | --- | --- | --- |
-| `MODEL` | model size: `IQ2_XS`, `IQ3_XXS`, `IQ3_S`, `Q2_0`, `UD-Q4_K_XL`, ... ([MODELS.md](MODELS.md)) | Strata picks what suits the card, and says so in the log |
+| `MODEL` | model size: `IQ2_XS`, `IQ3_XXS`, `IQ3_S`, `Q2_0`, `UD-Q4_K_XL`, ... ([MODELS.md](MODELS.md)) | PolyStrata picks what suits the card, and says so in the log |
 | `FAMILY` | `qwen`, `unsloth`, `gyro`, `coder`, `swift`, ...; use `qwen` for the original ISTA-DASLab packs | installer recommendation; may differ by hardware |
 | `MODEL_PATH` | GGUF files you already have: a folder or one `.gguf`, **inside the container** (mount it with `-v`, `:ro` is fine) | download |
 | `ALLOW_DOWNLOAD` | `1`: go on and download the model although model files of the older layout were left unread in `/data/models` (see [From the older image](#from-the-older-image)) | stop |
@@ -136,7 +136,7 @@ settings and they replace the saved ones (tuning results are kept). To change on
 variable; the model and tuning stay in `/data`. Anything else: `docker exec strata strata launch --help`, or
 `docker run --rm IMAGE strata launch --plan --family qwen --model q2_0` to see what a choice would do without starting anything.
 
-What is in the volume `/data`: `Strata-data/` (model files, the prepared pack), `state/` (presets, tuning, the key), `install/`
+What is in the volume `/data`: `PolyStrata-data/` (model files, the prepared pack), `state/` (presets, tuning, the key), `install/`
 (run settings and logs), `home/`. The engine and the Terminal are in the image, so updating the image never touches your files.
 
 To keep it all on a big disk, mount a folder there instead of the named volume: `-v /mnt/big/strata:/data` (the folder must be writable by the
@@ -153,14 +153,14 @@ Mount the folder with the model's GGUF files read-only and name it: `-v /srv/ggu
   once with a message, and nothing is downloaded.
 - Read-only (`:ro`) is fine. The pack (about 40 GB for IQ3_XXS) and the draft layer (about 6 GB, fetched once) are written to the
   volume, so it needs that room. With `VISION=on` the picture reader (0.9 GB) is fetched too; `VISION=off` skips it.
-- Links to the files work when the links' targets are mounted too, and `MODEL` is set (without `MODEL`, Strata identifies the files itself
+- Links to the files work when the links' targets are mounted too, and `MODEL` is set (without `MODEL`, PolyStrata identifies the files itself
   and does not follow links).
-- Without `MODEL_PATH`, files you put into the volume by hand (`/data/Strata-data/models/<model folder>/`) are found as well, if they have the
+- Without `MODEL_PATH`, files you put into the volume by hand (`/data/PolyStrata-data/models/<model folder>/`) are found as well, if they have the
   published names.
 
 ## The API key
 
-The server listens on every address **inside** the container (that is what lets the published port work), and Strata does not
+The server listens on every address **inside** the container (that is what lets the published port work), and PolyStrata does not
 serve beyond this computer without a key. So a key is always on:
 
 - **You set it** with `API_KEY` (16 characters or more; `openssl rand -hex 24` makes one) or `API_KEY_FILE`.
@@ -168,7 +168,7 @@ serve beyond this computer without a key. So a key is always on:
   `docker exec strata strata launch --show-key --preset docker`.
 
 Publish the port as `-p 127.0.0.1:8080:8080` to keep it on this computer. Publish it as `-p 8080:8080` (or bind `0.0.0.0`) only
-when other computers should reach it, and then use a key you chose. Strata warns in the log when the key is short. Every
+when other computers should reach it, and then use a key you chose. PolyStrata warns in the log when the key is short. Every
 request must send `Authorization: Bearer <key>`; `GET /health` answers without one.
 
 ## Connect your coding apps
@@ -234,7 +234,7 @@ docker run --rm --gpus all ubuntu nvidia-smi       # must list your card
 ```
 
 On Fedora / RHEL with Podman, use CDI: `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then `--device nvidia.com/gpu=all`.
-If `nvidia-smi` inside the container works but Strata says the driver is too old, you picked `cuda13` with a driver below 580:
+If `nvidia-smi` inside the container works but PolyStrata says the driver is too old, you picked `cuda13` with a driver below 580:
 use the `cuda12` image or update the driver.
 
 **AMD: `Permission denied` on `/dev/kfd`, or no card found.** The container needs the device files and your user (or the
@@ -249,7 +249,7 @@ SELinux (Fedora, RHEL) that still refuses the device files, add `--security-opt 
 **SELinux (Fedora, RHEL, Rocky): `Permission denied` on a folder you mounted.** Add `:z` (shared) or `:Z` (private) to the
 mount: `-v /srv/gguf/IQ3_XXS:/models:ro,z`. A named volume like `strata-data` needs nothing.
 
-**The container is killed or the computer swaps.** Strata loads tens of GB into RAM: leave the container without a memory
+**The container is killed or the computer swaps.** PolyStrata loads tens of GB into RAM: leave the container without a memory
 limit, close other big programs, and pick a smaller `MODEL` ([MODELS.md](MODELS.md)). The log prints a warning when it sees a
 memory limit.
 
@@ -262,7 +262,7 @@ memory limit.
 an interrupted download continues where it stopped when you start the container again. The volume needs the model's size free
 (the log names it).
 
-**"No MODEL was set"** warning: fine, Strata chose a model for your card; set `MODEL` to choose yourself.
+**"No MODEL was set"** warning: fine, PolyStrata chose a model for your card; set `MODEL` to choose yourself.
 
 ## From the older image
 
@@ -277,7 +277,7 @@ package and start through `strata launch`. Mapping:
 | `LOW_RAM`, `RESIDENT_BUDGET_GIB`, `KV_STREAMING`, `LAYER_SPLIT`, `CONFIG`, `REINSTALL` | ignored with a warning; use `STRATA_SET` for engine settings and `strata launch --help` for the rest |
 
 A volume from the older image is picked up: the first start moves `/data/models`, `/data/packs` and `/data/mtp` into
-`/data/Strata-data` (a rename inside the volume: nothing is copied or downloaded again, and the prepared pack is kept). The old
+`/data/PolyStrata-data` (a rename inside the volume: nothing is copied or downloaded again, and the prepared pack is kept). The old
 `/data/config` is not read; the run settings are made again from the files. A folder you mounted yourself at one of those places
 is left alone: point `MODEL_PATH` at it. If model files are still in `/data/models` when the container starts (a folder you mounted there, or
 a move that failed) and `MODEL_PATH` is not set, the start **stops at once and says where the files are**: it would otherwise download the model
@@ -286,7 +286,7 @@ The container name, the volume and the port can stay as they were.
 
 ## Build it yourself
 
-This is the way to get an image for a computer without registry access or after changing Strata. You need an engine package
+This is the way to get an image for a computer without registry access or after changing PolyStrata. You need an engine package
 folder (made by `tools/packaging/package_engine.py`, or fetched by `strata update` into a components folder) and Docker on Linux:
 
 ```sh

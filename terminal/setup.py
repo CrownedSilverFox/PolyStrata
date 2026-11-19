@@ -13,7 +13,7 @@ What the first run does (each step is skipped when it is already done):
   1. checks your PC: NVIDIA or AMD GPU and driver, RAM, CPU, free disk space
   2. asks the questions
   3. installs the Python packages it needs into .venv (numpy, jinja2, ..., and NVIDIA's CUDA libraries)
-  4. gets the Strata engine: a ready-made build for RTX 20/30/40/50 cards (no compiler needed); if none fits your PC,
+  4. gets the PolyStrata engine: a ready-made build for RTX 20/30/40/50 cards (no compiler needed); if none fits your PC,
      it installs the missing build tools (asks first) and compiles the engine for your GPU.  AMD (--backend hip, chosen by
      itself on a PC with no usable NVIDIA card): the ready-made HIP engine on Windows, compiled here on Linux
   5. downloads the model from Hugging Face (resumable), and the vision encoder if you want images
@@ -100,9 +100,9 @@ def engine_src() -> Path:
 
 
 def strata_folder() -> Path:
-    """The folder a person sees as "Strata" (the checkout, or the install): the data folder Strata-data sits next to it."""
+    """The folder a person sees as "PolyStrata" (the checkout, or the install): the data folder PolyStrata-data sits next to it."""
     return ROOT.parent if engine_src() != ROOT else ROOT
-# The desktop app runs this installer under Strata Control (its bundled Python, STRATA_CONTROL_INSTALL=1). The source
+# The desktop app runs this installer under PolyStrata Control (its bundled Python, STRATA_CONTROL_INSTALL=1). The source
 # (tools/, data/, serve/) stays in ROOT, inside the app; everything the install writes (run configs, logs, third_party,
 # the data folder beside it) goes to home(), a per-user folder (STRATA_INSTALL_DIR). In that mode it installs no Python
 # package and no engine and compiles nothing: it downloads the model files, prepares them with the bundled tools and
@@ -244,7 +244,7 @@ def model_alias(name: str) -> str:
 
 
 def proxy_hint() -> str:
-    """The next step when a download cannot reach its server: behind a proxy, the variables below are what Strata (and pip, git) read."""
+    """The next step when a download cannot reach its server: behind a proxy, the variables below are what PolyStrata (and pip, git) read."""
     names = ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
     if any(os.environ.get(n) for n in names):
         return "; a proxy is set in this terminal (HTTPS_PROXY): check that it is the right one and that it is running"
@@ -408,7 +408,7 @@ FP4LOCAL_ENGINE = (0, 1, 45)
 # APR port (commit f47b0385f, 2026-10-02, first in the 0.2.0 line).  The released 0.1.45 engine reads only up to v4 and refuses a
 # Gyro pack, so 0.1.45 is NOT enough: 0.1.45.1 is the first engine package built after the reader was merged (checked: the
 # "native_experts.txt v5 declares Hadamard-folded experts" message is in every 0.1.45.1+ strata binary and in no 0.1.45 release one).
-# (ported from agentionai/Strata rc2, MIT); the sizes and SHA-256 are the Hub's LFS pointers
+# (ported from agentionai/PolyStrata rc2, MIT); the sizes and SHA-256 are the Hub's LFS pointers
 # of the revision pinned in HF_REVISIONS.  The model's license is Qwen's.
 GYRO_ENGINE = (0, 1, 45, 1)
 GYRO_FILES = {
@@ -606,7 +606,7 @@ MODELS = {
                                 "License) with Qwen3.8-Flash-Next's Qwen Community License 1.0: "
                                 "https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4"},
     "NVFP4-QAD": {"about": "NVIDIA's FP4, trained for FP4 (NVIDIA's Qwen3.8-Flash-Next-FP4-Local) - slightly faster on short prompts; "
-                           "a 102 GB download that this PC turns into a Strata pack once (about 20-40 minutes, 110 GB more disk); "
+                           "a 102 GB download that this PC turns into a PolyStrata pack once (about 20-40 minutes, 110 GB more disk); "
                            "RTX 50 cards have FP4 tensor cores, other NVIDIA cards run it at 8-bit precision. It reads pictures (the shared Qwen3.8-Flash-Next encoder)",
                   "download_gb": 102.2, "prepare_gb": 110.0, "ram_gb": 80, "arena_gb": 68.0,
                   "families": ("nvfp4",), "nvidia_only": True, "vision": True, "repo": NVFP4_FP4LOCAL_REPO,
@@ -1239,7 +1239,7 @@ OWN_PATH_FAMILIES = {
 }
 PREVIEW_FAMILIES = OWN_PATH_FAMILIES             # the earlier name (tools and tests that import it)
 
-# Every model file Strata downloads has a fixed size and SHA-256: (repository, file name) -> (bytes, sha256).  download()
+# Every model file PolyStrata downloads has a fixed size and SHA-256: (repository, file name) -> (bytes, sha256).  download()
 # checks the file against it as soon as it is whole (a wrong file is deleted and setup stops), and stops before the
 # download when the server's size is not the pinned one.  The files are fetched from the commits in HF_REVISIONS.
 REPO_PINS = {
@@ -1535,7 +1535,7 @@ def out(cmd):
 
 
 def _kept_mark(path: Path) -> Path | None:
-    """Where the finish mark of a file in a folder Strata cannot write to is kept instead: marks/<hash>.done under Strata's own folder.  The hash is of
+    """Where the finish mark of a file in a folder PolyStrata cannot write to is kept instead: marks/<hash>.done under PolyStrata's own folder.  The hash is of
     the file's full path, size and modification time, so a file that changed (or a different file at the same place) has no mark."""
     try:
         st = path.stat()
@@ -1597,7 +1597,7 @@ _OWN_DIRS: list = []                                   # --gguf-dir: folders of 
 
 
 def own_files_in(folder) -> None:
-    """Strata writes nothing beside the person's own model files (lane NET item 5): their finish marks are kept in marks/ (_kept_mark)."""
+    """PolyStrata writes nothing beside the person's own model files (lane NET item 5): their finish marks are kept in marks/ (_kept_mark)."""
     try:
         _OWN_DIRS.append(Path(folder).expanduser().resolve())
     except OSError:
@@ -1632,7 +1632,7 @@ def done(path: Path) -> bool:
 
 def mark(path: Path, text=""):
     """Write the finish mark.  A folder that cannot be written (--gguf-dir on a read-only share, #570, a read-only model disk) keeps the mark
-    in Strata's own folder instead (marks/), so a 110 GB Engram is hashed once, not on every launch; only when that cannot be written either
+    in PolyStrata's own folder instead (marks/), so a 110 GB Engram is hashed once, not on every launch; only when that cannot be written either
     does setup say so and go on (the step is repeated on the next run), it does not stop."""
     text = text or time.strftime("%Y-%m-%d %H:%M")
     beside: BaseException | str = "a folder of the person's own model files"
@@ -2066,7 +2066,7 @@ def pool_workers_note(args, layout=None) -> list[str]:
            "more than its physical cores" if cores and asked + 1 > sum(cores) else
            "more than the cores of one CPU socket" if len(cores) > 1 and asked + 1 > cores[0] else
            "more than the memory bandwidth can feed")
-    return [f"the config asks for {asked} CPU expert workers, {why}: extra workers can make Strata slower. Recommended: "
+    return [f"the config asks for {asked} CPU expert workers, {why}: extra workers can make PolyStrata slower. Recommended: "
             f"--pool-workers {rec} (or remove the setting: the engine picks that by itself). It stays as you set it."]
 
 
@@ -2350,7 +2350,7 @@ def maxwell_note(found) -> str:
     if not cards:
         return ""
     names = ", ".join(f"GPU {g['index']} ({g['name']})" for g in cards)
-    return (f"{names}: Maxwell (compute capability {cc(cards[0])}). No ready-made Strata engine holds code for it, so "
+    return (f"{names}: Maxwell (compute capability {cc(cards[0])}). No ready-made PolyStrata engine holds code for it, so "
             "setup cannot install one. One reporter built the engine from source for two Quadro M6000 with a CUDA 12.x "
             "toolkit (cmake -B build -G Ninja -DSTRATA_EXPERIMENTAL_SM60=ON -DCMAKE_CUDA_ARCHITECTURES=52) and saw about "
             "22 tokens a second with a 1-bit Qwen3.8-Flash-Next; nobody has checked the answer text yet. Steps and "
@@ -2676,7 +2676,7 @@ def choose_roles(a, found) -> list:
     cards = roles_cards(found)
     roles = dict(gpu_roles.recommend(cards)["roles"])
     say()
-    say("  Strata recommends a role for each graphics card. Main does the last steps of every answer; a Helper holds part of the model;")
+    say("  PolyStrata recommends a role for each graphics card. Main does the last steps of every answer; a Helper holds part of the model;")
     say("  Off leaves the card alone (a card with 8 GB or less starts Off beside a bigger card). Details: docs/MULTI_GPU.md.")
     by = {c["index"]: c for c in cards}
     for i in sorted(roles):
@@ -3084,7 +3084,7 @@ def disk_room_problem(models_dir, pack_dir, other_gb, copy_gb, other_note="", fr
     if free_packs < needs:
         return (f"not enough free disk space for the low-RAM copy of the experts in {pack_dir}: it needs about {needs:.0f} GB "
                 f"and {free_packs:.0f} GB are free there.",
-                "Free some space, move Strata's data folder to a bigger drive (strata launch --data-dir), or set Low-RAM mode to Automatic to run without the copy.")
+                "Free some space, move PolyStrata's data folder to a bigger drive (strata launch --data-dir), or set Low-RAM mode to Automatic to run without the copy.")
     return None
 
 
@@ -3882,7 +3882,7 @@ def download(url, dst: Path, what=None):
             if e.code == 404 and hf_unpinned(url) != url:  # the pinned revision is gone from the repository
                 if not allow_unpinned():
                     fail(f"the pinned version of {what or dst.name} is no longer on Hugging Face",
-                         "update Strata: a newer version pins the files that are there now")
+                         "update PolyStrata: a newer version pins the files that are there now")
                 warn(f"{what or dst.name}: not at the pinned revision any more; downloading the repository's "
                      "current file (not checked against a SHA-256)")
                 url = hf_unpinned(url)
@@ -3904,7 +3904,7 @@ def download(url, dst: Path, what=None):
         total = pin[0] if pin else (meta[0] if meta else 0)
     if pin and total and total != pin[0]:              # not the pinned file: stop before the download, not after
         fail(f"{what or dst.name} is {total:,} bytes on {url.split('/')[2]}, not the pinned {pin[0]:,}",
-             "update Strata (the file there has changed since this version pinned it)")
+             "update PolyStrata (the file there has changed since this version pinned it)")
     label = what or dst.name
     if bad.is_file() and not dst.exists() and total:
         try:
@@ -4016,12 +4016,12 @@ def gguf_dir_shards(folder: Path, fam: dict, model: str) -> list[Path]:
 # #444: the quantization in a GGUF's name (Unsloth's UD-IQ3_XXS, a K-quant's Q2_K_XL, a GSQ-RCO IQ3_S, ...)
 GGUF_QUANT = re.compile(r"(?<![A-Za-z0-9])((?:UD-)?(?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32))"
                         r"(?=-\d{5}-of-\d{5}\.gguf$|\.gguf$)", re.I)
-SUPPORTED_GGUFS = ("Strata runs ISTA-DASLab's GSQ-RCO files (Qwen3.8-Flash-Next Q2_0, IQ2_XS, IQ3_XXS, IQ3_S; Swift "
+SUPPORTED_GGUFS = ("PolyStrata runs ISTA-DASLab's GSQ-RCO files (Qwen3.8-Flash-Next Q2_0, IQ2_XS, IQ3_XXS, IQ3_S; Swift "
                    "1.5's; the Coder's IQ1_M) and Unsloth's UD-IQ1_M, UD-Q2_0, UD-IQ2_XS, UD-Q2_K_XL, UD-IQ3_XXS, UD-Q3_K_XL, "
                    "UD-IQ4_XS, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL and Q8_0 only: other GGUFs (Unsloth's UD-IQ1_S, other "
                    "K-quant files) cannot be used")
-# why a GGUF of a name Strata knows is still refused (said beside SUPPORTED_GGUFS)
-UNSUPPORTED_WHY = {"UD-IQ1_S": "UD-IQ1_S mixes two expert formats in one layer, which Strata cannot load; UD-IQ1_M is the 1-bit choice"}
+# why a GGUF of a name PolyStrata knows is still refused (said beside SUPPORTED_GGUFS)
+UNSUPPORTED_WHY = {"UD-IQ1_S": "UD-IQ1_S mixes two expert formats in one layer, which PolyStrata cannot load; UD-IQ1_M is the 1-bit choice"}
 
 
 def gguf_unsupported(name: str) -> str | None:
@@ -4063,7 +4063,7 @@ def gguf_dir_problem(folder: Path, first: Path, fam: dict, model: str) -> tuple 
     bad = gguf_unsupported(first.name) if first.exists() else None
     if bad:
         why = UNSUPPORTED_WHY.get(bad.upper())
-        return f"{first.name} is {bad}, a GGUF Strata cannot run", SUPPORTED_GGUFS + (".\n       " + why if why else "")
+        return f"{first.name} is {bad}, a GGUF PolyStrata cannot run", SUPPORTED_GGUFS + (".\n       " + why if why else "")
     if first.exists():
         return None
     firsts = sorted(p.name for p in folder.glob("*.gguf")
@@ -4140,7 +4140,7 @@ def verify_sha256(s: Path, size: int, sha: str, own: bool = False, repair=None, 
     so the ~5 minutes of hashing 111 GB happen once.  A wrong file is deleted, so the next run downloads it again.
     `repair` (a downloaded file's own re-reader, see repair_download): the wrong file is first compared with the server
     piece by piece and only the damaged pieces are written again, then it is checked a second time.
-    `also`: other SHA-256 values that are the same file for Strata's purposes."""
+    `also`: other SHA-256 values that are the same file for PolyStrata's purposes."""
     m = s.with_name(s.name + ".done")
     kept = mark_text(s)
     if kept is not None and any(f"sha256 {x}" in kept for x in (sha, *also)):
@@ -4148,7 +4148,7 @@ def verify_sha256(s: Path, size: int, sha: str, own: bool = False, repair=None, 
     have = s.stat().st_size if s.exists() else -1
     if own and have > 0 and have != size and own_gguf_is_whole(s):
         # a fine-tune or another build with the layout of the published file (#3777: 96 bytes apart): recommend, never refuse
-        warn(f"{s.name} is {have:,} bytes; the published file is {size:,}. It is a complete GGUF file, so Strata uses it as it is; "
+        warn(f"{s.name} is {have:,} bytes; the published file is {size:,}. It is a complete GGUF file, so PolyStrata uses it as it is; "
              "it may be another version or a fine-tune, so check a few answers before you rely on it")
         return
     if have != size:
@@ -4175,7 +4175,7 @@ def verify_sha256(s: Path, size: int, sha: str, own: bool = False, repair=None, 
     if digest != sha:
         if own and own_gguf_is_whole(s):
             warn(f"{s.name} is not the published file (SHA-256 {digest[:12]}..., expected {sha[:12]}...) but it is a complete GGUF file, so "
-                 "Strata uses it as it is; it may be another version or a fine-tune, so check a few answers before you rely on it")
+                 "PolyStrata uses it as it is; it may be another version or a fine-tune, so check a few answers before you rely on it")
             return
         if own:
             fail(f"{s.name} does not match the published file (SHA-256 {digest}, expected {sha})",
@@ -4183,11 +4183,11 @@ def verify_sha256(s: Path, size: int, sha: str, own: bool = False, repair=None, 
         keep_bad(s)                                    # kept as <name>.bad, not thrown away (see keep_bad)
         m.unlink(missing_ok=True)
         if server_same:
-            hint = ("the server sends exactly the bytes you have (every block was compared), so the file there is not the version this Strata pins: "
-                    "update Strata. Run setup again to check the kept file once more")
+            hint = ("the server sends exactly the bytes you have (every block was compared), so the file there is not the version this PolyStrata pins: "
+                    "update PolyStrata. Run setup again to check the kept file once more")
         else:
             hint = "run setup again: the kept file is checked once more, and if it still differs it is downloaded again and the kept one is removed"
-        fail(f"{s.name} does not match the pinned SHA-256 (it is {digest}, Strata expects {sha}); the file was kept as {s.name}.bad", hint)
+        fail(f"{s.name} does not match the pinned SHA-256 (it is {digest}, PolyStrata expects {sha}); the file was kept as {s.name}.bad", hint)
     mark(s, f"sha256 {sha}")
     return True
 
@@ -4638,7 +4638,7 @@ def pip_install(packages, what, extra=()):
     if CONTROL:                                        # the app ships these (hash-locked); nothing is installed here
         missing = control_missing_packages()
         if missing:
-            fail("this copy of Strata Control lacks " + ", ".join(missing), "reinstall the Strata app")
+            fail("this copy of PolyStrata Control lacks " + ", ".join(missing), "reinstall the PolyStrata app")
         ok(f"{what}: bundled with the app")
         return
     stamp = Path(sys.prefix) / ".strata-pip.json"
@@ -4683,7 +4683,7 @@ def ensure_nvfp4_local_packages() -> None:
              "install this model from the source download (START-HERE.bat --setup on Windows, ./setup.sh --setup on Linux), or pick another version in the app")
     pkgs = nvfp4_local_packages()
     if not pkgs:
-        fail("requirements-nvfp4-local.txt is missing", "update Strata, or run: python -m pip install torch transformers safetensors")
+        fail("requirements-nvfp4-local.txt is missing", "update PolyStrata, or run: python -m pip install torch transformers safetensors")
     say("  Converting NVIDIA's checkpoint needs PyTorch, transformers and safetensors (a few hundred MB, installed once).")
     pip_install(pkgs, "PyTorch, transformers and safetensors (for the FP4-Local conversion)",
                 extra=[] if WIN else ["--extra-index-url", "https://download.pytorch.org/whl/cpu"])   # Linux: the CPU build, not 3 GB of CUDA libraries
@@ -4904,7 +4904,7 @@ def is_rdna2(g) -> bool:
     return isinstance(g, dict) and any(gfx_arch_is(g.get("arch"), a) for a in RDNA2_ARCHS)
 
 
-RDNA2_PACKAGE_NOTE = ("RX 6000 series (RDNA2, {arch}): Strata has a ready-made engine package for these cards, built, not tested on a real "
+RDNA2_PACKAGE_NOTE = ("RX 6000 series (RDNA2, {arch}): PolyStrata has a ready-made engine package for these cards, built, not tested on a real "
                       "RX 6000 card. It runs plain kernels (this chip has no matrix cores, so the RX 7000 / RX 9000 prompt paths stay off) "
                       "and plain hipBLAS (no hipBLASLt tuning table for it). If something goes wrong, open an issue with the end of "
                       "strata-<model>.log: docs/AMD_HIP.md, \"RDNA2\".")
@@ -5738,8 +5738,8 @@ def get_prebuilt_hip(url_base, gpu, updating=False) -> Path | None:
             if got is None:
                 warn(f"no ready-made AMD engine at {base} ({e})")
             return got
-    say("  Downloading the ready-made Strata engine for AMD GPUs (with the ROCm libraries it uses) ...")
-    download(base + WIN_HIP_ASSET, z, "Strata AMD engine")
+    say("  Downloading the ready-made PolyStrata engine for AMD GPUs (with the ROCm libraries it uses) ...")
+    download(base + WIN_HIP_ASSET, z, "PolyStrata AMD engine")
     try:
         verify_engine_archive(z, WIN_HIP_ASSET, base)
     except UnverifiedEngine as e:
@@ -5764,7 +5764,7 @@ def get_prebuilt_hip(url_base, gpu, updating=False) -> Path | None:
                "for runs from a self-build of the engine: see docs/AMD_HIP.md (--build)")   # #881
         if is_strix_halo(gpu):                         # never a zip without gfx1151 code: say so, and what to do
             why = (f"it is built for {', '.join(arch_names(meta.get('archs'))) or 'other GPUs'} and has no gfx1151 code: your "
-                   f"{gpu['name']} (Strix Halo) needs a ready-made engine from Strata 0.1.40 or newer, whose zip is "
+                   f"{gpu['name']} (Strix Halo) needs a ready-made engine from PolyStrata 0.1.40 or newer, whose zip is "
                    "built for gfx1151 too.  Until then: the Linux guide docs/STRIX_HALO.md, or compile the engine "
                    "here with tools\\hip\\build_windows.bat (its default list has gfx1151) and start setup with "
                    "--prebuilt <its dist folder>")
@@ -6264,7 +6264,7 @@ def apply_noise_generator(src: Path) -> None:
 
 
 def apply_vae_decoder(src: Path) -> None:
-    """OWN-5 step 2: Strata's VAE decoder (src/image/vae via tools/image/sdcpp_vae) into the stable-diffusion.cpp
+    """OWN-5 step 2: PolyStrata's VAE decoder (src/image/vae via tools/image/sdcpp_vae) into the stable-diffusion.cpp
     source (idempotent; CUDA / HIP builds; sd-cli uses it only with --model-args strata_vae=1)."""
     import importlib.util
     QI = _qimage()
@@ -6276,7 +6276,7 @@ def apply_vae_decoder(src: Path) -> None:
 
 def build_image_engine(backend: str, gpu: dict, noise: bool = False, vae: bool = False) -> tuple[Path, list[str]]:
     """Compile sd-cli for `backend` into engine-image/ (again only when the pins or the backend changed, or, with
-    `noise`, the noise generator's sources) -> (its path, the library folders it runs with).  `noise`: Strata's noise
+    `noise`, the noise generator's sources) -> (its path, the library folders it runs with).  `noise`: PolyStrata's noise
     generator is patched in (images "noise": "strata"); off, the build and its stamp are what they always were."""
     QI = _qimage()
     IMAGE_ENGINE.mkdir(exist_ok=True)
@@ -6292,9 +6292,9 @@ def build_image_engine(backend: str, gpu: dict, noise: bool = False, vae: bool =
     src = get_sd_cpp()
     if backend in QI.NATIVE_BACKENDS:                 # PolyStrata's DiT runner (inert unless the config asks for it)
         apply_native_runner(src)
-    if noise:                                          # Strata's noise generator (inert unless the config asks for it)
+    if noise:                                          # PolyStrata's noise generator (inert unless the config asks for it)
         apply_noise_generator(src)
-    if vae:                                            # Strata's VAE decoder (inert unless the config asks for it)
+    if vae:                                            # PolyStrata's VAE decoder (inert unless the config asks for it)
         apply_vae_decoder(src)
     vcvars, lib_dirs = None, []
     if backend == "cuda":
@@ -6374,7 +6374,7 @@ def setup_images(a, gpu: dict, hip: bool, models_dir: Path) -> dict | None:
     noise = getattr(a, "image_noise", None) == "on"
     vae = getattr(a, "image_vae", None) == "on"
     if vae and backend not in QI.VAE_BACKENDS:         # the owner's wording, 11-11
-        warn(f"Strata's own picture decoder runs with CUDA or ROCm only; image generation on {backend} keeps "
+        warn(f"PolyStrata's own picture decoder runs with CUDA or ROCm only; image generation on {backend} keeps "
              "stable-diffusion.cpp's decoder")
         vae = False
     exe, lib_dirs = build_image_engine(backend, gpu or {}, noise, vae)
@@ -6821,7 +6821,7 @@ def engine_update_note() -> None:
         else:
             old = ver < need
         if old:
-            warn(f"the installed engine ({meta.get('version') or 'unknown version'}) is older than this Strata expects: "
+            warn(f"the installed engine ({meta.get('version') or 'unknown version'}) is older than this PolyStrata expects: "
                  "starting it as it is. Starting never updates anything; run "
                  + ("START-HERE.bat --update" if WIN else "./setup.sh --update") + " (or `strata install --update`) to update it")
 
@@ -7273,10 +7273,10 @@ def prebuilt_vision(meta: dict, gpu: dict, vision: str) -> str:
 
 
 def local_build_archs(archs, found) -> list:
-    """#4662: the architectures a compiled engine gets code for: the cards this install uses AND every other card Strata can run on in the PC.
+    """#4662: the architectures a compiled engine gets code for: the cards this install uses AND every other card PolyStrata can run on in the PC.
     A PC with a TITAN RTX (sm_75) and an RTX 3080 (sm_86) was updated with archs [75] (the pair was not picked as a split by setup), and the
     layer-split run on both cards then launched kernels the sm_75 build holds only a trap for: "unspecified launch failure" on every long prompt.
-    One more architecture is a few more minutes of compile, once; a card Strata cannot use (older than sm_75) is left out."""
+    One more architecture is a few more minutes of compile, once; a card PolyStrata cannot use (older than sm_75) is left out."""
     try:
         present = {int(g["arch"]) for g in found or [] if gpu_problem(g) is None}
     except (KeyError, TypeError, ValueError):
@@ -7331,7 +7331,7 @@ def build_engine(gpu, vision, yes, llama, toolkit=None, portable=False) -> Path:
         say("  Compiling the engine for " + ", ".join(f"sm_{x}" for x in archs) + " (a card it had no code for; "
             "10-20 minutes, once) ..." if new_arch else
             "  The engine's source changed: compiling it again (only what changed, a few minutes) ..."
-            if local and (eng / EXE).exists() else "  Compiling the Strata engine for your GPU (10-20 minutes, once) ...")
+            if local and (eng / EXE).exists() else "  Compiling the PolyStrata engine for your GPU (10-20 minutes, once) ...")
         cmake_build(engine_src(), bdir, "strata",
                     ["-DSTRATA_ENABLE_CUDA=ON", "-DSTRATA_BUILD_TESTS=OFF", "-DSTRATA_Q6K_EXPERTS=ON",
                      f"-DCMAKE_CUDA_ARCHITECTURES={cuda_archs}",
@@ -7664,7 +7664,7 @@ def ram_ctx(model, ram, low_ram=False) -> int:
 
 def app_settings_file() -> Path | None:
     """The desktop app keeps its own settings file (STRATA_SETTINGS_FILE, in the app's data folder) and never reads or writes the
-    one an older command-line Strata uses, so an old install is never adopted or moved."""
+    one an older command-line PolyStrata uses, so an old install is never adopted or moved."""
     raw = os.environ.get("STRATA_SETTINGS_FILE")
     return Path(raw) if raw else None
 
@@ -7706,8 +7706,8 @@ def has_data(folder: Path) -> bool:
 
 
 def other_installs(settings: dict) -> list:
-    """Strata folders besides this one that may hold model files: the ones this user ran before, and Strata* folders
-    next to this one (a zip unpacked again lands in e.g. `Strata-main (1)\\Strata-main`)."""
+    """PolyStrata folders besides this one that may hold model files: the ones this user ran before, and PolyStrata* folders
+    next to this one (a zip unpacked again lands in e.g. `PolyStrata-main (1)\\PolyStrata-main`)."""
     cands = [Path(p) for p in settings.get("installs", []) if not in_trash(p)]
     for base in dict.fromkeys(() if app_settings_file() else (home().parent, home().parent.parent)):
         try:
@@ -7812,22 +7812,22 @@ def data_folder(requested: str | None, move: bool = False, yes: bool = True, set
     the person is asked: keep them where they are and use the new folder for new downloads (the answer with --yes
     or when nobody can answer), or move them in (`move`, --move-data, or the answer "move").  Only a move, or
     --set-default-data-dir, or a PC with no model files anywhere, changes the remembered data folder.  Without
-    --data-dir the model files of this folder and of earlier Strata folders on the same drive are gathered into the
+    --data-dir the model files of this folder and of earlier PolyStrata folders on the same drive are gathered into the
     remembered data folder and their configs point there (that is the data folder's own job)."""
     settings = load_settings()
-    remembered = Path(settings["data_dir"]) if settings.get("data_dir") else (strata_folder() if home() == ROOT else home()).parent / "Strata-data"
+    remembered = Path(settings["data_dir"]) if settings.get("data_dir") else (strata_folder() if home() == ROOT else home()).parent / "PolyStrata-data"
     dest = Path(requested).expanduser().resolve() if requested else remembered
     from strata_control import folders
     bad = folders.problem(dest)
     if bad and requested:
         fail(folders.without_nothing_changed(bad)[:400], "Nothing was downloaded or changed, and the folder was not saved as your data folder.")
     if bad and settings.get("data_dir"):                # an unusable folder saved earlier: go back to the default and say so; never keep it
-        warn(f"The data folder saved before cannot be used ({bad[0]}) Using {(strata_folder() if home() == ROOT else home()).parent / 'Strata-data'} instead.")
-        remembered = dest = (strata_folder() if home() == ROOT else home()).parent / "Strata-data"
+        warn(f"The data folder saved before cannot be used ({bad[0]}) Using {(strata_folder() if home() == ROOT else home()).parent / 'PolyStrata-data'} instead.")
+        remembered = dest = (strata_folder() if home() == ROOT else home()).parent / "PolyStrata-data"
         settings = {k: v for k, v in settings.items() if k != "data_dir"}
     try:
         dest.mkdir(parents=True, exist_ok=True)
-    except OSError as e:                                # e.g. no write access next to the Strata folder
+    except OSError as e:                                # e.g. no write access next to the PolyStrata folder
         warn(f"cannot use {dest} for the model files ({e}): keeping them in {home()}")
         dest = home()
     elsewhere = []
@@ -7836,7 +7836,7 @@ def data_folder(requested: str | None, move: bool = False, yes: bool = True, set
     sources = [home(), *other_installs(settings)]
     if settings.get("data_dir") and not same_folder(Path(settings["data_dir"]), dest):
         sources.append(Path(settings["data_dir"]))
-    sources += [f / "Strata-data" for f in list(sources) if not same_folder(f / "Strata-data", dest)]
+    sources += [f / "PolyStrata-data" for f in list(sources) if not same_folder(f / "PolyStrata-data", dest)]
     if requested and not same_folder(dest, remembered):
         sources.append(remembered)
         # a different folder than the one in use: nothing is moved unless the person says so
@@ -7892,7 +7892,7 @@ def data_folder(requested: str | None, move: bool = False, yes: bool = True, set
             elsewhere.append(folder)                    # in use, or a copy the data folder already has
             warn(f"some model files are still in {folder} (in use, or already in {dest})")
         else:
-            ok(f"model files from {folder} moved to {dest} (a new copy of Strata finds them there)")
+            ok(f"model files from {folder} moved to {dest} (a new copy of PolyStrata finds them there)")
     installs = [str(home())] + [p for p in settings.get("installs", [])
                                 if p != str(home()) and Path(p).is_dir() and not in_trash(p)]
     save_settings({**settings, "data_dir": str(dest), "installs": installs[:20]})
@@ -7908,12 +7908,12 @@ def data_folder_for(a) -> tuple:
 def data_folder_in_place() -> tuple:
     """(the data folder, []) for a start: where settings.json says the model files are, or the default place.  Reads
     the settings and nothing else: no folder is created, nothing is moved or copied, no setting is saved.  The run
-    configs name their model files, so an install made by an earlier Strata starts from where it is."""
+    configs name their model files, so an install made by an earlier PolyStrata starts from where it is."""
     settings = load_settings()
-    dest = Path(settings["data_dir"]) if settings.get("data_dir") else (strata_folder() if home() == ROOT else home()).parent / "Strata-data"
+    dest = Path(settings["data_dir"]) if settings.get("data_dir") else (strata_folder() if home() == ROOT else home()).parent / "PolyStrata-data"
     from strata_control import folders
     if settings.get("data_dir") and folders.problem(dest):      # a folder saved earlier that cannot be used: the default, and it is not kept
-        dest = (strata_folder() if home() == ROOT else home()).parent / "Strata-data"
+        dest = (strata_folder() if home() == ROOT else home()).parent / "PolyStrata-data"
     return dest, []
 
 
@@ -7997,7 +7997,7 @@ SETUP_CHOICE_FLAGS = frozenset({"--max-context", "--kv", "--vision", "--mtp", "-
 
 def setup_flags() -> frozenset:
     """Every engine option this file names (setup.py's own source): the options setup can write.  Used for a run config
-    that has no `args_written` (written by an earlier Strata): an option in its args that is not in this set was added by hand."""
+    that has no `args_written` (written by an earlier PolyStrata): an option in its args that is not in this set was added by hand."""
     global _SETUP_FLAGS
     if _SETUP_FLAGS is None:
         try:
@@ -8084,7 +8084,7 @@ def args_dropped(old: dict, cfg: dict) -> list[str]:
     return list(dict.fromkeys(f for f in flags(old) if f not in new))
 
 
-SHAPE_ENGINE: dict = {}       # the model-shape engine the chosen model runs on: {"shape": "q4_lite"} (strata_control/shape_engine.py); empty: the Strata engine
+SHAPE_ENGINE: dict = {}       # the model-shape engine the chosen model runs on: {"shape": "q4_lite"} (strata_control/shape_engine.py); empty: the PolyStrata engine
 
 
 def engine_exe(eng: Path) -> str:
@@ -8240,7 +8240,7 @@ def find_in(roots: list, rel: str):
 
 def mmproj_beside(gguf_dir, name: str, size: int | None = None):
     """The picture file a person's own GGUF folder (--gguf-dir, "Use a local GGUF") already has: in the folder itself, or in the folder above it and that
-    folder's models/ (a Strata data folder's layout: models/<size>/ shards, models/<picture file>; pictures.places() looks there too).  The two outer places are
+    folder's models/ (a PolyStrata data folder's layout: models/<size>/ shards, models/<picture file>; pictures.places() looks there too).  The two outer places are
     taken only at the pinned size (`size`), so a half-copied file is fetched again and not used.  None when there is none."""
     if not gguf_dir:
         return None
@@ -8281,7 +8281,7 @@ def alt_reader_places(pinned: str, models_dir, roots, gguf_dir) -> list:
 
 def accepted_alt_reader(pinned: str, places, *, start: bool = True):
     """The first file in `places` that is the alternative reader of `pinned` (name, size and SHA-256 all as pinned in ALT_READERS), else None. Anything
-    else with that name is ignored (never deleted, never renamed). The SHA-256 (0.9 GB, a few seconds) is remembered in a mark in Strata's own
+    else with that name is ignored (never deleted, never renamed). The SHA-256 (0.9 GB, a few seconds) is remembered in a mark in PolyStrata's own
     marks/ folder, never beside the person's file; the mark is keyed by the real path, size, modification time and change time
     (_alt_reader_mark), so a file that was replaced, also in place with its size and modification time kept, is hashed again. start=True is
     the setup run (says what it does, writes the mark); start=False is the plan (the same answer, says nothing, writes nothing)."""
@@ -8379,7 +8379,7 @@ def model_config(path: Path) -> bool:
 
 
 def installed_configs():
-    """The model configs of this install, newest first; a DeepSeek one is not among them (this Strata does not run, check, tune or rewrite it:
+    """The model configs of this install, newest first; a DeepSeek one is not among them (this PolyStrata does not run, check, tune or rewrite it:
     retired_configs, strata_control/retired.py)."""
     from strata_control import retired
     return [p for p in sorted(model_config_files(home()), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -8540,7 +8540,7 @@ def hardware_key(cfg: dict) -> str:
 #: The tuning question at the end of a setup (P12). Its default is "n", like the Terminal's Tuning step on a first launch (FIX-TUI T5).
 #: F3 (0.2.16 retest): the old one ended "... with: START-HERE.bat --calibrate [n]: ", so the default marker read like part of the command.
 #: The command now stands alone on its line and the prompt names the default in words.
-TUNE_QUESTION = ("Tune Strata for this PC now? It measures a few engine settings (about 15-30 minutes, longer on a slow card; the PC is busy "
+TUNE_QUESTION = ("Tune PolyStrata for this PC now? It measures a few engine settings (about 15-30 minutes, longer on a slow card; the PC is busy "
                  "meanwhile).\nIf you say no, you can start sooner and tune at any time later by running:  {again} --calibrate\n"
                  "Tune now? (y = yes, n = no)")
 TUNE_DEFAULT_SHOWN = "Enter = no"
@@ -8636,7 +8636,7 @@ PULLED_ENV = "STRATA_UPDATE_PULLED"             # set for the setup.py a pull st
 
 
 def source_checkout() -> Path | None:
-    """The git clone this Strata's sources are in, or None (an installed Terminal, a zip download).  Before 0.2.16 the clone's root
+    """The git clone this PolyStrata's sources are in, or None (an installed Terminal, a zip download).  Before 0.2.16 the clone's root
     is ROOT; from 0.2.16 ROOT is the clone's terminal/ folder (the engine's sources are in ../engine)."""
     if (ROOT / ".git").exists():
         return ROOT
@@ -8727,9 +8727,9 @@ def update_pull(argv: list) -> int | None:
     repo = source_checkout()
     if repo is None:
         if source_download():
-            say("  This copy of Strata was not made with git, so it cannot fetch new files itself. Download the newest one:")
+            say("  This copy of PolyStrata was not made with git, so it cannot fetch new files itself. Download the newest one:")
             say("    https://github.com/Niko1221/Strata/archive/refs/heads/main.zip")
-            say(f"  unzip it anywhere and run {'START-HERE.bat' if WIN else './setup.sh'} in it: it finds the model files in Strata-data")
+            say(f"  unzip it anywhere and run {'START-HERE.bat' if WIN else './setup.sh'} in it: it finds the model files in PolyStrata-data")
             say("  and sets itself up the same way - nothing big is downloaded again.")
             say("  Checking this copy's engine and settings meanwhile ...")
         return None
@@ -8745,13 +8745,13 @@ def update_pull(argv: list) -> int | None:
         say(f"  ({'START-HERE.bat --update' if WIN else './setup.sh --update'}). Nothing was updated.")
         return 1
     before = git_out(git, repo, "rev-parse", "HEAD")
-    say("  Getting the newest Strata (git pull) ...")
+    say("  Getting the newest PolyStrata (git pull) ...")
     if quiet_pull(git, repo) != 0 and pull_onto_new_history(git, repo):
         return 1
     if git_out(git, repo, "rev-parse", "HEAD") == before:
-        say("  Strata is up to date.")
+        say("  PolyStrata is up to date.")
         return None
-    say("  Got the newest Strata" + pull_summary(git, repo, before) + ".")
+    say("  Got the newest PolyStrata" + pull_summary(git, repo, before) + ".")
     here = Path(__file__).resolve()
     new = here if here.is_file() else repo / "terminal" / "setup.py"
     return subprocess.call([sys.executable, str(new), *argv], cwd=str(new.parent), env={**os.environ, PULLED_ENV: "1"})
@@ -8823,7 +8823,7 @@ def move_over_old_layout() -> list:
                 dst.write_bytes(rebase(dst.read_bytes().decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape"))
             except OSError as e:
                 warn(f"{dst}: the paths in it could not be updated: {e}")
-    say(f"  Strata's folders were rearranged in this version: your settings and engine moved from {old} into {ROOT}.")
+    say(f"  PolyStrata's folders were rearranged in this version: your settings and engine moved from {old} into {ROOT}.")
     return moved
 
 
@@ -8859,12 +8859,12 @@ def update_install(have: list, a) -> int:
     say()
     start = "START-HERE.bat" if WIN else "./setup.sh"
     if any(ver) and tuple(ver) < MIN_ENGINE:             # #3653: the engine step failed above; "updated" would be untrue
-        warn(f"Strata's files are updated, but the engine was NOT: it is still {'.'.join(map(str, ver))} and this Strata wants "
+        warn(f"PolyStrata's files are updated, but the engine was NOT: it is still {'.'.join(map(str, ver))} and this PolyStrata wants "
              f"{'.'.join(map(str, MIN_ENGINE))} or newer. The model still starts with the old engine.")
         say(f"  Next step: check the internet connection (and that the model window is closed), then run {'START-HERE.bat --update' if WIN else './setup.sh --update'} again; "
             "the line above this one says why the engine was not fetched.")
         return 0
-    ok("Strata is updated" + (f" (engine {'.'.join(map(str, ver))})" if any(ver) else "") +
+    ok("PolyStrata is updated" + (f" (engine {'.'.join(map(str, ver))})" if any(ver) else "") +
        f". Start the model with {start} when you want it.")
     return 0
 
@@ -9434,7 +9434,7 @@ def provide_dflash2_vocab(data: Path, choice: str = "cjk") -> None:
     in setup (--draft-vocab, saved in the model's config; the default file when none)."""
     from strata_control import drafting
     if drafting.provide_vocab(data, choice or "cjk") is None:
-        warn("the draft vocabulary file (data/draft_vocab.bin) is missing from this Strata folder, so DFlash2 cannot start; update Strata")
+        warn("the draft vocabulary file (data/draft_vocab.bin) is missing from this PolyStrata folder, so DFlash2 cannot start; update PolyStrata")
 
 
 def refresh_dflash2_vocab(data: Path | None, choice: str = "cjk") -> None:
@@ -9579,7 +9579,7 @@ def write_run_script(model, cfg_path, port, open_browser=True):
              "--port", str(port)] + (["--open"] if open_browser else [])
     if WIN:
         script = home() / f"run-{model.lower()}.bat"
-        script.write_text("@echo off\r\ntitle Strata " + model + "\r\ncd /d \"" + str(ROOT) + "\"\r\n" +
+        script.write_text("@echo off\r\ntitle PolyStrata " + model + "\r\ncd /d \"" + str(ROOT) + "\"\r\n" +
                           " ".join(f'"{x}"' for x in serve) + "\r\nif errorlevel 1 pause\r\n", encoding="utf-8")
     else:
         script = home() / f"run-{model.lower()}.sh"
@@ -10531,7 +10531,7 @@ def intel_control_setup(a) -> int:
     (a source build with oneAPI, sycl/setup_intel.py) is sycl_setup(), for a checkout; the app's bundle has no sycl/ folder."""
     from strata_cli.launch import adopt
     from strata_control import intel_app
-    say("Strata on an Intel Arc card (the SYCL engine)")
+    say("PolyStrata on an Intel Arc card (the SYCL engine)")
     step(1, "checking this computer")
     if not intel_app.supported_here():
         fail("the Intel Arc engine runs on Linux only", "there is no Windows or Mac Intel engine yet")
@@ -10577,7 +10577,7 @@ def intel_control_setup(a) -> int:
                                model_name=f"{fam.get('name', family)}-{model.lower()}", family_def=fam, log=home() / f"strata-{tag.lower()}.log",
                                backend="sycl", vram_gb=vram, notes=notes, pack_name=tag.lower())
     if cfg is None:
-        fail("Strata cannot start this model on the Intel Arc card yet: " + "; ".join(problems))
+        fail("PolyStrata cannot start this model on the Intel Arc card yet: " + "; ".join(problems))
     if a.port:
         cfg["port"] = a.port
     if a.host:
@@ -10633,7 +10633,7 @@ def control_engine_step(gpu, vision):
 
 def shape_engine_fetch(a):
     """The engine of the chosen model's shape (SHAPE_ENGINE), fetched through the signed feed (--feed, STRATA_UPDATE_FEED, the remembered feed, or the release's), checked, started
-    once and kept (strata_control/shape_engine.py); the Strata engine is not touched. Returns its component (shape_engine.find), or None when there is none and the person said to
+    once and kept (strata_control/shape_engine.py); the PolyStrata engine is not touched. Returns its component (shape_engine.find), or None when there is none and the person said to
     go on without it (STRATA_ALLOW_NO_ENGINE: the model is downloaded and prepared, and set up again later); otherwise it stops with the owner's lines."""
     from strata_control import engine_component as EC, shape_engine
     shape, title = SHAPE_ENGINE["shape"], SHAPE_ENGINE.get("title")
@@ -10653,7 +10653,7 @@ def shape_engine_fetch(a):
 
 def shape_engine_step(a, gpu, vision):
     """Step 4 for a model that runs on the engine of its own shape (a Qwen4 model whose geometry is not Flash-Next's: strata_control/shape_engine.py). That engine is a
-    separate component next to the Strata engine (shape_engine_fetch); the run config names it ("component:strata-q4-lite") and every start looks it up.
+    separate component next to the PolyStrata engine (shape_engine_fetch); the run config names it ("component:strata-q4-lite") and every start looks it up.
     Returns what engine_step returns."""
     shape = SHAPE_ENGINE["shape"]
     llama = llama_cpp_if_here()
@@ -11024,7 +11024,7 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
             warn(f"{fam['title']} is {FEED_UNAVAILABLE[family]['reason']}")
         else:
             fail(f"this engine ({meta.get('version')}) does not run {fam['title']} yet",
-                 "update Strata, or compile the engine with --build, and run setup again")
+                 "update PolyStrata, or compile the engine with --build, and run setup again")
     ok("engine: the engine component (looked up when the model loads)" if CONTROL else f"engine: {eng / EXE}")
 
     step(5, f"downloading {fam['title']} {model}")
@@ -11061,7 +11061,7 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
         verify_sha256(mmproj, *fam["sha256"][mmproj.name], own=bool(a.gguf_dir))
         ok(f"vision encoder: {mmproj}")
 
-    step(6, "preparing the model for Strata")
+    step(6, "preparing the model for PolyStrata")
     data, _ = data_folder_for(a)
     pack = data / "packs" / tag.lower()            # only the tokenizer: the engine reads the GGUF itself
     if not (pack / "tokenizer" / "vocab.json").exists():
@@ -11307,7 +11307,7 @@ def mac_reader(eng: Path, vision: str):
 
 def prepare_pack_only(a) -> int:
     """setup.py --prepare-pack PACK_DIR --gguf-dir DIR --family F --model M: the pack (index, dense weights, tokenizer) of a model whose GGUF files
-    are in DIR, for a card the built-in downloader does not set up (Intel Arc). The pack tool reads the GGUF files with Strata's own reader
+    are in DIR, for a card the built-in downloader does not set up (Intel Arc). The pack tool reads the GGUF files with PolyStrata's own reader
     (tools/strata_gguf.py; llama.cpp's gguf-py only when the person names one with STRATA_GGUF_PY): nothing is downloaded, and the model's files
     are never changed."""
     if not a.gguf_dir:
@@ -11401,8 +11401,8 @@ def mac_prepare_lock(native: Path) -> Path:
     and never beside a running engine: an engine of 70-90 GB beside a repack froze the 128 GB M5 Max twice.  The caller removes the lock."""
     running = mac_engine_pids()
     if running:
-        fail(f"a Strata engine is running (pid {running[0]}): preparing a model beside it can freeze this Mac",
-             "stop the model in Strata (unload it), then install again")
+        fail(f"a PolyStrata engine is running (pid {running[0]}): preparing a model beside it can freeze this Mac",
+             "stop the model in PolyStrata (unload it), then install again")
     native.parent.mkdir(parents=True, exist_ok=True)
     lock = native.parent / MAC_PREPARE_LOCK
     lock.write_text(str(os.getpid()))
@@ -11426,13 +11426,13 @@ def mac_control_setup(a) -> int:
     metal/setup_mac.py. Which sizes a Mac can run, whether one stays in memory or streams its experts from the SSD, and the
     Metal flags of the config are strata_control/mac_fit.py's, the module setup_mac.py and the model list use too."""
     from strata_control import mac_fit as MF
-    say("Strata on a Mac (Apple Silicon, Metal)")
+    say("PolyStrata on a Mac (Apple Silicon, Metal)")
     step(1, "checking your Mac")
     info = MF.mac_info()
     ram = float(info["ram_gb"] or ram_gb())
     ok(f"{info['chip']}, {ram:.0f} GB unified memory, macOS {info['macos'] or '?'}")
     if info.get("rosetta_python"):
-        say("  (the Python that runs this is an Intel build running through Rosetta: Strata works, and the Apple Silicon Python "
+        say("  (the Python that runs this is an Intel build running through Rosetta: PolyStrata works, and the Apple Silicon Python "
             "from python.org or Homebrew in /opt/homebrew is a little faster to start)")
     problems = MF.mac_problems(info, need_compiler=False)       # the app compiles nothing: no Command Line Tools needed
     for p in problems:
@@ -11473,7 +11473,7 @@ def mac_control_setup(a) -> int:
     tag = fam["tag"] + model
     stream = MF.streams(model, ram)
 
-    step(4, "the Strata engine (Metal)")
+    step(4, "the PolyStrata engine (Metal)")
     from strata_control import engine_component as EC
     llama = llama_cpp_if_here()                        # gguf-py for the preparation tools only (fetched when one runs): no git, no compiler
     ok(f"llama.cpp {LLAMA_CPP_COMMIT[:7]} (gguf-py for the preparation tools)")
@@ -11512,7 +11512,7 @@ def mac_control_setup(a) -> int:
     files = gguf_dir_shards(models_dir, fam, model) if a.gguf_dir else \
         [models_dir / model_file(fam, model, i) for i in range(1, model_shards(fam, model) + 1)]
     problem = gguf_dir_problem(models_dir, files[0], fam, model) if a.gguf_dir else None
-    if problem:                                        # files Strata cannot run, or another choice's files
+    if problem:                                        # files PolyStrata cannot run, or another choice's files
         fail(*problem)
     mark_whole_unless_pinned(files, model_hf(fam, model) if fam.get("hf") else None, bool(a.gguf_dir))     # a whole file copied in by hand has no finish mark
     repacked = family == "unsloth" and len(files) > 2           # Unsloth's many-shard set: one GGUF for the GPU (mac_repack), the n-gram table left in its shard
@@ -11545,7 +11545,7 @@ def mac_control_setup(a) -> int:
             verify_sha256(mmproj, *ISTA_FILES[fam["mmproj"]])
         ok(f"vision encoder: {mmproj}" + (" (Unsloth's mmproj-F16.gguf, SHA-256 checked)" if kind == "alt" else ""))
 
-    step(6, "preparing the model for Strata")
+    step(6, "preparing the model for PolyStrata")
     pack = find_in(roots, f"packs/{tag.lower()}") or data / "packs" / tag.lower()
     env = dict(os.environ, **gguf_py_env())
     shards = [files[0], files[0]] if family == "gyro" else files      # Gyro: one file, the model and its n-gram table
@@ -11714,7 +11714,7 @@ def main() -> int:
     ap.add_argument("--gpu", help="one GPU, numbered as nvidia-smi numbers them (AMD: as setup lists them) (default: asked when several can be "
                                   "used; with --setup it is saved, when starting it is for that start only)")
     ap.add_argument("--gpus", help="several GPUs sharing one model, as nvidia-smi numbers them (AMD: as setup lists "
-                                   "them): \"0,2\", or \"all\" (every card that can); Strata puts the faster card last, "
+                                   "them): \"0,2\", or \"all\" (every card that can); PolyStrata puts the faster card last, "
                                    "and the last card is the Main one. Saved, also when starting (see docs/MULTI_GPU.md)")
     ap.add_argument("--gpu-roles", metavar="LIST", help="a role for each GPU: main, helper or off, e.g. 1=main,0=helper (cards you do not "
                                                         "name are off). Main does the last steps of every answer. Saved (docs/MULTI_GPU.md)")
@@ -11732,8 +11732,8 @@ def main() -> int:
                          "that uses the API; remembered for this model, also in run-<model>.bat/.sh)")
     ap.add_argument("--browser", dest="browser", action="store_true",
                     help="open the chat page again when the model is ready (the default; undoes --no-browser)")
-    ap.add_argument("--data-dir", help="where the model files go (~70-120 GB): default Strata-data next to this folder, "
-                                       "remembered for every Strata folder on this PC")
+    ap.add_argument("--data-dir", help="where the model files go (~70-120 GB): default PolyStrata-data next to this folder, "
+                                       "remembered for every PolyStrata folder on this PC")
     ap.add_argument("--move-data", action="store_true",
                     help="with --data-dir: move the model files already on this PC into the new folder (without it nothing "
                          "is moved: the old files stay usable and the new folder gets the new downloads)")
@@ -11790,7 +11790,7 @@ def main() -> int:
                          "and the Cyrillic script (Russian: 26%% more tokens a second), fr = English, "
                          "code and French (French answers: 18%% more drafts accepted), latin = English, code and "
                          "the Latin-script languages (German, Spanish, French, Polish: 8-12%% more tokens a "
-                         "second). Without this setting Strata picks cyrillic or latin by itself from the "
+                         "second). Without this setting PolyStrata picks cyrillic or latin by itself from the "
                          "languages of this computer, and keeps the default when one of them is Chinese, "
                          "Japanese or Korean")
     ap.add_argument("--low-ram", choices=["auto", "on", "off", "resident", "mmap"], default="auto",
@@ -11847,7 +11847,7 @@ def main() -> int:
         pulled = update_pull(sys.argv[1:])
         if pulled is not None:
             return pulled
-    if getattr(a, "gguf_dir", None):                   # the person's own files: their finish marks go to Strata's marks/, never beside them
+    if getattr(a, "gguf_dir", None):                   # the person's own files: their finish marks go to PolyStrata's marks/, never beside them
         own_files_in(a.gguf_dir)
     if getattr(a, "dsv41_package", None):              # DeepSeek's engine package: no longer offered (strata_control/retired.py)
         say("  " + retired.NOT_OFFERED)
@@ -11924,7 +11924,7 @@ def main() -> int:
             a.gpus = ",".join(str(i) for i in order)
         else:
             a.gpu = order[0]
-    say("Strata - " + (OWN_PATH_FAMILIES[a.family]["title"] if a.family in OWN_PATH_FAMILIES else "Qwen3.8-Flash-Next")
+    say("PolyStrata - " + (OWN_PATH_FAMILIES[a.family]["title"] if a.family in OWN_PATH_FAMILIES else "Qwen3.8-Flash-Next")
         + " on a normal PC (a GPU + system RAM + CPU)")
     have = installed_configs()
     if a.update or not (a.setup or a.model or a.family or a.check or a.no_start or a.calibrate or a.rollback_engine):
@@ -12195,7 +12195,7 @@ def main() -> int:
             warn(problem)
     floor = cpu_floor(avx2)
     if floor == "unsupported":
-        fail("this CPU has neither AVX2 nor SSE4.2; Strata needs at least SSE4.2 (Intel Nehalem, 2008, or newer)")
+        fail("this CPU has neither AVX2 nor SSE4.2; PolyStrata needs at least SSE4.2 (Intel Nehalem, 2008, or newer)")
     if is_arm64():
         # DGX Spark / GB10 (#3622): the engine is the linux-aarch64 package of the signed feed when the release has one, else compiled here
         # (spark/build_engine.sh). A warning, not a stop.
@@ -12553,7 +12553,7 @@ def main() -> int:
     ready = bool(fam.get("ready"))                     # NVFP4: ready-made packs (NVFP4_REPOS), no GGUF shards
     if ready:
         models_dir = Path(a.models_dir)
-        for r in elsewhere:                            # already downloaded and checked in a Strata folder elsewhere
+        for r in elsewhere:                            # already downloaded and checked in a PolyStrata folder elsewhere
             if all(ready_verified(ready_where(r / "models", f), f[5]) for f in ready_needed(model, r / "models")):
                 models_dir = r / "models"
                 ok(f"model files found in {models_dir}")
@@ -12635,7 +12635,7 @@ def main() -> int:
     # checked before the 94-188 GB download
     if (MODELS[model].get("budget") or family == "gyro") and engine_ver < need_engine:
         fail(f"{model} needs engine {'.'.join(map(str, need_engine))} or newer; this one is {meta.get('version')}",
-             "update Strata (or compile the engine with --build) and run setup again")
+             "update PolyStrata (or compile the engine with --build) and run setup again")
     ok("engine: the engine component (looked up when the model loads)" if CONTROL else f"engine: {eng / EXE}")
 
     # ---- 5. the model files
@@ -12702,7 +12702,7 @@ def main() -> int:
     env = dict(os.environ, **gguf_py_env())
     prepared = bool(ready and MODELS[model].get("prepare"))
     if prepared and not prepared_done(model, models_dir):
-        say("  NVIDIA's checkpoint is turned into a Strata pack on this PC (once; 20-40 minutes, reads the 102 GB, writes about")
+        say("  NVIDIA's checkpoint is turned into a PolyStrata pack on this PC (once; 20-40 minutes, reads the 102 GB, writes about")
         say(f"  {MODELS[model]['prepare_gb']:.0f} GB). Nothing of NVIDIA's weights leaves this PC.")
         ensure_nvfp4_local_packages()
         run([sys.executable, str(ROOT / "tools" / "nvfp4_local_pack.py"), "prepare",

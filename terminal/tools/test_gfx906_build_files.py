@@ -27,7 +27,7 @@ class Gfx906CMake(unittest.TestCase):
             self.assertGreater(before.rfind("#if defined(STRATA_HAVE_QWEN35)"), before.rfind("#endif"), match.group(0))
 
     def test_the_f16_stub_is_in_the_gfx906_build(self):
-        # 0.2.16: llama.cpp's MMQ (and with it the trellis overlay and the W4A4 unit) is out of the tree; strata_pf_own, Strata's own prompt
+        # 0.2.16: llama.cpp's MMQ (and with it the trellis overlay and the W4A4 unit) is out of the tree; strata_pf_own, PolyStrata's own prompt
         # kernels, takes moe_f16_kq.cu and moe_p1a.cu on gfx906 (moe_fused_iq.cu calls them), and every .cu of src/ is compiled as HIP
         own = re.search(r"macro\(strata_cuda_pf_own\).*?endmacro\(\)", TEXT, re.S)
         self.assertIsNotNone(own)

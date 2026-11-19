@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="apps/host/public/brand/strata-lockup-dark.svg">
-    <img src="../../app/host/public/brand/strata-lockup-light.svg" alt="Strata" width="340">
+    <img src="../../app/host/public/brand/strata-lockup-light.svg" alt="PolyStrata" width="340">
   </picture>
 </p>
 
@@ -15,15 +15,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Niko1221/Strata/releases/latest"><img src="https://img.shields.io/github/v/release/Niko1221/Strata?label=download&color=0ab887" alt="Strata をダウンロード"></a>
+  <a href="https://github.com/Niko1221/Strata/releases/latest"><img src="https://img.shields.io/github/v/release/Niko1221/Strata?label=download&color=0ab887" alt="PolyStrata をダウンロード"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/Niko1221/Strata" alt="MIT ライセンス"></a>
-  <a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor-EA4AAA?logo=githubsponsors&logoColor=fff" alt="GitHub Sponsors で Strata を支援する"></a>
-  <a href="https://buymeacoffee.com/strataengine"><img src="https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=000" alt="Buy Me a Coffee で Strata を支援する"></a>
+  <a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor-EA4AAA?logo=githubsponsors&logoColor=fff" alt="GitHub Sponsors で PolyStrata を支援する"></a>
+  <a href="https://buymeacoffee.com/strataengine"><img src="https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=000" alt="Buy Me a Coffee で PolyStrata を支援する"></a>
 </p>
 
 <p align="center"><sub><a href="../../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <b>日本語</b> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.pl.md">Polski</a></sub></p>
 
-**無料でオープンソース。自分の環境で動かせます。** デスクトップで、またはお好みのコーディングツールと一緒に Strata を使えます。アカウントは不要です。
+**無料でオープンソース。自分の環境で動かせます。** デスクトップで、またはお好みのコーディングツールと一緒に PolyStrata を使えます。アカウントは不要です。
 
 ## モデル
 
@@ -62,14 +62,14 @@
 
 ### デスクトップアプリ
 
-**[Windows、Linux、Mac 用の Strata をダウンロード →](https://github.com/Niko1221/Strata/releases/latest)**
+**[Windows、Linux、Mac 用の PolyStrata をダウンロード →](https://github.com/Niko1221/Strata/releases/latest)**
 
 アプリをインストールし、モデルを選んで、チャットを始めましょう。インストーラーはシステムごとに1つです。初回起動時に、アプリがお使いのグラフィックスカード用のエンジンをダウンロードします。[インストーラーのヘルプ](../INSTALL.md#the-app)。
 
-<sub>ファイル: `Strata-0.2.16-windows-x64-setup.exe` · `Strata-0.2.16-linux-x86_64.AppImage` · `Strata-0.2.16-macos-arm64.dmg`</sub>
+<sub>ファイル: `PolyStrata-0.2.16-windows-x64-setup.exe` · `PolyStrata-0.2.16-linux-x86_64.AppImage` · `PolyStrata-0.2.16-macos-arm64.dmg`</sub>
 
 <p align="center">
-  <img src="../media/app-chat.png" width="900" alt="チャットとライブのコードプレビューを並べて表示した Strata デスクトップアプリ">
+  <img src="../media/app-chat.png" width="900" alt="チャットとライブのコードプレビューを並べて表示した PolyStrata デスクトップアプリ">
   <br><sub>チャット、ファイル、ライブプレビューを1つのウィンドウで。</sub>
 </p>
 
@@ -77,7 +77,7 @@
 
 ### ターミナルアプリ
 
-ターミナルのほうが好みですか？ Strata をインストールして、**`strata launch`** を実行します。
+ターミナルのほうが好みですか？ PolyStrata をインストールして、**`strata launch`** を実行します。
 
 <details open>
 <summary><b>インストールコマンド</b></summary>
@@ -105,7 +105,7 @@ strata launch
 </details>
 
 <p align="center">
-  <img src="../media/terminal-monitor.png" width="900" alt="モデルの動作、速度、メモリ、最近のリクエストを表示する Strata ターミナルアプリ">
+  <img src="../media/terminal-monitor.png" width="900" alt="モデルの動作、速度、メモリ、最近のリクエストを表示する PolyStrata ターミナルアプリ">
   <br><sub>動作中のモデルとハードウェアの状態を確認できます。</sub>
 </p>
 
@@ -144,16 +144,16 @@ strata launch
 [すべてのガイド](..) · [トラブルシューティング](../TROUBLESHOOTING.md) · [不具合を報告](https://github.com/Niko1221/Strata/issues/new/choose) ·
 [ベンチマーク](../COMMUNITY_BENCHMARKS.md) · [仕組み](../HOW_IT_WORKS.md) · [貢献する](../../.github/CONTRIBUTING.md)
 
-## Strata を支援する
+## PolyStrata を支援する
 
 **ローカル AI をみんなに開かれたものに。** GitHub でのスポンサーやコーヒー1杯が、開発と、より多くのハードウェアでのテストの支えになります。
 
-<a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors: Strata を支援する" height="48"></a>
-<a href="https://buymeacoffee.com/strataengine"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee: Strata を支援する" height="48"></a>
+<a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors: PolyStrata を支援する" height="48"></a>
+<a href="https://buymeacoffee.com/strataengine"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee: PolyStrata を支援する" height="48"></a>
 
 ### いつも支えてくださる方々
 
-Strata を支えてくださるすべての方に感謝します。
+PolyStrata を支えてくださるすべての方に感謝します。
 
 <!-- supporters:start (one line per public supporter, newest last; copy a line and change the GitHub name in all four places) -->
 <a href="https://github.com/ryan4yin"><img src="https://github.com/ryan4yin.png?size=96" width="48" height="48" alt="ryan4yin" title="ryan4yin"></a>
@@ -167,7 +167,7 @@ Strata を支えてくださるすべての方に感謝します。
 <a href="https://github.com/router0mail"><img src="https://github.com/router0mail.png?size=96" width="48" height="48" alt="router0mail" title="router0mail"></a>
 <!-- supporters:end -->
 
-すべての支援者と Strata の支援方法は [SUPPORTERS.md](../../SUPPORTERS.md) をご覧ください。
+すべての支援者と PolyStrata の支援方法は [SUPPORTERS.md](../../SUPPORTERS.md) をご覧ください。
 
 [MIT ライセンス](../../LICENSE) · [クレジットとモデルのライセンス](../HOW_IT_WORKS.md#credits) · [プライバシー](../SAFETY.md)
 

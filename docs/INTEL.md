@@ -1,9 +1,9 @@
-# Strata on an Intel Arc: the SYCL engine
+# PolyStrata on an Intel Arc: the SYCL engine
 
 This page is for people who build the Intel Arc engine from source or run it in a container, and for those who maintain the
 port. For the released Linux engine package, start with [INTEL_ARC.md](INTEL_ARC.md).
 
-Strata's engine is CUDA. On an Intel Arc it runs as Strata's own engine ported to SYCL (`sycl/`), behind the same server:
+PolyStrata's engine is CUDA. On an Intel Arc it runs as PolyStrata's own engine ported to SYCL (`sycl/`), behind the same server:
 OpenAI and Anthropic APIs, streaming, tool calls, MCP and the web app are unchanged. Everything Intel-specific lives in `sycl/`;
 no shared upstream file is changed. `engine/sycl/setup_intel.py` and `engine/sycl/serve/server_intel.py` wrap upstream's `setup.py` and
 `terminal/serve/server.py` from outside. llama.cpp's SYCL backend runs the same GGUF at about a third of the speed.
@@ -18,7 +18,7 @@ On Ubuntu 24.04 or newer, with Intel's GPU driver installed (`ls /dev/dri` shows
 ```sh
 sudo apt install docker.io git
 sudo usermod -aG docker,render $USER     # log out and in; `docker ps` must work without sudo
-cd Strata
+cd PolyStrata
 docker build --pull -t strata-sycl-dev engine/sycl/tools                 # once, about 6 minutes, 13 GB
 # build the engine: see "How to build it", then
 ./setup.sh --backend sycl [setup's options, e.g. --model IQ3_S --context 32768 --port 8085]
@@ -45,8 +45,8 @@ MTP draft layer and the context and KV questions are setup's own.
 | Engine settings | The config's `"env"` block reaches the engine. `strata-sycl.sh` forwards every `STRATA_`, `ONEAPI_`, `UR_`, `IGC_`, `SYCL_` and `ZES_` variable and sets `STRATA_VERIFY_DEVICE_PLAN=1`, `STRATA_VERIFY_NO_HOST=1` and `STRATA_STAGER_THREADS=12` unless the environment says otherwise (for example `"env": {"STRATA_VERIFY_NO_HOST": "0"}`). A value of `0` is not passed on, because the engine tests these switches by presence. |
 
 The models, packs and checkout must sit under the folder `strata-sycl.sh` mounts at `/work` (the one above the checkout, or
-`STRATA_SYCL_ROOT`). An earlier Strata install on the same PC keeps its data folder in `~/.config/strata/settings.json`; pass
-`--data-dir <folder above the checkout>/Strata-data` to put this one under the mount. A symlink to a folder outside the mount does
+`STRATA_SYCL_ROOT`). An earlier PolyStrata install on the same PC keeps its data folder in `~/.config/strata/settings.json`; pass
+`--data-dir <folder above the checkout>/PolyStrata-data` to put this one under the mount. A symlink to a folder outside the mount does
 not work in the container; a hard link does. If a future `setup.py` drops a step this relies on, setup stops with a message
 instead of writing a wrong config.
 
@@ -57,7 +57,7 @@ llama.cpp SYCL image), so the PC needs no oneAPI. From the checkout (the folder 
 `/work`):
 
 ```sh
-cd Strata
+cd PolyStrata
 docker build --pull -t strata-sycl-dev engine/sycl/tools     # once: about 6 minutes, a 13 GB image
 H=$(basename "$PWD")
 ```
@@ -305,7 +305,7 @@ of VRAM and on the card from 24 GB. `terminal/strata_control/vision_reader.py` i
 default with the CPU reader, a B-series card included. An Arc of 24 GB or more also keeps the CPU reader; `--vision gpu` asks for
 the GPU reader.
 
-- **CPU reader:** `strata-vision` (Strata's own reader). Setup compiles it into `engine-sycl/`, the server runs it on the host, and
+- **CPU reader:** `strata-vision` (PolyStrata's own reader). Setup compiles it into `engine-sycl/`, the server runs it on the host, and
   the engine in the container reads the embeddings from the host's `/dev/shm`, which `strata-sycl.sh` shares
   (`STRATA_SYCL_SHM=0` keeps a private one).
 - **SYCL reader:** `strata-vision-sycl`, the same program on llama.cpp's SYCL backend. `setup --backend sycl --vision gpu`
@@ -315,7 +315,7 @@ the GPU reader.
   has run it on a card of 24 GB or more.
 - **Known risk on Battlemage.** The first picture on the Arc Pro B70 (engine 0.1.45, IQ3_S, CPU reader) logged an xe engine
   reset (ccs + bcs) and `Fault response: Unsuccessful -EINVAL`, and the request ended 503. It has not been looked at since.
-  Setup and `strata launch` print one plain line that the card is new to Strata and how to report a problem. `--vision no`
+  Setup and `strata launch` print one plain line that the card is new to PolyStrata and how to report a problem. `--vision no`
   (setup) or `--vision off` (`strata launch`) turns pictures off.
 
 > **Measured on:** Arc A750 (8 GB), IQ3_XXS, 8K context, JIT build, 448x448 picture.
@@ -344,7 +344,7 @@ other source from the original location. `sycl/include/dpct/` is the vendored SY
    their meaning, ggml lookup tables as plain `static const` arrays.
 4. `engine/sycl/tools/build.sh` configures and builds with icpx inside the image. Two compiler flags are load-bearing:
    `-fp-model=precise` (icpx defaults to a fast model) and `-cl-fp32-correctly-rounded-divide-sqrt` for the device compiler. The
-   Arc's fp32 divide is not correctly rounded by default, and Strata's quantizers are byte-exact against ggml through `amax / 127`.
+   Arc's fp32 divide is not correctly rounded by default, and PolyStrata's quantizers are byte-exact against ggml through `amax / 127`.
 
 **What the port had to get right.**
 
@@ -414,7 +414,7 @@ log (debugging stories, per-merge notes, planned-item lists) was dropped; the nu
 > **Measured on:** Arc Pro B70 32 GB (xe), PCIe 3.0 x8, Ubuntu 24.04, Coder IQ1_M, 32K context, INT8 KV, the SYCL port,
 > engine 0.1.31-sycl (2026-10-01), against llama.cpp SYCL (2026-09-29, q8_0 KV).
 
-| | NVIDIA (RTX 5070, Strata) | Intel Arc, SYCL port | Intel Arc, llama.cpp |
+| | NVIDIA (RTX 5070, PolyStrata) | Intel Arc, SYCL port | Intel Arc, llama.cpp |
 | --- | --- | --- | --- |
 | Decode, Coder IQ1_M | 44-51 tok/s | 78.2 tok/s (19-token prompt), 75.7 (2,184-token prompt); 48-72 through the API | 23-25 tok/s |
 | Prompt | about 1,870 tok/s | 790 tok/s at 2,184 tokens, 1,117 at 40K, 888 at 128K, 757 at 256K | about 150 tok/s (424 at 105K) |

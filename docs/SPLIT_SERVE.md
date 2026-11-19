@@ -215,4 +215,4 @@ alike cards. This version runs one request at a time. Overlapping needs the serv
 decode queue), and the decode engine to take a restore between two of its own requests, which the session file already allows.
 
 Credit: the idea, the hand-built router and the first measurements are @MarcoTool's (issue #4000, repository
-`MarcoTool/PDHyperMix-Strata-MI50`).
+`MarcoTool/PDHyperMix-PolyStrata-MI50`).

@@ -1,19 +1,19 @@
 # OrcaRouter IQ3_XXS compatibility
 
 This page is for people who want to run `orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF` (**IQ3_XXS**, two shards,
-85.20 GB) with Strata. It is a manual conversion workflow from a [source checkout](SOURCE_INSTALL.md). OrcaRouter is
+85.20 GB) with PolyStrata. It is a manual conversion workflow from a [source checkout](SOURCE_INSTALL.md). OrcaRouter is
 not an installer menu entry, and there is no `--family orca` command.
 
 ## Quick start
 
-1. Build Strata normally, then pack the model ([Preparation](#preparation)).
+1. Build PolyStrata normally, then pack the model ([Preparation](#preparation)).
 2. Prepare the optional draft head (MTP) with the same section's commands.
 3. Save the config from [Local server](#local-server) and start the server.
 
 ## How it works
 
-The model has Strata's Qwen4Exp geometry. Ordinary quantization also compresses the hyperconnection, small attention
-and PLE projections, which Strata's kernels read as BF16. `terminal/tools/iq_pack.py --compat-bf16` expands only those
+The model has PolyStrata's Qwen4Exp geometry. Ordinary quantization also compresses the hyperconnection, small attention
+and PLE projections, which PolyStrata's kernels read as BF16. `terminal/tools/iq_pack.py --compat-bf16` expands only those
 projections, rounding to BF16 with nearest-even. This adds rounding relative to the GGUF's dequantized weights. It does
 not recover the original BF16 checkpoint or its quality.
 

@@ -1,6 +1,6 @@
 # Unsloth UD-Q4_K_XL
 
-This page is for people who want to run Unsloth's 4-bit Qwen3.8-Flash-Next file (UD-Q4_K_XL) with Strata, and for
+This page is for people who want to run Unsloth's 4-bit Qwen3.8-Flash-Next file (UD-Q4_K_XL) with PolyStrata, and for
 people who pack it by hand. It also covers UD-IQ4_XS and plain Q4_0 files. For UD-Q5_K_XL, UD-Q6_K_XL and Q8_0, see
 [UNSLOTH_Q6.md](UNSLOTH_Q6.md). Quality, speed and images across the Unsloth sizes are in [QUANTS.md](QUANTS.md).
 
@@ -73,7 +73,7 @@ Windows). Hugging Face snapshot symlinks work if you pass the snapshot's file na
 
 ## The pack (by hand)
 
-Build Strata, then from the repository root (the pack tools carry their own gguf-py;
+Build PolyStrata, then from the repository root (the pack tools carry their own gguf-py;
 `STRATA_GGUF_PY` can point to another `gguf-py` folder):
 
 ```sh
@@ -106,8 +106,8 @@ the same file ([Quality](#quality-against-llamacpp-on-the-same-file)).
 
 ## The MTP draft layer
 
-The draft layer is the base model's, the same one the other packs use. If setup installed Strata, you have it (`mtp/rt`
-in `Strata-data`). Otherwise build it as [ORCA.md](ORCA.md#preparation) shows (`terminal/tools/mtp_fetch.py`,
+The draft layer is the base model's, the same one the other packs use. If setup installed PolyStrata, you have it (`mtp/rt`
+in `PolyStrata-data`). Otherwise build it as [ORCA.md](ORCA.md#preparation) shows (`terminal/tools/mtp_fetch.py`,
 `terminal/tools/mtp_pack.py`, `terminal/tools/mtp_rt.py`, then copy `terminal/data/draft_vocab.bin` to `mtp/rt/`).
 
 ## The server
@@ -161,14 +161,14 @@ start on 12 GB. `--kv int8` halves the KV cache's VRAM.
 
 ## Quality: against llama.cpp on the same file
 
-> **Measured on:** Strata 0.1.32 era engine against llama.cpp pinned commit `3cf0325` (CPU build, GGUF memory-mapped).
-> Strata ran with RAM budget 40 GiB, the MTP draft layer on, greedy and `--adapt-every 100000`. Hardware is not recorded
+> **Measured on:** PolyStrata 0.1.32 era engine against llama.cpp pinned commit `3cf0325` (CPU build, GGUF memory-mapped).
+> PolyStrata ran with RAM budget 40 GiB, the MTP draft layer on, greedy and `--adapt-every 100000`. Hardware is not recorded
 > on this page.
 
 Both were given the same token sequences, and at every position each wrote its 20 most likely next tokens with their
-log-probabilities. Strata used its verify windows (`STRATA_LOGPOS` with `STRATA_LOGPOS_TOPK=20`), llama.cpp used
+log-probabilities. PolyStrata used its verify windows (`STRATA_LOGPOS` with `STRATA_LOGPOS_TOPK=20`), llama.cpp used
 `llama_get_logits_ith` over one batch. Per position: whether the most likely token is the same (argmax agreement), how
-many of the 5 and 10 most likely tokens both have, the KL divergence (llama.cpp's distribution against Strata's, over
+many of the 5 and 10 most likely tokens both have, the KL divergence (llama.cpp's distribution against PolyStrata's, over
 llama.cpp's top 20 plus one bucket for the rest), and the perplexity of the sequence under each.
 
 | Token set | Positions | Argmax agreement | Top-5 / top-10 overlap | KL | Perplexity PolyStrata / llama.cpp |
@@ -182,12 +182,12 @@ llama.cpp's top 20 plus one bucket for the rest), and the perplexity of the sequ
 For comparison, [eddoursul/Strata](https://github.com/eddoursul/Strata) reported 98.2 to 99.3% (code), 95.6 to 95.8%
 (thinking) and 97.7% (after a 16K prompt) for the same file against llama.cpp on an RTX 3090.
 
-The two differ at near-ties. Where llama.cpp's own gap between its two most likely tokens is 0.2 or more, Strata picks
+The two differ at near-ties. Where llama.cpp's own gap between its two most likely tokens is 0.2 or more, PolyStrata picks
 the same token at every position of the code and thinking answers (695 of 695). After the 16K prompt it does so at every
 position where the gap is 0.5 or more (144 of 144 in the continuation, 254 of 254 in the real text). Text after a long
 document has many more near-ties than a short answer (58 of the continuation's 256 positions and 135 of the real text's
 510 have a gap under 0.2, against 13 of the code answer's 400), which is why its agreement is lower. The perplexities
-match within 3% in every set. The 16K prompts were read by Strata's batched prompt path (15,872 tokens), the rest
+match within 3% in every set. The 16K prompts were read by PolyStrata's batched prompt path (15,872 tokens), the rest
 through the verify windows. These numbers are the FP16 prompt path's. With the MMQ prompt path (`STRATA_MMQ_KQ=1`) the
 continuation after the 16K prompt agrees at 92.2% (KL 0.029, three runs, identical).
 
@@ -252,7 +252,7 @@ gives a relative error against the float product of 1.1 to 1.3e-2 on the CPU and
 
 > **Measured on:** one RTX 3060 12 GB (PCIe 3.0 x16), Xeon E5-2696 v4, 121 GiB DDR4-2400, Linux, CUDA 12.4. Every
 > expert in RAM, `--max-context 131072 --kv int8 --kv-resident 20480`, expert cache `auto` (1,960 slots, 5.06 GiB),
-> prompt chunk `auto` (6,144 tokens), greedy, `reasoning_effort` medium, one request at a time. Strata version not
+> prompt chunk `auto` (6,144 tokens), greedy, `reasoning_effort` medium, one request at a time. PolyStrata version not
 > recorded.
 
 | Prompt | Prompt read | Output |

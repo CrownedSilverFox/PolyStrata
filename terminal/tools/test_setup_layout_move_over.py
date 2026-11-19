@@ -26,7 +26,7 @@ class MoveOver(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        c = self.clone = self.tmp / "Strata"
+        c = self.clone = self.tmp / "PolyStrata"
         (c / "engine" / "src").mkdir(parents=True)
         (c / "engine" / "CMakeLists.txt").write_text("project(strata VERSION 0.1.61)\n", encoding="utf-8")
         (c / "engine" / "build-sycl").mkdir()                       # a build folder: stays

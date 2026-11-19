@@ -1,6 +1,6 @@
 # Unsloth UD-Q6_K_XL
 
-This page is for people who want to run Unsloth's 6-bit Qwen3.8-Flash-Next file with Strata, and for people who pack it
+This page is for people who want to run Unsloth's 6-bit Qwen3.8-Flash-Next file with PolyStrata, and for people who pack it
 by hand. UD-Q5_K_XL and Q8_0 are set up the same way. Quality, speed and images across the Unsloth sizes are in
 [QUANTS.md](QUANTS.md). UD-Q4_K_XL, with the full setup details, is in [UNSLOTH_Q4.md](UNSLOTH_Q4.md).
 

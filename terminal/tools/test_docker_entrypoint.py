@@ -193,7 +193,7 @@ class Entrypoint(unittest.TestCase):
         p = self.start(MODEL="IQ3_XXS")
         self.wait_for("--show-key")
         code, out, err = self.stop(p)
-        new = data / "Strata-data"
+        new = data / "PolyStrata-data"
         moved = new / "models" / "Qwen3.8-Flash-Next-IQ3_XXS" / "a-00001-of-00002.gguf"
         self.assertEqual(moved.read_text(), "weights")
         self.assertEqual(moved.stat().st_ino, ino)                          # renamed, not copied
@@ -207,22 +207,22 @@ class Entrypoint(unittest.TestCase):
         data = self.tmp / "data"
         (data / "models" / "t").mkdir(parents=True)
         (data / "models" / "t" / "f.gguf").write_text("old")
-        (data / "Strata-data" / "models" / "t").mkdir(parents=True)
-        (data / "Strata-data" / "models" / "t" / "f.gguf").write_text("new")
+        (data / "PolyStrata-data" / "models" / "t").mkdir(parents=True)
+        (data / "PolyStrata-data" / "models" / "t" / "f.gguf").write_text("new")
         # the older copy stays where it is, so the guard for model files left in the older place (#3421) would stop the start
         # ("Nothing was downloaded."); ALLOW_DOWNLOAD=1 goes on with a warning, which is what this test is about
         p = self.start(MODEL="IQ3_XXS", ALLOW_DOWNLOAD="1")
         self.wait_for("--show-key")
         self.stop(p)
-        self.assertEqual((data / "Strata-data" / "models" / "t" / "f.gguf").read_text(), "new")   # never overwritten
+        self.assertEqual((data / "PolyStrata-data" / "models" / "t" / "f.gguf").read_text(), "new")   # never overwritten
         self.assertEqual((data / "models" / "t" / "f.gguf").read_text(), "old")
 
     def test_older_model_files_that_were_not_moved_stop_the_start_unless_downloading_is_allowed(self):
         data = self.tmp / "data"
         (data / "models" / "t").mkdir(parents=True)
         (data / "models" / "t" / "f.gguf").write_text("old")
-        (data / "Strata-data" / "models" / "t").mkdir(parents=True)
-        (data / "Strata-data" / "models" / "t" / "f.gguf").write_text("new")
+        (data / "PolyStrata-data" / "models" / "t").mkdir(parents=True)
+        (data / "PolyStrata-data" / "models" / "t" / "f.gguf").write_text("new")
         p = self.start(MODEL="IQ3_XXS")
         out, err = p.communicate(timeout=30)
         code = p.returncode
@@ -287,7 +287,7 @@ class Entrypoint(unittest.TestCase):
         p = self.start(MODEL_PATH=str(self.tmp / "g"))
         self.wait_for("--show-key")
         code, out, err = self.stop(p)
-        self.assertIn("Starting Strata: the model files in " + str(self.tmp / "g"), out)
+        self.assertIn("Starting PolyStrata: the model files in " + str(self.tmp / "g"), out)
 
     def test_other_commands_run_instead_of_the_server(self):
         r = subprocess.run([SH, str(self.script), "strata", "launch", "--plan", "--model", "q2_0"], env=self.env(), capture_output=True,

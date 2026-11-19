@@ -301,7 +301,7 @@ class Progress(FetchCase):
 
     def test_the_progress_figure_follows_the_job_in_strata_mcp(self):
         import strata_mcp as MCP
-        got = MCP.install_progress(["=== Step 6: preparing the model for Strata ===",
+        got = MCP.install_progress(["=== Step 6: preparing the model for PolyStrata ===",
                                     "  MTP draft layer:   1.23 / 5.04 GB (24%)"])
         self.assertEqual(got["download"], {"file": "MTP draft layer", "done_gb": 1.23, "total_gb": 5.04, "percent": 24})
 

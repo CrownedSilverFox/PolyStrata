@@ -897,8 +897,8 @@ def engine_has_text(exe: str, needle: bytes) -> bool | None:
 
 
 def draft_costs_dir() -> Path:
-    """Where the learned draft cost tables live: beside the saved tunings (strata_control/presets.py), in the user's Strata settings folder
-    (%APPDATA%\\Strata\\draft-costs, ~/.config/strata/draft-costs), which the Windows uninstaller's "remove my data" deletes with them.
+    """Where the learned draft cost tables live: beside the saved tunings (strata_control/presets.py), in the user's PolyStrata settings folder
+    (%APPDATA%\\PolyStrata\\draft-costs, ~/.config/strata/draft-costs), which the Windows uninstaller's "remove my data" deletes with them.
     STRATA_DRAFT_COSTS_DIR: another folder (tests and test jobs, which never write into a real settings folder)."""
     explicit = os.environ.get("STRATA_DRAFT_COSTS_DIR")
     if explicit:
@@ -994,7 +994,7 @@ def hip_no_card_message(devices: list[dict]) -> str:
     """The plain line when the engine has code for none of the computer's cards."""
     cards = ", ".join(f"{d['name'] or 'graphics card'} ({d['arch'] or 'unknown'}{', integrated' if d['integrated'] else ''})" for d in devices)
     built = next((m.group(1) for d in devices for m in [re.search(r"compiled for \(([^)]*)\)", d["cannot_run"] or "")] if m), "")
-    text = f"[strata] none of this computer's graphics cards has code in this Strata engine{f' (it is built for {built})' if built else ''}. Cards found: {cards}."
+    text = f"[strata] none of this computer's graphics cards has code in this PolyStrata engine{f' (it is built for {built})' if built else ''}. Cards found: {cards}."
     note = engine_component.no_package_note([d["arch"] for d in devices])
     return text + (f" {note}" if note else "")
 

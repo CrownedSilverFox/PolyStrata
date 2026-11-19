@@ -1,6 +1,6 @@
 # Image generation (Qwen-Image-2.1-Turbo)
 
-This page is for people who want Strata's server to make images through `POST /v1/images/generations`, OpenAI's
+This page is for people who want PolyStrata's server to make images through `POST /v1/images/generations`, OpenAI's
 images API. It is optional, off unless you ask for it, and separate from reading pictures in chat (for that, use
 `strata launch --vision on` with a supported model and reader).
 
@@ -76,8 +76,8 @@ quarter overlap decodes in half the time of sd.cpp's default half overlap.
 | `size` | `WIDTHxHEIGHT`, each side a multiple of 32 from 256 to 2048 (`max_side`). Default and `auto`: `1024x1024`. |
 | `n` | Images, 1 to 4 (`max_n`). Image *i* uses seed + *i*. |
 | `response_format` | `b64_json` (default) or `url` (`/v1/images/files/<random name>.png`; the server keeps the newest 64). |
-| `seed` | Strata's: a whole number for a repeatable image. Default: random; the answer says which. |
-| `steps` | Strata's: 8 (Turbo's schedule). Another count uses stable-diffusion.cpp's own schedule, which Turbo was not made for. |
+| `seed` | PolyStrata's: a whole number for a repeatable image. Default: random; the answer says which. |
+| `steps` | PolyStrata's: 8 (Turbo's schedule). Another count uses stable-diffusion.cpp's own schedule, which Turbo was not made for. |
 | `background` | `auto` (default) or `opaque`: the picture on white, as an 8-bit RGB PNG. `transparent`: the model's own transparency kept (an RGBA PNG). |
 
 The answer has OpenAI's shape (`created`, `data[].b64_json` or `data[].url`, `revised_prompt` = the prompt,
@@ -105,7 +105,7 @@ takes a few seconds per image from the page cache.
 ## History / older measurements
 
 > **Measured on:** seconds per image through the API, Q8_0, 8 steps, one `sd-cli` process per image with loading
-> included. Strata version not recorded.
+> included. PolyStrata version not recorded.
 
 | GPU | Backend | 1024x1024 | 512x512 |
 | --- | --- | --- | --- |

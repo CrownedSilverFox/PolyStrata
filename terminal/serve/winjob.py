@@ -119,7 +119,7 @@ def start_contained(args, **kw):
     if real and not resumed:
         _end(proc)
         program = args[0] if args else "?"
-        raise OSError(f"Windows started {program} but did not let it run, so Strata stopped it. "
+        raise OSError(f"Windows started {program} but did not let it run, so PolyStrata stopped it. "
                       "Start it again; if this keeps happening, restart the computer.")
     return proc
 

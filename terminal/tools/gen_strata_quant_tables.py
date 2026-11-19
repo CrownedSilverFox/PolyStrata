@@ -3,7 +3,7 @@
     python tools/gen_strata_quant_tables.py            (rewrites tools/strata_quant_tables.py)
     python tools/gen_strata_quant_tables.py --check    (exit 1 when the file is not what the reference gives)
 
-The IQ grids, the sign table and the 4-bit value tables are data of the GGUF format. tools/strata_quant_tables.py is Strata's copy of
+The IQ grids, the sign table and the 4-bit value tables are data of the GGUF format. tools/strata_quant_tables.py is PolyStrata's copy of
 them: the Python dequantizers (tools/strata_quants.py) read it, and tools/gen_quant_header.py writes the engines' quant header
 (include/strata/quant/strata-quant-common.h) from it. This script made it from the reference, llama.cpp's ggml-common.h in the vendored
 test oracle (third_party/strata-ggml/ggml/src/ggml-common.h); --check (and tools/test_strata_gguf.py) proves it still equals that.

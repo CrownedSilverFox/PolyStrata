@@ -214,17 +214,17 @@ class RedactionTests(unittest.TestCase):
                  mock.patch.object(B.tempfile, "gettempdir", return_value=tmp):
                 return B.redactor()
 
-        linux = red(PurePosixPath("/home/dgbox/Strata"), PurePosixPath("/home/dgbox"), "dgbox", "dgbox-ubuntu-server", "/tmp")
-        self.assertEqual(linux("loading /home/dgbox/Strata/strata-x.json"), "loading <strata>/strata-x.json")
-        self.assertEqual(linux("dgbox-ubuntu-server wrote /home/dgbox/Strata/bench/results/run/results.json"),
+        linux = red(PurePosixPath("/home/dgbox/PolyStrata"), PurePosixPath("/home/dgbox"), "dgbox", "dgbox-ubuntu-server", "/tmp")
+        self.assertEqual(linux("loading /home/dgbox/PolyStrata/strata-x.json"), "loading <strata>/strata-x.json")
+        self.assertEqual(linux("dgbox-ubuntu-server wrote /home/dgbox/PolyStrata/bench/results/run/results.json"),
                          "<host> wrote <strata>/bench/results/run/results.json")
         self.assertEqual(linux("in /home/dgbox/data"), "in <home>/data")
         self.assertEqual(linux("hello dgbox world"), "hello <user> world")
         self.assertEqual(linux("log /tmp/strata.log"), "log <tmp>/strata.log")
-        win = red(PureWindowsPath(r"C:\Users\dgbox\Strata"), PureWindowsPath(r"C:\Users\dgbox"), "dgbox", "dgbox-pc",
+        win = red(PureWindowsPath(r"C:\Users\dgbox\PolyStrata"), PureWindowsPath(r"C:\Users\dgbox"), "dgbox", "dgbox-pc",
                   r"C:\Users\dgbox\AppData\Local\Temp")
         self.assertEqual(win(r"in C:\Users\dgbox\data"), r"in <home>\data")
-        self.assertEqual(win(r"loading C:\Users\dgbox\Strata\strata-x.json"), r"loading <strata>\strata-x.json")
+        self.assertEqual(win(r"loading C:\Users\dgbox\PolyStrata\strata-x.json"), r"loading <strata>\strata-x.json")
 
     def test_objects_are_redacted_deeply(self):
         red = B.redactor()

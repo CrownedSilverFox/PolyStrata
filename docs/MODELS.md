@@ -96,7 +96,7 @@ picture). The rule is the same on NVIDIA and AMD.
 | `--vision off` | no pictures (also "No" in the app and in `strata launch`) |
 | `--vision cpu` / `--vision gpu` | choose the reader |
 
-- **AMD:** `strata-vision-hip` is the card's reader. If it cannot start, Strata uses the CPU reader ([AMD_HIP.md](AMD_HIP.md)).
+- **AMD:** `strata-vision-hip` is the card's reader. If it cannot start, PolyStrata uses the CPU reader ([AMD_HIP.md](AMD_HIP.md)).
 - **Mac:** pictures run on the GPU ([MAC.md](MAC.md)).
 - **Intel Arc:** an Arc with 24 GB or more keeps the CPU reader unless you pass `--vision gpu`. A Battlemage card (B580, B70) has pictures off until you pass `--vision on` ([INTEL.md](INTEL.md)).
 
@@ -179,8 +179,8 @@ strata launch --family gyro --model Gyro-S
 
 | App name | `--model` | What it is | Download |
 | --- | --- | --- | ---: |
-| **NVFP4 (Strata's version)** | `NVFP4` | Strata's own conversion (GPTQ; the ready pack is sergqwer's strata-nvfp4). Best quality of the three | 128 GB |
-| **NVFP4 (NVIDIA's version)** | `NVFP4-NVIDIA` | NVIDIA's own checkpoint (plain rounding), converted for Strata. Same size and speed as the first | 128 GB |
+| **NVFP4 (PolyStrata's version)** | `NVFP4` | PolyStrata's own conversion (GPTQ; the ready pack is sergqwer's strata-nvfp4). Best quality of the three | 128 GB |
+| **NVFP4 (NVIDIA's version)** | `NVFP4-NVIDIA` | NVIDIA's own checkpoint (plain rounding), converted for PolyStrata. Same size and speed as the first | 128 GB |
 | **NVFP4 (NVIDIA, trained for FP4)** | `NVFP4-QAD` | NVIDIA's retrained model, slightly faster on short prompts | 102 GB (+110 GB of disk to prepare) |
 
 All three need about 80 GB of RAM to keep every expert in RAM, run on NVIDIA cards only and read pictures. RTX 50 cards
@@ -188,8 +188,8 @@ have FP4 tensor cores; other NVIDIA cards run NVFP4 at 8-bit precision. Details 
 
 **NVFP4-QAD** is NVIDIA's [Qwen3.8-Flash-Next-FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local),
 retrained for 4-bit experts (quantization-aware distillation). Setup downloads NVIDIA's files as they are (102 GB) and
-turns them into a Strata pack on your PC once (20 to 40 minutes, about 110 GB more disk while it runs; the 102 GB can be
-deleted afterwards). Strata does not redistribute NVIDIA's weights. Pictures use the original model's reader file, which
+turns them into a PolyStrata pack on your PC once (20 to 40 minutes, about 110 GB more disk while it runs; the 102 GB can be
+deleted afterwards). PolyStrata does not redistribute NVIDIA's weights. Pictures use the original model's reader file, which
 setup downloads with it. Licenses: NVIDIA Open Model Agreement and Qwen's Community License.
 More: [NVFP4.md](NVFP4.md#nvidias-fp4-local-checkpoint).
 
@@ -205,7 +205,7 @@ packing conversion and is not an installer menu option.
 ## Qwen3.6-35B-A3B
 
 A smaller model from the same maker: [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) (35 billion
-parameters, 3 billion active per token, 256 experts, Apache 2.0). Strata runs
+parameters, 3 billion active per token, 256 experts, Apache 2.0). PolyStrata runs
 [Unsloth's GGUFs with the MTP draft layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) on its own engine
 path, chosen by the file. It is in the app's model list and in setup (`--family qwen36`). It runs on NVIDIA and AMD
 cards; the Intel Arc engine and the Mac engine do not run it. It reads pictures and serves several requests at once.
@@ -249,7 +249,7 @@ checkout, not to the installed app.
 `--tune quick` and `--tune thorough` measure settings for the selected model, and the app offers tuning too. Results
 depend on the backend and machine. All speed measurements, long-context numbers and estimates for other cards are in
 [DETAILS.md](DETAILS.md#speed-measured). AMD measurements per card are in [AMD_HIP.md](AMD_HIP.md#rdna4-gfx1201).
-Measured Strata on your own PC? See [Community benchmark results](COMMUNITY_BENCHMARKS.md).
+Measured PolyStrata on your own PC? See [Community benchmark results](COMMUNITY_BENCHMARKS.md).
 
 <a id="how-fast-is-each-size"></a>
 

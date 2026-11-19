@@ -20,7 +20,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import tqp_ref as R
 
-DEFAULT_MODEL = pathlib.Path.home() / "Strata-data/models/Gyro/Coder-L/Qwen3.8-Flash-Next-Gyro-Coder-L-TQ3_0.gguf"
+DEFAULT_MODEL = pathlib.Path.home() / "PolyStrata-data/models/Gyro/Coder-L/Qwen3.8-Flash-Next-Gyro-Coder-L-TQ3_0.gguf"
 OUT = pathlib.Path(__file__).resolve().parent.parent / "tests" / "data" / "tqp"
 NBLOCKS = 64
 # one gate/up tensor and one down tensor per type, from different layers

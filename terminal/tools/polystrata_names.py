@@ -4,12 +4,13 @@
 PolyStrata is built on Strata (https://github.com/Niko1221/Strata) and takes its changes, and Strata's text names
 Strata. Run this after taking changes from it:
 
-    python tools/polystrata_names.py            # rewrite the files
-    python tools/polystrata_names.py --check    # list what it would change, change nothing
+    python terminal/tools/polystrata_names.py            # rewrite the files
+    python terminal/tools/polystrata_names.py --check    # list what it would change, change nothing
 
 It replaces the word Strata in the files a user reads or runs (documents, setup, the server, the web app, the
 tools and their tests) and nothing else; a second run changes nothing. It leaves alone the engines' sources and
-build files, the benchmark records, the paper, docs/FAQ.md (it is about both projects), and the places where
+build files, the benchmark records, the paper, docs/FAQ.md (it is about both projects), the Strata project's app,
+Terminal and packaging (app/, terminal/strata_cli, terminal/strata_control, tools/), and the places where
 Strata means the project this one is built on (KEEP). To name that project in new text, link it,
 [Strata](https://github.com/Niko1221/Strata), or write "the Strata project".
 """
@@ -18,9 +19,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-SKIP = ("src/", "include/", "tests/", "cmake/", "third_party/", "bench/", "sycl/src/", "sycl/tools/", "tools/vision/",
-        "docs/paper/", "docs/COMMUNITY_BENCHMARKS.md", "docs/FAQ.md", "tools/polystrata_names.py")
+ROOT = Path(__file__).resolve().parent.parent.parent
+SKIP = ("engine/src/", "engine/include/", "engine/tests/", "engine/cmake/", "engine/third_party/", "engine/bench/",
+        "engine/sycl/src/", "engine/sycl/tools/", "terminal/tools/vision/", "terminal/tools/polystrata_names.py",
+        "app/", "terminal/strata_cli/", "terminal/strata_control/", "terminal/tests/", "tools/",
+        "docs/paper/", "docs/bench-results/", "docs/history/", "docs/release-notes-", "docs/COMMUNITY_BENCHMARKS.md",
+        "docs/FAQ.md")
 KINDS = (".md", ".py", ".html", ".js", ".css", ".bat", ".sh", ".yml", ".yaml")
 NAMES = ("Dockerfile",)
 KEEP = "|".join((

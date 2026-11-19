@@ -23,8 +23,8 @@ BOXES = {
         "profile": "{repo}/data/expert-profile.bin",
     },
     "z440": {
-        "py": "/data/Strata/.venv/bin/python", "libs": ["/usr/local/cuda-12.9/lib64"],
-        "pack": "/data/strata-models/IQ3_S/pack", "mtp": "/data/Strata-data/mtp/rt",
+        "py": "/data/PolyStrata/.venv/bin/python", "libs": ["/usr/local/cuda-12.9/lib64"],
+        "pack": "/data/strata-models/IQ3_S/pack", "mtp": "/data/PolyStrata-data/mtp/rt",
         "gguf1": "/data/strata-models/IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
         "gguf2": "/data/strata-models/IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf",
         "profile": "{repo}/data/expert-profile.bin",

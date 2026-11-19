@@ -1,8 +1,8 @@
-# Strata guides
+# PolyStrata guides
 
-**New here? Start with [Install Strata](INSTALL.md).** Download the one installer for your system (Windows, Linux or Mac), or install the Terminal with one line. Both use released engine packages. This documentation is for version 0.2.16.
+**New here? Start with [Install PolyStrata](INSTALL.md).** Download the one installer for your system (Windows, Linux or Mac), or install the Terminal with one line. Both use released engine packages. This documentation is for version 0.2.16.
 
-## Use Strata
+## Use PolyStrata
 
 | I want to… | Guide |
 | --- | --- |
@@ -75,4 +75,4 @@ Every guide page has this shape:
 
 Label every measurement the same way, directly above the number or table:
 
-> **Measured on:** hardware (GPU, CPU, RAM), model or set, Strata version, workload.
+> **Measured on:** hardware (GPU, CPU, RAM), model or set, PolyStrata version, workload.

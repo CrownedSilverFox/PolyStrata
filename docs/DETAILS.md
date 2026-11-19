@@ -1,7 +1,7 @@
-# Strata engine and server reference
+# PolyStrata engine and server reference
 
 This page is the technical reference for the Qwen engine and its server: measured speed, the HTTP API, the settings in
-`strata-<model>.json`, memory modes and the speed switches. It is for people who run Strata from a source checkout, tune
+`strata-<model>.json`, memory modes and the speed switches. It is for people who run PolyStrata from a source checkout, tune
 an installation or connect their own software. It describes the current release. Dated measurements are in
 [History / older measurements](#history--older-measurements) at the end.
 
@@ -32,7 +32,7 @@ installed app has none of them.
      -d '{"model": "strata", "messages": [{"role": "user", "content": "Write a haiku about GPUs."}], "max_tokens": 512}'
    ```
 
-3. Point your app at `http://127.0.0.1:8080/v1` with any API key, or run `strata connect` to list the apps Strata can configure.
+3. Point your app at `http://127.0.0.1:8080/v1` with any API key, or run `strata connect` to list the apps PolyStrata can configure.
 4. Change a setting by editing `strata-<model>.json` and restarting. Setup rewrites the file when you run it again and
    keeps the keys it does not manage.
 
@@ -128,7 +128,7 @@ A 4-bit quantization of the same model (111 GB, 72 GiB of experts). Install it w
 ## Windows
 
 On Windows the source wrapper is `START-HERE.bat` ([source installation](SOURCE_INSTALL.md#from-source-windows)). For a
-released app, run its installer and open Strata from the Start menu. For the Terminal, use `strata launch`. Watch the
+released app, run its installer and open PolyStrata from the Start menu. For the Terminal, use `strata launch`. Watch the
 setup plan and the startup log for what is actually chosen on your machine, and see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 if a component is missing.
 
@@ -213,13 +213,13 @@ not faster by itself. Hugging Face limits anonymous requests per IP address and 
 you can fetch the file with the `hf` command, optionally after `hf auth login`, and give the folder to setup:
 
 ```bash
-uvx hf auth login            # optional: your own Hugging Face account; Strata does not read or send this token
+uvx hf auth login            # optional: your own Hugging Face account; PolyStrata does not read or send this token
 uvx hf download agentionai/Qwen3.8-Flash-Next-Gyro-GGUF Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf \
     --revision 1ada08422e404aca51ab9df665f089f34c419c6b --local-dir /data/gyro-s
 ./setup.sh --gguf-dir /data/gyro-s       # Windows: SETUP.bat --gguf-dir D:\gyro-s
 ```
 
-Use the file names and the revision setup shows for your model (the revision above is the one this version pins for Gyro-S: another version of Strata may pin another).
+Use the file names and the revision setup shows for your model (the revision above is the one this version pins for Gyro-S: another version of PolyStrata may pin another).
 Keep the file's original name. Setup finds the files in `--gguf-dir`, checks their SHA-256 and does not download them again; a file that does not match the published one is
 reported and, for files in your own folder, never deleted. Without `uvx`, `pip install -U huggingface_hub` gives the same `hf` command.
 
@@ -354,7 +354,7 @@ that reads this line must accept `ms/window = adapt wait` for a serial run.
 | --- | --- |
 | `--mtp` | Use the model's MTP draft layer (setup passes it). The server also runs without it: drafts then come from the suffix and prompt-lookup drafter only, every token is still verified, and the draft layer's ~0.7-1 GiB of VRAM goes to the expert cache. |
 | `--spec N`, `--spec-min-p P` | Draft depth and the confidence needed to add a guess. Setup's default is `--spec 4 --spec-min-p 0.5`. |
-| `--draft-vocab en\|cyrillic\|fr\|latin` (setup) | The draft layer can only propose tokens from a subset of the vocabulary. The default subset includes every Chinese, Japanese and Korean token. `en` keeps the English and code subset (~110 MiB less VRAM, English 1-2% faster, CJK gets almost no drafts). `cyrillic` and `fr` add those scripts; `latin` adds German, Spanish, French and Polish together. With no choice, Strata picks `cyrillic` or `latin` by itself when the languages of this computer (display language, regional format, keyboards) are Cyrillic or Latin-script and none of them is Chinese, Japanese or Korean; the pick is made at every start and written nowhere, and a choice you make always wins. On an RTX PRO 5000 (IQ3_S), default file -> chosen file, tok/s: Russian 180.0 -> 227.6 (`cyrillic`); German 211.7 -> 233.6, Spanish 220.1 -> 244.5, French 221.9 -> 249.1, Polish 188.4 -> 203.2 (`latin`); English 265.2 with the default, 266.0 with `latin`, 266.6 with `cyrillic`; Chinese 238.4 -> 199.2 and Japanese 222.2 -> 194.4 with `latin`, which is why any Chinese, Japanese or Korean signal keeps the default. `terminal/tools/draft_vocab.py` builds and inspects subsets. |
+| `--draft-vocab en\|cyrillic\|fr\|latin` (setup) | The draft layer can only propose tokens from a subset of the vocabulary. The default subset includes every Chinese, Japanese and Korean token. `en` keeps the English and code subset (~110 MiB less VRAM, English 1-2% faster, CJK gets almost no drafts). `cyrillic` and `fr` add those scripts; `latin` adds German, Spanish, French and Polish together. With no choice, PolyStrata picks `cyrillic` or `latin` by itself when the languages of this computer (display language, regional format, keyboards) are Cyrillic or Latin-script and none of them is Chinese, Japanese or Korean; the pick is made at every start and written nowhere, and a choice you make always wins. On an RTX PRO 5000 (IQ3_S), default file -> chosen file, tok/s: Russian 180.0 -> 227.6 (`cyrillic`); German 211.7 -> 233.6, Spanish 220.1 -> 244.5, French 221.9 -> 249.1, Polish 188.4 -> 203.2 (`latin`); English 265.2 with the default, 266.0 with `latin`, 266.6 with `cyrillic`; Chinese 238.4 -> 199.2 and Japanese 222.2 -> 194.4 with `latin`, which is why any Chinese, Japanese or Korean signal keeps the default. `terminal/tools/draft_vocab.py` builds and inspects subsets. |
 | `--lookup-chain-min M`, `--mtp-hnorm stream`, `--mtp-draft-vocab FILE` | Finer controls: the shortest context match `--lookup-chain` extends (default 3), one norm per stream, and a token subset of your own. |
 
 When the start stops with "the draft head does not fit" (a 12 GB card with a long context), the engine says how much it needs
@@ -370,7 +370,7 @@ the engine args. `--pcie-frac 0` costs decode speed, so keep it for A/B runs.
 
 ## Sharing the GPU with other programs (optional)
 
-By default the model stays loaded until you close Strata. Three server options, all off by default and also keys in
+By default the model stays loaded until you close PolyStrata. Three server options, all off by default and also keys in
 `strata-<model>.json`, give the VRAM back:
 
 | Option | Config key | What it does |
@@ -407,7 +407,7 @@ split, the helper caches, `--peer-device` or the resident low-RAM mode.
 **Keep what the expert cache learned across restarts** (opt-in). `"expert_profile_save": "expert-profile-learned.bin"` saves
 the experts in VRAM, then the counted routing, then the shipped order, on a clean exit and every 10 minutes between
 requests (`"expert_profile_save_every": 5` for another interval, `0` for exit only). The next start begins from it when it
-is a profile of the same model. A relative path is in the Strata folder. The file is a fingerprint of what you used the model
+is a profile of the same model. A relative path is in the PolyStrata folder. The file is a fingerprint of what you used the model
 for and stays on your PC. A profile learned from one kind of text speeds that kind up and can slow others, so keep one file
 per kind of work. Setup rewrites the config when run again, so add the key again then.
 
@@ -474,7 +474,7 @@ print(r.choices[0].message.content)
 - **Prometheus.** With `Accept: text/plain` the metrics use vLLM's names (`vllm:num_requests_running`, `vllm:kv_cache_usage_perc`,
   token and request counters, `vllm:prefix_cache_queries_total` and `_hits_total`, `vllm:spec_decode_num_draft_tokens_total`
   and `_accepted_tokens_total`, and the time-to-first-token, inter-token and end-to-end histograms), so dashboards written
-  for vLLM read this server. Strata's own facts come under `strata:` and are named after their JSON key (for example
+  for vLLM read this server. PolyStrata's own facts come under `strata:` and are named after their JSON key (for example
   `strata:live_tok_s`, `strata:last_hit_rate`, `strata:gpu_util`, `strata:ram_used_bytes`). A value the server does not have
   has no sample. With an API key, the scraper sends it as a bearer token. Ready-made files are in `docs/monitoring/`:
   `prometheus.yml`, `servicemonitor.yaml` and `grafana-strata.json`.
@@ -563,7 +563,7 @@ applies at the next start. Network, key, MCP and program keys are not editable t
   `finish_reason` stays `stop` (or `end_turn` on `/v1/messages`). Next to it the reply carries a list, only when there is something in it:
   `"strata_rejected_tool_calls": [{"name": "bash", "reason": "undeclared"}]` (at the top level of a Chat Completions reply, in
   its last streamed chunk, and in the `message_delta` event and the message of `/v1/messages`; up to five names). A client that
-  wants to recover can answer the model with the tool names it does have and ask again; Strata never runs or forwards a call for a
+  wants to recover can answer the model with the tool names it does have and ask again; PolyStrata never runs or forwards a call for a
   tool the request did not declare. The server window prints the same names (`N <tool_call> block(s) ... went back as text`), and
   `/metrics/prometheus` counts the blocks in `strata:tool_calls_unread_total`. A block that is malformed (not an undeclared name) is counted
   there and in the window, but has no name to list.
@@ -692,7 +692,7 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   For IPv6 use `--host ::` (or `"host": "::"`, all IPv6 interfaces) and put the address in brackets in URLs, for example
   `http://[2001:db8::7]:8080/v1`.
   On Windows allow the port in the firewall for private networks:
-  `New-NetFirewallRule -DisplayName "Strata 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private`
+  `New-NetFirewallRule -DisplayName "PolyStrata 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private`
   (admin PowerShell).
 - **From the internet:** put a tunnel in front, for example `cloudflared tunnel --url http://127.0.0.1:8080`. Set a key first.
   Several keys (one per client, so one can be withdrawn): `--api-key key1,key2`, `"api_key": "key1,key2"` or
@@ -710,11 +710,11 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   get **403** naming the setting. Add a name with `"allowed_hosts": ["strata.example.com"]` or
   `STRATA_ALLOWED_HOSTS=strata.example.com` (comma-separated). `".example.com"` allows every name below it and `["*"]`
   turns the check off, as does setting `api_key`.
-- **Web pages without a key:** a `POST` to `/v1/*` carrying an `Origin` header is answered only for Strata's own page, pages on
+- **Web pages without a key:** a `POST` to `/v1/*` carrying an `Origin` header is answered only for PolyStrata's own page, pages on
   `localhost` or an allowed host, origins in `trusted_origins` or `cors_origins`, and browser extensions and desktop apps, and only with
   a JSON body. Other pages and `Origin: null` get **403**. Clients without an `Origin` (curl, the SDKs) are not affected. With
   an API key, the key decides. `POST /unload`, `/load` and `/slots/0?action=...` also take only JSON from no `Origin`,
-  Strata's own page or a trusted origin.
+  PolyStrata's own page or a trusted origin.
 
 ### Connecting apps
 
@@ -722,7 +722,7 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   and offers tools from `chat_template_caps`. Zed's generic OpenAI-compatible provider does not; add
   `"capabilities": {"tools": true, "chat_completions": true}` on that model in Zed's settings.
 - **Claude Code:** set `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` and `ANTHROPIC_MODEL` to a Claude model name it knows
-  (Strata ignores the name), plus any `ANTHROPIC_AUTH_TOKEN` (or your `api_key`).
+  (PolyStrata ignores the name), plus any `ANTHROPIC_AUTH_TOKEN` (or your `api_key`).
 - **OpenCode:** a starting point for `opencode.jsonc`. The field names are OpenCode's, so check its config docs if your version
   differs.
   `strata-<model>.json` renders a request with no `"thinking"` or budget without thinking, also when it gives an
@@ -880,7 +880,7 @@ prompt tokens the cache gave back; `/metrics` has the same under `"conversation_
 
 The conversation the engine holds can be saved to a file and restored later, also after a restart of the same engine version,
 so a long prompt is not read again. Start the server with `--slot-save-path DIR` (or `"slot_save_path"` in the config). The
-file format is Strata's own, not llama.cpp's, and there is no erase action.
+file format is PolyStrata's own, not llama.cpp's, and there is no erase action.
 - **Switching models on request (#38, opt-in).** `"switch_on_request": true` in the `strata-<model>.json` the server
   starts with (or `--switch-on-request`) makes the API work like llama-server's router: `/v1/models` lists every
   installed model that can run (each `strata-<model>.json` beside that config, with its aliases; status `loaded`,
@@ -906,7 +906,7 @@ curl -X POST "http://127.0.0.1:8080/slots/0?action=restore" -H "Content-Type: ap
 
 - `DIR` becomes an absolute path at start and is created with mode 0700. Files are created with mode 0600 on Linux (on Windows
   they inherit the folder's permissions), nothing deletes them, and they are large (about 1.2 GB per 63K-token conversation).
-  Keep `DIR` private to the user that runs Strata.
+  Keep `DIR` private to the user that runs PolyStrata.
 - `NAME` must be a plain file name inside `DIR`: no path, drive, stream (`:`), Windows device name, control character, leading
   dot or trailing dot or space. A save checks that the disk has room for the whole file plus `--session-min-free-mib` (engine
   argument, default 4096, `0` = no check).
@@ -923,7 +923,7 @@ curl -X POST "http://127.0.0.1:8080/slots/0?action=restore" -H "Content-Type: ap
 - Errors: `501` without `--slot-save-path` or with parallel requests; `400` for a slot other than 0, an unknown action, a refused
   file name or an invalid file; `404` for a missing file; `503` when the model is not loaded or RAM is short; `507` when the disk has
   no room; `500` for other I/O failures or an engine that ended. `error.published: true` means a save failed after its new
-  file had replaced the old one. Requests must be `application/json` (else `415`) and come from no browser page, Strata's own
+  file had replaced the old one. Requests must be `application/json` (else `415`) and come from no browser page, PolyStrata's own
   page or a trusted origin.
 - Not supported with `--layer-split`, `--peer-device`, `--batch` or `--prompt-cache 0`. The engine has been run on Linux and CUDA
   only for this feature. Exact token replay across restarts is not guaranteed: expert residency and CPU/GPU rounding can
@@ -986,7 +986,7 @@ Off by default, because it keeps prompts and answers in memory. Turn it on with 
 controls, active and queued requests, request bodies, output, separate reasoning and response bodies, with load, queue,
 first-token and decode timings. `GET /api/requests` returns summaries and `GET /api/requests?id=<id>` one request. The
 monitor keeps the newest 100 requests in memory until restart, 262,144 characters per field, with visible truncation flags.
-Headers are not recorded. Treat the history as sensitive when Strata is reachable from a network, and set an API key.
+Headers are not recorded. Treat the history as sensitive when PolyStrata is reachable from a network, and set an API key.
 **strata-poly's session files.** strata-poly takes the same two requests and answers them in the same lines, with a
 file format of its own (the two engines do not read each other's files). A file holds the conversation in the engine
 as it stands: its tokens, its last two checkpoints (where its last turn began and the end of its prompt) with the
@@ -1082,11 +1082,11 @@ stream_idle_timeout_ms = 600000         # a first, long prompt can take minutes 
 
 Run `codex` (or `codex exec "..."`). Codex warns `Model metadata for ... not found` for a local model name; that is expected.
 On Windows, Codex's own sandbox rejected shell commands until it was started with `-c 'windows.sandbox="unelevated"'` (a
-Codex setting, not Strata's).
+Codex setting, not PolyStrata's).
 
 **Codex's compaction** (opt-in: `"codex_compaction_cache": true`). When the context fills up (or on `/compact`), Codex sends the
 conversation once more with a summarize request and `tools: []`. The template writes tools at the top of the prompt, so that
-prompt would be read again from the start. With the option on, Strata remembers which Codex conversation sent the last
+prompt would be read again from the start. With the option on, PolyStrata remembers which Codex conversation sent the last
 non-compaction prompt (`session_id` and `thread_id`) and the tools it was rendered with, and renders a compaction request from
 that same conversation with them. It is one entry, replaced by each such prompt. A compaction of another conversation, a
 request without that metadata or a restart renders the request as sent. The prompt of a compaction then differs from the one
@@ -1110,13 +1110,13 @@ List the servers in `strata-<model>.json` under `"mcp_servers"`, the same shape 
 }
 ```
 
-Or keep them in their own file and start the server with `--mcp-config path\to\claude_desktop_config.json`. Restart Strata
+Or keep them in their own file and start the server with `--mcp-config path\to\claude_desktop_config.json`. Restart PolyStrata
 after a change.
 
-- A **program** (`command`, `args`, optional `env` and `cwd`) is started by Strata and spoken to over stdin and stdout. Node.js is
+- A **program** (`command`, `args`, optional `env` and `cwd`) is started by PolyStrata and spoken to over stdin and stdout. Node.js is
   needed for `npx` servers. An **address** (`url`, optional `headers`) uses MCP's Streamable HTTP transport (the older SSE-only
   transport is not supported). `"disabled": true` leaves an entry out.
-- Servers start with Strata. The server window says what each offers or why it did not start. The Monitor tab lists them, and
+- Servers start with PolyStrata. The server window says what each offers or why it did not start. The Monitor tab lists them, and
   Chat settings has **Use tools from MCP servers** (on by default). A server that stops later is started again at its next call.
 - In the chat each call shows as a small block. The model reads the result and goes on, up to `max_rounds` rounds of calls (one round can hold several calls). At the limit
   the model gets one final reply with no tools, using the results already found, so the answer is not cut off. A tool
@@ -1139,15 +1139,15 @@ computer; after saving, it is shown masked.
 
 **Security.** MCP tools run on your PC with your user's rights, and the model decides when to call them, also because of what
 it reads (a web page or file can contain instructions). Give a filesystem server only the folders it needs, prefer read-only
-tools and add only servers you trust. If Strata is reachable from other devices, set an API key.
+tools and add only servers you trust. If PolyStrata is reachable from other devices, set an API key.
 
 ## Manage PolyStrata from your AI assistant (MCP server)
 
 `terminal/tools/strata_mcp.py` is an MCP server for Claude Code, Claude Desktop, Cursor, VS Code, Codex and other assistants. Once it is
-added you can ask your assistant to install Strata, start it or check whether it is running. In Claude Code:
+added you can ask your assistant to install PolyStrata, start it or check whether it is running. In Claude Code:
 
 ```bash
-claude mcp add strata -- python C:\Users\you\Strata\terminal\tools\strata_mcp.py
+claude mcp add strata -- python C:\Users\you\PolyStrata\terminal\tools\strata_mcp.py
 ```
 
 It has tools for status, the model list, install, start, stop, logs, a speed test and connection settings. Install runs
@@ -1182,7 +1182,7 @@ encoder on an i9-9980HK, 8 threads: 2560x1440 (3,600 tokens) encodes in about 13
 because the encoder's cache and the conversation cache both hold it.
 
 Switch pictures off with `--vision no` (or "No" in the app and `strata launch`), or pick the reader with `--vision gpu` or
-`--vision cpu`. Setup downloads the encoder and puts a small helper (`strata-vision`, Strata's own picture reader) beside
+`--vision cpu`. Setup downloads the encoder and puts a small helper (`strata-vision`, PolyStrata's own picture reader) beside
 the engine. Where no reader exists, pictures stay off and the screen says so (the Intel Arc engine has none yet). On AMD the
 card's reader is `strata-vision-hip`; if it cannot start, the server starts the CPU reader and prints one line ([AMD_HIP.md](AMD_HIP.md)).
 
@@ -1221,7 +1221,7 @@ print(r.choices[0].message.content)
 Anthropic API: an `image` block with a `base64` (or `url`) source. JPEG, PNG, BMP, GIF, WebP, TIFF and AVIF work (the last
 ones are converted to PNG first). Chat apps with image upload work the same way.
 
-**How it works inside.** The encoder turns the picture into rows of the width of the model's word embeddings. Strata puts them
+**How it works inside.** The encoder turns the picture into rows of the width of the model's word embeddings. PolyStrata puts them
 where the prompt has `<|image_pad|>` tokens and gives each its 2-D position (row and column; interleaved M-RoPE). Answers
 match llama.cpp's multimodal implementation token for token on our test images.
 
@@ -1271,7 +1271,7 @@ them on your own card.
 | `--prefill-head-alias` | `--serve`, one GPU | The output head's VRAM holds the prompt buffers while a prompt is read ([PREFILL_HEAD_ALIAS.md](PREFILL_HEAD_ALIAS.md)). | For 8 GB cards. |
 | `STRATA_EMB_REUSE_ACCOUNT=1` | CUDA | The planner counts the VRAM saved because the half-output buffer `bo` reuses the embedding buffer `emb`, so the auto chunk can grow. Changes prompt rounding. | Prompt about +3.9% on an RTX 3060, no KL measurement yet. |
 | `STRATA_VERIFY_ASYNC_LAUNCH=1` | CUDA, single-request verifier | Runs the CUDA graph launch of a verify window on a separate host thread so the caller keeps serving CPU expert doorbells. A diagnostic for Compute Sanitizer runs. | |
-| `STRATA_CPU_IQ_ALL_EXACT1=1` | AVX2 CPUs without AVX-512 | Strata's AVX-2 decode for one-token i-quant gate/up rows, with ggml's float order, so the output does not change. On by default on sm_86. | End to end +0.4 to +2.5%, so left off elsewhere. |
+| `STRATA_CPU_IQ_ALL_EXACT1=1` | AVX2 CPUs without AVX-512 | PolyStrata's AVX-2 decode for one-token i-quant gate/up rows, with ggml's float order, so the output does not change. On by default on sm_86. | End to end +0.4 to +2.5%, so left off elsewhere. |
 | `STRATA_Q2_BITPLANE=1` | AVX2 CPUs without AVX-512 | A bit-plane row kernel for Q2_0. Changes the last bits. | |
 | `STRATA_NO_AVXVNNI=1` | CPUs with AVX-VNNI | Turns the AVX-VNNI row forms off (they give the same bits, 4-25% faster rows). | A diagnostic. |
 | `STRATA_PREFILL_EQUAL=1` | CUDA | A prompt segment is read in chunks of equal size, not full chunks and a short last one. Changes rounding. | |
@@ -1453,7 +1453,7 @@ moves threads only and never changes a result.
 <a id="experimental-speed-projection"></a>
 ## Experimental speed projection (experimental, off by default)
 
-This is an experiment. It ships with Strata and stays off unless you turn it on. It is a 480 KB control vector for the original
+This is an experiment. It ships with PolyStrata and stays off unless you turn it on. It is a 480 KB control vector for the original
 Qwen3.8-Flash-Next (`data/experimental-speed-projection/`, not Swift 1.5). After each of layers 4-44 the engine removes one
 direction from every hyper-connection stream: `h -= (h . v) v`.
 
@@ -1588,7 +1588,7 @@ both and of neither were the same 128 tokens at 32K and parted at token 85 at 10
 | --- | --- |
 | `the NVIDIA driver is too old` | Update the driver, restart, run setup again. |
 | Python or the build tools could not be installed | Install what it names (links are printed), then run it again. Everything already done is kept. |
-| `port 8080 is already in use` | Strata is already running, or another program uses the port: `strata launch --port 8081` (source checkout: `START-HERE.bat --port 8081`). |
+| `port 8080 is already in use` | PolyStrata is already running, or another program uses the port: `strata launch --port 8081` (source checkout: `START-HERE.bat --port 8081`). |
 | `cudaHostRegister ... out of memory` in the log | Normal on Windows: the engine pins the experts in per-layer slices instead. A problem only if the load then fails. |
 | `ExpertCache: cudaMalloc(...) failed: out of memory` although VRAM is free | Windows' page file is off or tiny. Every allocation on the card is also charged to Windows' commit (RAM + page file). Set a fixed page file size, the same initial and maximum (for example 65536 MB), and restart. The engine retries with a smaller cache, and setup warns about a page file under 4 GB. |
 | The first start takes minutes, or the PC freezes for a few minutes | The engine is reading 34-55 GB into RAM, pinning part of it and sizing the expert cache. Wait. The second start is faster while the files are in the OS cache. Still frozen after 10 minutes: restart, close other programs, or pick a smaller size. |
@@ -1597,7 +1597,7 @@ both and of neither were the same 128 tokens at 32K and parted at token 85 at 10
 | `prompt ... exceeds the context` | The request is longer than the context you chose: run setup again with a bigger `--context`. |
 | Slower than the tables | A monitor plugged into the GPU and other GPU programs take VRAM from the expert cache. RAM below its rated speed (enable EXPO or XMP in the BIOS) slows the CPU half. |
 | `this server was started without the vision encoder` | The model was set up for text only: run setup again with `--vision gpu` or `--vision cpu`. |
-| Setup puts the model on an old drive after you moved or reinstalled Strata | Setup remembers the data folder in its settings file (`%APPDATA%\Strata\settings.json` on Windows, `~/.config/strata/settings.json` on Linux; the `data_dir` entry). Choose another place with `--data-dir DIR` (model files, packs, MTP layer) or `--models-dir DIR` (the GGUF files only), or delete the `data_dir` line. `--gguf-dir DIR` uses GGUF files you already have without copying. |
+| Setup puts the model on an old drive after you moved or reinstalled PolyStrata | Setup remembers the data folder in its settings file (`%APPDATA%\PolyStrata\settings.json` on Windows, `~/.config/strata/settings.json` on Linux; the `data_dir` entry). Choose another place with `--data-dir DIR` (model files, packs, MTP layer) or `--models-dir DIR` (the GGUF files only), or delete the `data_dir` line. `--gguf-dir DIR` uses GGUF files you already have without copying. |
 | A picture is refused or `cannot read the image` | The file is not a picture Pillow can open (JPEG, PNG, WebP, GIF, BMP, TIFF, AVIF work). |
 | Pictures are slow (3-30 s) | The encoder runs on the CPU, the default under 24 GB of graphics memory. Run setup again with `--vision gpu` (needs ~1.4 GB of VRAM, taken from the expert cache). |
 | Output much slower than the tables, only with a large `--context`, and the start shows a small `... MiB of VRAM free with everything loaded` | The expert cache does not fit the card at that context. Use `--expert-cache auto`, a smaller number, or a larger `--vram-reserve-mib`. See [The expert cache size is a budget](#the-expert-cache-size-is-a-budget). |
@@ -1636,12 +1636,12 @@ The full story, with measurements, bottlenecks and what comes next: **[docs/pape
 
 ## Credits and licenses
 
-Strata itself: [MIT](../LICENSE). The model files are not part of it; their licenses apply to them.
+PolyStrata itself: [MIT](../LICENSE). The model files are not part of it; their licenses apply to them.
 
 - Model: [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) by the Qwen team; quantizations:
   [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF). The Coder:
   [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF)
-  (Apache-2.0 per its card); its support in Strata came from @pjgmobile's PR #54. Swift 1.5:
+  (Apache-2.0 per its card); its support in PolyStrata came from @pjgmobile's PR #54. Swift 1.5:
   [ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF) by UkisAI.
   Their licenses apply to the weights.
 - [llama.cpp / ggml](https://github.com/ggml-org/llama.cpp) (MIT): the i-quant formats, the GPU dot products and dequantizers
@@ -1650,9 +1650,9 @@ Strata itself: [MIT](../LICENSE). The model files are not part of it; their lice
   [HyperQwen](https://github.com/syv-ai/HyperQwen); references in the paper.
 - The DFlash2 drafter's Q4_0 selector (174 MiB less graphics memory, same drafts and same text) is nazeshinjite's idea:
   [nazeshinjite/Qwen3.8-Flash-Next-DFlash2-GGUF](https://huggingface.co/nazeshinjite/Qwen3.8-Flash-Next-DFlash2-GGUF) (Apache-2.0) stores the drafter's
-  two selector tables as Q4_0; Strata converts the checked pack on your computer (`terminal/tools/dflash2_pack.py --convert-selector`) and checks the bytes
+  two selector tables as Q4_0; PolyStrata converts the checked pack on your computer (`terminal/tools/dflash2_pack.py --convert-selector`) and checks the bytes
   against the same pin.
-- Strata's tuned DFlash2 drafter (`data/dflash2-tuned/`, Apache-2.0, **modified by Strata**): a fine-tuned copy of the weights of [incoai/Qwen3.8-Flash-Next-DFlash2](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2) (revision a22a1744, Apache-2.0, Inco AI); the original notices are kept, the licence text and a notice of the change are copied next to the file when it is fetched.
+- PolyStrata's tuned DFlash2 drafter (`data/dflash2-tuned/`, Apache-2.0, **modified by PolyStrata**): a fine-tuned copy of the weights of [incoai/Qwen3.8-Flash-Next-DFlash2](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2) (revision a22a1744, Apache-2.0, Inco AI); the original notices are kept, the licence text and a notice of the change are copied next to the file when it is fetched.
 - The web app's font: [Outfit](https://github.com/Outfitio/Outfit-Fonts) (SIL Open Font License 1.1, see `terminal/serve/web/fonts/OFL.txt`). Its
   Monitor tab started from @code-martin's dashboard idea (PR #22).
   Math is drawn by [KaTeX](https://katex.org) (MIT, vendored in `terminal/serve/web/vendor/katex`). The chat page's wide-window layout, svg/html preview, math, Load/Unload, saved

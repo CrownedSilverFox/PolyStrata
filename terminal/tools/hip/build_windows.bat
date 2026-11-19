@@ -86,7 +86,7 @@ if "%TESTS%"=="ON" (
   cmake --build "%BUILD_DIR%" --target strata strata-device || exit /b 1
 )
 
-rem ---- 3b. the picture readers (terminal/tools/vision, Strata's own tower): strata-vision.exe on the CPU (MSVC, portable: the
+rem ---- 3b. the picture readers (terminal/tools/vision, PolyStrata's own tower): strata-vision.exe on the CPU (MSVC, portable: the
 rem      fallback that starts on any PC) and strata-vision-hip.exe on the GPU (ROCm's clang, hipBLAS, the archs above)
 set "VISION_ARGS="
 if not defined STRATA_VISION_HIP_ARCHS set "STRATA_VISION_HIP_ARCHS=%STRATA_HIP_ARCHS%"

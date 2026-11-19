@@ -2,7 +2,7 @@
 
 `strata-split` gives every card a share of **every** layer instead of some of the layers, and the cards exchange the layer sums through
 page-locked host memory. It is built from [sFNX](https://github.com/johnfink8/sfnx) by John Fink (MIT; the licence and credit travel with the
-code in `engine/third_party/sfnx`). Strata starts it by itself when the rule below says yes, and starts the normal layer split, with no message, when it does not.
+code in `engine/third_party/sfnx`). PolyStrata starts it by itself when the rule below says yes, and starts the normal layer split, with no message, when it does not.
 
 ## What it is for
 
@@ -36,7 +36,7 @@ Every other case keeps the layer split without a message. On AMD that includes 2
 Both sides need all of this: Linux; the Qwen3.8-Flash-Next shapes (48 layers, 512 experts) in a file the engine reads (checked from the tensor
 types, not the name); **all routed experts fit in the cards' memory** (the memory that is free when the launch is made, minus the engine's 700 MiB reserve: cards that other programs hold get the layer split with DFlash2 and no draft-layer fetch); enough free RAM for what stays in RAM (the 27.5 GiB embedding table, about
 3 GiB of buffers, the 4 GiB conversation cache and 8 GiB spare, about 43 GiB; measured 31 GB at start and 35 GB after long prompts); a context of
-131072 or less. The split uses the MTP drafter, so Strata fetches the MTP draft layer (about 5.2 GB) when it is not on the disk; if that layer is
+131072 or less. The split uses the MTP drafter, so PolyStrata fetches the MTP draft layer (about 5.2 GB) when it is not on the disk; if that layer is
 missing, the launch is a quiet layer split.
 
 **Turn it off:** `strata launch --split-engine off`, or `"split_engine": "off"` in the run config, or `STRATA_SPLIT_ENGINE=0` in the environment.
@@ -72,7 +72,7 @@ the layer split there while `--split-engine on` still runs the split. It looks f
 
 **Other AMD cards the package has code for (gfx1100, gfx1101, gfx1102, gfx1103 and gfx1200) are opt-in:** only `--split-engine on` starts it there, and before the model loads the engine runs a
 kernel self-test on every card (`engine/src/split/src/hip/selftest_policy.hpp`: the expert tile and the attention tile's WMMA shapes). It prints one line saying the card has not been run and asking for a report;
-if the self-test fails, the line says so and Strata starts the normal layer split. `FNX_SELFTEST=1` runs the self-test on gfx1201 too.
+if the self-test fails, the line says so and PolyStrata starts the normal layer split. `FNX_SELFTEST=1` runs the self-test on gfx1201 too.
 
 The cards exchange sums differently from NVIDIA here. By default (`FNX_PEER` unset) the engine probes every directed pair of cards at start (kernel stores into the peer, a full read-back
 compare, a flag round trip) and, if all pass, pushes the decode sums and the attention merge with kernel stores into the receiver's memory (never `hipMemcpyPeerAsync`); on any

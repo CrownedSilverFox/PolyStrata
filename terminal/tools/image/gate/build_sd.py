@@ -5,7 +5,7 @@ definitions, Release, the native runner applied on CUDA / HIP), in this lane's o
 
 <root> holds repo.tgz (git archive of f-own-5) and sdsrc.tgz (the pinned stable-diffusion.cpp tree, .strata-pin
 inside).  Results: <root>/repo, <root>/sd-<backend>, <root>/build-<backend>/bin/sd-cli, <root>/build-<backend>.json.
-HIP: ROCm from the pip SDK in /data/Strata/.venv (as the engine builds on p620) unless ROCM_PATH is set.
+HIP: ROCm from the pip SDK in /data/PolyStrata/.venv (as the engine builds on p620) unless ROCM_PATH is set.
 Vulkan: the LunarG SDK (qimage.VULKAN_SDK_*) unpacked into <root>/vulkan-sdk when the box has no glslc."""
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def main() -> int:
     env = dict(os.environ)
     extra = []
     if backend == "hip":
-        hp = Path(env.get("ROCM_PATH") or "/data/Strata/.venv/lib/python3.12/site-packages/_rocm_sdk_devel")
+        hp = Path(env.get("ROCM_PATH") or "/data/PolyStrata/.venv/lib/python3.12/site-packages/_rocm_sdk_devel")
         site = hp.parent
         libw = next((p for p in site.glob("_rocm_sdk_libraries_*")), None)
         core = site / "_rocm_sdk_core"

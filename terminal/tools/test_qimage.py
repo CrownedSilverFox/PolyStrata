@@ -199,7 +199,7 @@ class Native(unittest.TestCase):
 
 
 class Noise(unittest.TestCase):
-    """OWN-5 step 1: Strata's noise generator for sd-cli (tools/image/sdcpp_noise): off by default; nobody compiles
+    """OWN-5 step 1: PolyStrata's noise generator for sd-cli (tools/image/sdcpp_noise): off by default; nobody compiles
     again unasked."""
 
     def test_stamp_without_the_switch_is_what_it_was(self):
@@ -288,7 +288,7 @@ class Noise(unittest.TestCase):
 
 
 class VaeDecoder(unittest.TestCase):
-    """OWN-5 step 2: Strata's VAE decoder for sd-cli (tools/image/sdcpp_vae, CUDA / HIP builds): off by default; nobody
+    """OWN-5 step 2: PolyStrata's VAE decoder for sd-cli (tools/image/sdcpp_vae, CUDA / HIP builds): off by default; nobody
     compiles again unasked; another backend never gets it."""
 
     def test_stamp_without_the_switch_is_what_it_was(self):
@@ -337,7 +337,7 @@ class VaeDecoder(unittest.TestCase):
 
     def test_flags(self):
         self.assertRegex((ROOT / "setup.py").read_text(encoding="utf-8"), re.escape('ap.add_argument("--image-vae"'))
-        self.assertIn('warn(f"Strata\'s own picture decoder runs with CUDA or ROCm only; image generation on {backend} keeps "\n'
+        self.assertIn('warn(f"PolyStrata\'s own picture decoder runs with CUDA or ROCm only; image generation on {backend} keeps "\n'
                       '             "stable-diffusion.cpp\'s decoder")',
                       (ROOT / "setup.py").read_text(encoding="utf-8"))     # the owner's wording of 11-11
         self.assertRegex((ROOT / "tools" / "image" / "install.py").read_text(encoding="utf-8"),

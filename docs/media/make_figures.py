@@ -1,4 +1,4 @@
-"""docs/media/make_figures.py - the README's "How does it work?" illustrations, in the Strata app's style: its colors
+"""docs/media/make_figures.py - the README's "How does it work?" illustrations, in the PolyStrata app's style: its colors
 (terminal/serve/web/tokens.css), its icons (terminal/serve/web/sprite.svg) and its font (Outfit, embedded, SIL OFL 1.1).  Light and dark
 follow the reader's system setting.
 

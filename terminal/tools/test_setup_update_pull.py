@@ -42,7 +42,7 @@ class UpdatePull(unittest.TestCase):
         (self.origin / "CMakeLists.txt").write_text("project(strata VERSION 0.1.0)\n", encoding="utf-8")
         git(self.origin, "add", "-A")
         git(self.origin, "commit", "-q", "-m", "v1")
-        self.clone = self.tmp / "Strata"
+        self.clone = self.tmp / "PolyStrata"
         subprocess.run([GIT, "clone", "-q", str(self.origin), str(self.clone)], check=True, capture_output=True)
 
     def update(self, root: Path, file: Path, env=None):
@@ -72,14 +72,14 @@ class UpdatePull(unittest.TestCase):
         rc, call, out = self.update(self.clone, self.clone / "setup.py")
         self.assertEqual(rc, 0)
         self.assertEqual(out.count("\n"), 2, out)                               # "Getting the newest ..." + one summary line
-        self.assertIn("Got the newest Strata (60 files changed).", out)
+        self.assertIn("Got the newest PolyStrata (60 files changed).", out)
         for noise in ("rename ", "create mode", "Fast-forward", "Updating ", "|"):
             self.assertNotIn(noise, out)
         self.assertTrue((self.clone / "lib" / "f59.txt").is_file())
 
     def test_u1_up_to_date_says_so_in_one_line(self):
         rc, call, out = self.update(self.clone, self.clone / "setup.py")
-        self.assertIn("Strata is up to date.", out)
+        self.assertIn("PolyStrata is up to date.", out)
         self.assertNotIn("Already up to date", out)
 
     def test_u1_a_failing_pull_still_shows_gits_own_words(self):

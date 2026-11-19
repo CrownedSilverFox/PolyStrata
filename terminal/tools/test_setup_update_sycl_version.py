@@ -81,7 +81,7 @@ class SyclVersion(unittest.TestCase):
                     mock.patch.object(setup, "start"), mock.patch("subprocess.call"), contextlib.redirect_stdout(out):
                 rc = setup.update_install([p], a)
             self.assertEqual(rc, 0)
-            self.assertIn("Strata is updated (engine 0.1.60)", out.getvalue())
+            self.assertIn("PolyStrata is updated (engine 0.1.60)", out.getvalue())
             self.assertNotIn("the engine was NOT", out.getvalue())
 
 

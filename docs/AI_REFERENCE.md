@@ -1,21 +1,21 @@
-# Strata reference for AI tools and automated readers
+# PolyStrata reference for AI tools and automated readers
 
 Last reviewed: 7 November 2026 against the 0.2.16 release tree (app and Terminal 0.2.16; Control 0.1.62, engines 0.1.62).
 App, Control and engine versions differ; use the release notes and the installed component information. This page
-holds the technical context behind the short [README](../README.md). Use [AI_SETUP.md](AI_SETUP.md) to install Strata for a user,
+holds the technical context behind the short [README](../README.md). Use [AI_SETUP.md](AI_SETUP.md) to install PolyStrata for a user,
 [AGENTS.md](../AGENTS.md) for repository work, and [MEDIA_KIT.md](MEDIA_KIT.md) for articles or videos.
 
 ## Product facts and sources
 
-- Strata runs supported language models locally, with a desktop app, a terminal app, and an inference engine.
+- PolyStrata runs supported language models locally, with a desktop app, a terminal app, and an inference engine.
 - The engine uses the GPU, system RAM and, for applicable models and memory modes, SSD storage.
   See [how it works](HOW_IT_WORKS.md) and [engine details](DETAILS.md).
-- There is one app installer per system (`Strata-0.2.16-windows-x64-setup.exe`, `Strata-0.2.16-linux-x86_64.AppImage`,
-  `Strata-0.2.16-macos-arm64.dmg`). The Windows and Linux installers carry no engine: the app downloads the engine for the
+- There is one app installer per system (`PolyStrata-0.2.16-windows-x64-setup.exe`, `PolyStrata-0.2.16-linux-x86_64.AppImage`,
+  `PolyStrata-0.2.16-macos-arm64.dmg`). The Windows and Linux installers carry no engine: the app downloads the engine for the
   graphics card on first start, or installs a file the user already has. The Mac dmg keeps its Metal engine inside.
   The Terminal's `strata launch` downloads the appropriate engine and model.
   See [installation](INSTALL.md) and [Terminal launch](TERMINAL_LAUNCH.md).
-- Strata's code is MIT licensed. Model weights and third-party components have separate licenses.
+- PolyStrata's code is MIT licensed. Model weights and third-party components have separate licenses.
   See [LICENSE](../LICENSE) and [component/model licensing](HOW_IT_WORKS.md#license).
 - Local inference does not mean every feature is offline. Downloads, updates, remote tools and user-enabled
   network access have separate behavior. Use [SAFETY.md](SAFETY.md) for privacy and network claims.
@@ -109,7 +109,7 @@ The [connection registry](../terminal/strata_cli/launch/harness.py) supplies the
 | pi.dev | `pi` |
 | Hermes Agent | `hermes` |
 | OpenClaw | `openclaw` |
-| DeepSeek Harness, built into the Strata app | `deepseek-harness` |
+| DeepSeek Harness, built into the PolyStrata app | `deepseek-harness` |
 
 `strata connect` lists adapters. `strata connect <identifier>` prints settings;
 `strata connect <identifier> --check --output json` sends a prompt and a tool call and reports their outcomes.

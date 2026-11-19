@@ -1,16 +1,16 @@
-# Strata standard benchmark protocol
+# PolyStrata standard benchmark protocol
 
 **Status: draft, implemented in `strata bench run`; pilot validation pending.** Protocol ID: `strata-qwen38-thinking-v1-draft.1`.
 Result format: `strata-standard-benchmark`, schema version `1`.
 
 This document specifies a repeatable community benchmark and the data a future website can consume. The
 required suite took **2 to 4 minutes after model loading** on the two machines it has been run on (RTX 3060 and
-2x RTX A4000, IQ3_XXS, Strata 0.2.1: 3 min 22 s and 2 min 22 s; the optional concurrency stage added 1.5 to 2 minutes).
+2x RTX A4000, IQ3_XXS, PolyStrata 0.2.1: 3 min 22 s and 2 min 22 s; the optional concurrency stage added 1.5 to 2 minutes).
 Slower machines take longer; everyone runs the same work. Downloads, installation, compilation, and model loading are
 excluded; so is the hashing of the model files that the runner does first (about 1 to 5 minutes for a 44 to 71 GB model).
 Report their duration separately if measured.
 
-`strata bench run` implements this protocol from Strata 0.2.1. It sends the frozen fixtures in
+`strata bench run` implements this protocol from PolyStrata 0.2.1. It sends the frozen fixtures in
 `terminal/bench/prompts/standard-v1` (corpus SHA-256 `e75eff8b9feea04f745520b392c4c17d97aefc1ba185e222aa6740efa8f68407`)
 and writes the result format below. `tools/BENCH.bat`, `tools/bench.sh`, and `terminal/tools/strata_bench.py` do not implement it.
 They stay the quick speed check described in the [community guide](COMMUNITY_BENCHMARKS.md). Do not rename their
@@ -27,7 +27,7 @@ output or add a protocol ID to make it appear standard. The draft becomes final 
 
 ## Run it
 
-Install Strata, set up the Flash-Next model you want to measure, and close other programs that use the GPU. Then:
+Install PolyStrata, set up the Flash-Next model you want to measure, and close other programs that use the GPU. Then:
 
 ```sh
 strata bench run --profile NAME --track default --track-notes "0.2.1 release, setup defaults"
@@ -128,7 +128,7 @@ protocol Git commit. Changes to prompts, order, scoring, caps, or defaults requi
 changes use a separate schema version.
 
 `python terminal/tools/build_standard_corpus.py --tokenizer PACK/tokenizer` rebuilds the bundle byte for byte. It needs the
-tokenizer files (`vocab.json`, `merges.txt`, `token_type.json`) of a Flash-Next pack and the chat template Strata
+tokenizer files (`vocab.json`, `merges.txt`, `token_type.json`) of a Flash-Next pack and the chat template PolyStrata
 ships (`terminal/serve/chat_template.jinja`). The frozen counts are 211 records for `prompt-4k` (4,093 tokens) and 858
 records for `prompt-16k` (16,386 tokens). Besides each request's token count, the bundle stores the longest token
 prefix the request shares with any other request (`max_shared_prefix_tokens`); that is the cache reuse the
@@ -255,7 +255,7 @@ README.
 
 ### Where the numbers come from
 
-Strata's streaming chat answer ends with a chunk that carries `usage` and `timings` (llama.cpp's names). The runner
+PolyStrata's streaming chat answer ends with a chunk that carries `usage` and `timings` (llama.cpp's names). The runner
 maps them as follows. Nothing else feeds a throughput rate.
 
 | Protocol field | Source in the answer |

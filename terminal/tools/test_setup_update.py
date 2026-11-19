@@ -61,10 +61,10 @@ class Update(unittest.TestCase):
                 rc, pip, eng, dv, start, call, out = self.run_update([p])
             self.assertIn("the engine was NOT", out)
             self.assertIn("Next step:", out)
-            self.assertNotIn("[ok] Strata is updated", out)
+            self.assertNotIn("[ok] PolyStrata is updated", out)
             with mock.patch.object(setup, "engine_version", return_value=(0, 1, 49, 2)):
                 rc, pip, eng, dv, start, call, out = self.run_update([p])
-            self.assertIn("Strata is updated (engine 0.1.49.2)", out)
+            self.assertIn("PolyStrata is updated (engine 0.1.49.2)", out)
 
     def test_build_keeps_the_compiled_engine_path(self):
         with tempfile.TemporaryDirectory() as d:

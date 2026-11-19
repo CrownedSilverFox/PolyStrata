@@ -1,9 +1,9 @@
-# Gyro (agentionai rotor quants) on Strata
+# Gyro (agentionai rotor quants) on PolyStrata
 
 This page is for people who want to run Gyro-S or Gyro-M, the smallest Qwen3.8-Flash-Next options, or who want to know
 how they compare with the other sizes. They are quantizations by agentionai
 ([agentionai/Qwen3.8-Flash-Next-Gyro-GGUF](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF)). The
-routed experts are stored as trellis-coded blocks (ggml types TQ2_T, TQK6, TQK7) in a Hadamard-rotated basis. Strata
+routed experts are stored as trellis-coded blocks (ggml types TQ2_T, TQK6, TQK7) in a Hadamard-rotated basis. PolyStrata
 reads the published files unchanged.
 
 Setup lists them as a model family of their own, "Qwen3.8-Flash-Next (Gyro)". They are not the first recommendation
@@ -23,7 +23,7 @@ strata launch --family gyro --model Gyro-S      # or Gyro-M
 
 Setup downloads the pinned revision of the file (size and SHA-256 checked) and prepares the pack
 (`terminal/tools/iq_pack.py --compat-bf16`: the Hadamard table and the dense weights, 1.5 GB). It also prepares the draft head
-(Strata's own MTP head, made from the original model as for every Qwen3.8-Flash-Next file) and the start script. If the
+(PolyStrata's own MTP head, made from the original model as for every Qwen3.8-Flash-Next file) and the start script. If the
 ready-made engine is too old for the pack, setup replaces it or the app offers Update engine.
 
 ## Sizes
@@ -250,16 +250,16 @@ The web interface is at `http://127.0.0.1:8080`. API clients use `http://127.0.0
 
 ## Numerics
 
-- **Decode** (Strata's own expert kernels) reads the trellis weights through an int8 copy of the codebook with one
+- **Decode** (PolyStrata's own expert kernels) reads the trellis weights through an int8 copy of the codebook with one
   global scale (`tq_lut_i8`, relative RMS error 0.85% of the codebook's standard deviation, far below the quantization
   error itself), against q8_1 activations.
 - **Prompt processing** decodes them differently. The FP16 path uses the fp16 codebook (`tq_lut_f16`, what GGML's own
   dequantizer reads). The MMQ path uses the llama.cpp fork's kernels, which read the int8 codebook as well.
 - Decode and prompt results therefore agree within tolerance, not bit for bit. `native_expert_parity` checks one expert
   on the decode kernels against GGML's float dequantizer and a float SwiGLU: relative L1 error below 3e-2, the bound
-  every expert type gets there. Its "bitwise equal" lines compare Strata's decode-once and per-entry decode kernels with
+  every expert type gets there. Its "bitwise equal" lines compare PolyStrata's decode-once and per-entry decode kernels with
   each other, not with a float reference.
-- Strata's own CPU kernels for the trellis types (`src/kernels/cpu/tq_*.cpp`, AVX2 and AVX-512, picked at run time)
+- PolyStrata's own CPU kernels for the trellis types (`src/kernels/cpu/tq_*.cpp`, AVX2 and AVX-512, picked at run time)
   take about 45% of ggml-cpu's time per expert on AVX2 and decode a block once for all the tokens of a verify window
   (`build/tq_cpu_parity --bench` measures them on your CPU). `STRATA_NO_TQ_KERNELS=1` changes nothing in a default build: the trellis types always take these kernels.
   `STRATA_TQ_ISA=avx2` or `scalar` caps the instruction set.
@@ -279,7 +279,7 @@ The web interface is at `http://127.0.0.1:8080`. API clients use `http://127.0.0
 ## Credit and licenses
 
 The trellis types, the Hadamard rotation, the CPU and GPU kernels and the pack step were written by Laurent Zuijdwijk
-(agentionai) in agentionai/Strata `rc2` (MIT) and ported here commit by commit with his authorship kept.
+(agentionai) in agentionai/PolyStrata `rc2` (MIT) and ported here commit by commit with his authorship kept.
 `engine/third_party/ggml/ggml-common-tq.h` and the MMQ instances come from agentionai/llama.cpp (MIT, the ggml authors). The
 weights are agentionai's quantization of Qwen3.8-Flash-Next under the Qwen Community License 1.0
 (<https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF/blob/main/LICENSE>).
@@ -313,7 +313,7 @@ Gyro-S gained +30% on a Tesla P100 from the `STRATA_TQ_STAGE` variant (5 pairs).
 
 > **Measured on:** one AMD Radeon AI PRO R9700 (gfx1201, ROCm 7), one card of four, `--prefill auto --spec 4
 > --spec-min-p 0.5 --mtp --kv int8`, 22K context, interleaved pairs, medians, the first Gyro release files (2026-10-07).
-> A = agentionai/Strata rc2, B = this port (Strata 0.1.45 base).
+> A = agentionai/PolyStrata rc2, B = this port (PolyStrata 0.1.45 base).
 
 | B's ggml | File | Decode tok/s A / B | Pairs B faster | Prompt 4K ms A / B | Prompt 20K ms A / B |
 | --- | --- | ---: | --- | ---: | ---: |
@@ -330,7 +330,7 @@ to rc2's tools for Gyro-S.
 
 ### The authors' measurements (rc2)
 
-> **Measured on:** the authors' machines, agentionai/Strata rc2, 2026-10-02 to 04; greedy or the stated sampling, MTP
+> **Measured on:** the authors' machines, agentionai/PolyStrata rc2, 2026-10-02 to 04; greedy or the stated sampling, MTP
 > draft `--spec 4 --spec-min-p 0.5`, int8 KV. llama.cpp is the agentionai fork with the CUDA trellis fixes. The numbers
 > are theirs.
 
@@ -339,18 +339,18 @@ min-p 0.05, 512 new tokens, 3 repetitions):
 
 | GPU and file | Experts cached | Prose | JSON | Code | Copy | Prefill 4K | Prefill 16K |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| RTX 5090 32 GB, Gyro-S, Strata | 23,463 | 131.7 | 200.1 | 195.2 | 201.8 | 3,456 | 4,883 |
+| RTX 5090 32 GB, Gyro-S, PolyStrata | 23,463 | 131.7 | 200.1 | 195.2 | 201.8 | 3,456 | 4,883 |
 | RTX 5090, Gyro-S, llama.cpp with MTP draft | | 116.8 | 213.0 | 179.0 | 220.7 | 2,520 | 2,471 |
 | RTX 5090, Gyro-S, llama.cpp no draft | | 121.8 | 123.2 | 122.5 | 121.2 | | |
-| RTX 5090, Gyro-M, Strata | 18,007 | 113.8 | 170.8 | 153.0 | 175.7 | 3,369 | 4,854 |
-| RTX 3090 24 GB, Gyro-S, Strata | 15,756 | 31.8 | 45.2 | 42.2 | 45.1 | 1,402 | 1,863 |
-| RTX 3090, Gyro-M, Strata | 11,811 | 27.8 | 39.4 | 34.4 | 37.7 | 1,363 | 1,910 |
+| RTX 5090, Gyro-M, PolyStrata | 18,007 | 113.8 | 170.8 | 153.0 | 175.7 | 3,369 | 4,854 |
+| RTX 3090 24 GB, Gyro-S, PolyStrata | 15,756 | 31.8 | 45.2 | 42.2 | 45.1 | 1,402 | 1,863 |
+| RTX 3090, Gyro-M, PolyStrata | 11,811 | 27.8 | 39.4 | 34.4 | 37.7 | 1,363 | 1,910 |
 | RTX 3090, Gyro-S, llama.cpp `-ncmoe 10`, 32K, no draft | | 16.0 | 16.2 | 16.2 | 16.5 | 468 | 479 |
 
 Single prompts of 34 to 177 tokens, 384 new tokens, `--max-context 16384`, Gyro-S, RTX 5090, all experts cached
 (2026-10-03): prose 139.9, JSON 221.3, code 209.0 tok/s. Gyro-M on the same card with llama.cpp needs `-ncmoe 8` and
 decodes at 70.8 tok/s without a draft. A single RTX 4090 smoke run (Gyro-S, MTP draft, greedy): code 107.5, prose 84.3,
-JSON 76.3 tok/s. On 24 GB the CPU matters (the box had a Zen 2 EPYC, AVX2 only). These Strata rows predate Strata's
+JSON 76.3 tok/s. On 24 GB the CPU matters (the box had a Zen 2 EPYC, AVX2 only). These PolyStrata rows predate PolyStrata's
 own trellis CPU kernels.
 
 Smaller expert caches, emulated on the RTX 5090 (2026-10-02, before the int8 decode kernels). A real 8 or 16 GB card is
@@ -366,4 +366,4 @@ a slower GPU, often on a slower link: read these rows as "it stays usable", not 
 Two RTX 4090 without NVLink or P2P (2026-10-04): the layer split works with Gyro, including the idle-card prompt helper
 (`STRATA_PREFILL_HELP=1`), and repeated runs give identical output. Decode with a second card (`--peer-device 1` or
 `--expert-cache-device1 auto`) matches single-GPU output. Prompt processing on the peer card needs GPU-to-GPU access
-(NVLink or data-centre GPUs). Without it Strata keeps the prompt on the first GPU and logs `no P2P`.
+(NVLink or data-centre GPUs). Without it PolyStrata keeps the prompt on the first GPU and logs `no P2P`.

@@ -718,7 +718,7 @@ def main(argv=None) -> int:
     # with the same unreachable host (#2363).
     if a.source:
         os.environ["STRATA_SOURCE"] = a.source
-    S.say("Strata on a Mac (Apple Silicon, Metal)")
+    S.say("PolyStrata on a Mac (Apple Silicon, Metal)")
     data, elsewhere = S.data_folder_for(a)
     roots = [data, *elsewhere]
     models_root = Path(a.models_dir) if a.models_dir else data / "models"
@@ -793,7 +793,7 @@ def main(argv=None) -> int:
     S.pip_install(S.requirement_lines() if S.REQUIREMENTS.exists() else S.PY_PACKAGES, "numpy, jinja2, ...")
 
     # ---- 4. the engine
-    S.step(4, "the Strata engine (Metal)")
+    S.step(4, "the PolyStrata engine (Metal)")
     llama = S.llama_override()                         # None: ggml is the vendored third_party/strata-ggml (STRATA_GGML_DIR overrides)
     S.ok(f"llama.cpp {S.LLAMA_CPP_COMMIT[:7]} (ggml, gguf-py)")
     if a.build:

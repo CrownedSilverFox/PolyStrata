@@ -1,7 +1,7 @@
-# Strata on the NVIDIA DGX Spark (Linux, ARM64)
+# PolyStrata on the NVIDIA DGX Spark (Linux, ARM64)
 
 The DGX Spark is a small desktop box with a GB10 chip: a Blackwell GPU (compute capability 12.1, 48 SMs) and 20 Arm CPU cores that share
-128 GB of memory. Strata 0.2.7.1 runs Qwen3.8-Flash-Next on it. This page says what works, how to install it, what
+128 GB of memory. PolyStrata 0.2.7.1 runs Qwen3.8-Flash-Next on it. This page says what works, how to install it, what
 the Spark does with its memory, and how the speeds were measured. It was tested on one Spark (Ubuntu 24.04, driver 580.173, CUDA 13.0).
 Nothing here is known to work on another ARM machine.
 
@@ -29,8 +29,8 @@ IQ3_S (84 GB download) or the NVFP4 pack. The engine package needs glibc 2.39 or
 ## Install from a source checkout
 
 ```sh
-./setup.sh --setup --family qwen --model IQ3_S --context 65536 --vision no --yes --no-start --data-dir ~/Strata-data
-./setup.sh --setup --family nvfp4 --model NVFP4 --context 65536 --vision no --yes --no-start --data-dir ~/Strata-data
+./setup.sh --setup --family qwen --model IQ3_S --context 65536 --vision no --yes --no-start --data-dir ~/PolyStrata-data
+./setup.sh --setup --family nvfp4 --model NVFP4 --context 65536 --vision no --yes --no-start --data-dir ~/PolyStrata-data
 ```
 
 `--data-dir` must be a folder you can write (the default, next to the checkout, may be under `/home`, which a normal user cannot create).

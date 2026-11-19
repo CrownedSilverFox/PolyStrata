@@ -1,7 +1,7 @@
 # Install and build from a source checkout
 
-Use this guide to work on Strata's code or maintain a source-based installation. It is for developers.
-To just use Strata (version 0.2.16), install the [desktop app or the Terminal](INSTALL.md). Installed apps do not use `START-HERE.bat`.
+Use this guide to work on PolyStrata's code or maintain a source-based installation. It is for developers.
+To just use PolyStrata (version 0.2.16), install the [desktop app or the Terminal](INSTALL.md). Installed apps do not use `START-HERE.bat`.
 
 The repository includes `START-HERE.bat`, `SETUP.bat`, `UPDATE.bat`, `setup.sh` and `update.sh`.
 Run them from a cloned or extracted **source folder**. They may install dependencies, prepare model files and
@@ -65,7 +65,7 @@ nix develop -c ./setup.sh
 
 ```bash
 git clone https://github.com/Niko1221/Strata.git
-cd Strata
+cd PolyStrata
 ./setup.sh --build --no-start
 ```
 
@@ -141,11 +141,11 @@ Record the actual CPU, compiler, model and validation results when reporting an 
 
 ### Using an engine you built with `strata launch`
 
-`strata launch` and the app start the engine installed in Strata's component folder, not the one in your checkout. To use your own build,
+`strata launch` and the app start the engine installed in PolyStrata's component folder, not the one in your checkout. To use your own build,
 run `strata components add-build <folder>`, where the folder holds the engine program you built (`strata`, its libraries and `BUILD.json`).
-Strata first checks that the program runs on this computer (`strata --version`) and is for this computer's kind of graphics card. It then
-copies it in as a local engine, not signed by Strata, and uses it from then on. `strata components engines` and `strata doctor` show it as
-a local build. Strata never switches to a local build by itself, not even when it is newer than the released engines.
+PolyStrata first checks that the program runs on this computer (`strata --version`) and is for this computer's kind of graphics card. It then
+copies it in as a local engine, not signed by PolyStrata, and uses it from then on. `strata components engines` and `strata doctor` show it as
+a local build. PolyStrata never switches to a local build by itself, not even when it is newer than the released engines.
 `strata components use newest` goes back to the released engines, and `strata components remove <folder>` deletes the local build.
 
 ## Updating
@@ -162,7 +162,7 @@ separately in [INSTALL.md](INSTALL.md#updating).
 ## Where things are stored
 
 Source setup writes model run configs (`strata-<model>.json`), launch scripts (`run-<model>.bat` / `.sh`) and
-logs in the checkout. Models, packs and draft data normally go in `Strata-data` beside it, or the location selected
+logs in the checkout. Models, packs and draft data normally go in `PolyStrata-data` beside it, or the location selected
 with `--data-dir`. Dependencies and build products stay in the source installation.
 
 These are source paths. The desktop app and installed Terminal use the [release data locations](INSTALL.md#where-things-are-stored).

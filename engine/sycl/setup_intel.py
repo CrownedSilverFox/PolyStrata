@@ -62,7 +62,7 @@ ALCHEMIST_IDS = frozenset({"56a0", "56a1", "56a2", "56a5", "56a6", "5690"})
 #: strata_cli/launch/catalog.py INTEL_ARC_FAMILIES): the fallback when Level Zero cannot say whether a GPU is integrated.
 DISCRETE_ID_RANGES = ((0x5690, 0x56C1), (0xE200, 0xE2FF))
 #: What setup says when the only Intel GPU is the processor's own, and the next step (wording approved by the coordinator 11-16).
-IGPU_WHAT = ("This PC's Intel graphics ({names}) are built into the processor. Strata's Intel engine doesn't support built-in "
+IGPU_WHAT = ("This PC's Intel graphics ({names}) are built into the processor. PolyStrata's Intel engine doesn't support built-in "
              "Intel graphics yet.")
 IGPU_NEXT = "Run ./setup.sh to use the processor (CPU) or another graphics card in this PC instead."
 
@@ -181,7 +181,7 @@ def drop(args, name, value=False):
 # Owner decision 2026-10-22: an Arc B-series (Battlemage, xe) card is allowed to run like any Arc, pictures included.  The first picture request on the
 # Arc Pro B70 (engine 0.1.45 SYCL, IQ3_S, 2026-10-19) hung the GPU with the CPU reader: an xe engine reset (ccs + bcs) and "Fault response:
 # Unsuccessful -EINVAL", the request ended 503.  That fault has not been looked at again (the B70 is gone), so it is a known risk, not a refusal:
-# pictures are on, the CPU reader is kept, and the person is told once that the card is new to Strata and how to report a problem.
+# pictures are on, the CPU reader is kept, and the person is told once that the card is new to PolyStrata and how to report a problem.
 PICTURES_ON_BY_DEFAULT_IDS = ALCHEMIST_IDS | frozenset(INTEL_ARC)      # every Arc card setup knows
 
 
@@ -195,7 +195,7 @@ def is_b_series(driver: str, devid: str = "") -> bool:
     return driver != "i915" and devid not in ALCHEMIST_IDS
 
 
-B_SERIES_LINE = ("This Intel Arc B-series card is new to Strata and we have not tested it ourselves, so pictures and long answers may fail on it. "
+B_SERIES_LINE = ("This Intel Arc B-series card is new to PolyStrata and we have not tested it ourselves, so pictures and long answers may fail on it. "
                  "If something fails, run again with --vision no to turn pictures off, and tell us at https://github.com/Niko1221/Strata/issues "
                  "(say it is a B-series card and attach the engine log).")
 

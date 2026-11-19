@@ -16,24 +16,24 @@ strata launch --status
 ## The desktop app and the Terminal
 
 **I cannot find `START-HERE.bat` or `SETUP.bat`.**
-Open the installed Strata app, or run `strata launch`. Those wrappers are in the source repository and are not the
+Open the installed PolyStrata app, or run `strata launch`. Those wrappers are in the source repository and are not the
 startup path for the app. For a fresh desktop install, download the one installer for your system
-(`Strata-0.2.16-windows-x64-setup.exe`, `Strata-0.2.16-linux-x86_64.AppImage` or `Strata-0.2.16-macos-arm64.dmg`), not a
+(`PolyStrata-0.2.16-windows-x64-setup.exe`, `PolyStrata-0.2.16-linux-x86_64.AppImage` or `PolyStrata-0.2.16-macos-arm64.dmg`), not a
 `strata-engine-…` archive.
 
 **`strata` is not found.**
 On Windows, open a new PowerShell window after installing. On Linux or Mac, use the full path the installer printed,
 normally `~/.local/bin/strata`, and add `~/.local/bin` to PATH if needed. Check `strata --version`.
 
-**A warning says Strata "couldn't find an engine for this computer".**
-The engine is the part that talks to your graphics card. Strata only warns and still downloads the model, and the model
+**A warning says PolyStrata "couldn't find an engine for this computer".**
+The engine is the part that talks to your graphics card. PolyStrata only warns and still downloads the model, and the model
 files stay on your computer, but the model may not run until the right engine is installed. The usual reasons are that
 no engine is installed yet and the update source has none for your card, that the engine found is for another make of
 card, or that the graphics driver is too old. In the app, open Settings, then Engine. In the Terminal, the message names
 the next step: run `strata update` and start again. Run `strata doctor --live` and `strata update --check` to see the
 selected GPU and driver, and check the [backend guide](INSTALL.md#what-you-need). Supported paths include Apple Silicon and
 Intel Arc on Linux, so do not assume every machine without an NVIDIA or AMD discrete card is unsupported. If the computer
-has no graphics card Strata can use (only an Intel UHD or Iris chip, a virtual machine, or Windows on ARM), Strata says so
+has no graphics card PolyStrata can use (only an Intel UHD or Iris chip, a virtual machine, or Windows on ARM), PolyStrata says so
 and there is nothing to install. Verify `strata launch --status` and `/health` before calling the installation successful.
 
 **"This model needs a newer engine." (the app), or a button called Update engine.**
@@ -56,22 +56,22 @@ replaced (one generation, about 210 MiB). Source-checkout engines use a separate
 `python terminal/setup.py --rollback-engine` puts the old one back and keeps the newer one there, so run it again to go forward
 (#670). It is described in [source setup](SOURCE_INSTALL.md).
 
-**On a Mac: "Strata is damaged and can't be opened", "cannot be opened", or "unidentified developer".**
+**On a Mac: "PolyStrata is damaged and can't be opened", "cannot be opened", or "unidentified developer".**
 Check first that the download is for Apple Silicon and that macOS is 15 or newer ([Mac installation](MAC.md#the-desktop-app-and-strata-launch-on-a-mac)).
 Nothing is wrong with the file if the message is only about the developer: macOS marks everything a browser downloads, and
-only lets a marked program run if Apple has checked it. Strata's release builds are checked by Apple ("notarised"): drag
-Strata onto Applications and open it; the first time, macOS asks "Are you sure you want to open it?" and you press Open. A
+only lets a marked program run if Apple has checked it. PolyStrata's release builds are checked by Apple ("notarised"): drag
+PolyStrata onto Applications and open it; the first time, macOS asks "Are you sure you want to open it?" and you press Open. A
 test build that is not notarised says "damaged". Do not move it to the Trash. Open the Terminal app and remove the mark,
 with the line that matches what you have (drag the file from Finder into the Terminal window to type its path):
 
     xattr -dr com.apple.quarantine ~/Downloads/<the .dmg file>        # the .dmg, before opening it
-    xattr -dr com.apple.quarantine /Applications/Strata.app           # the app, after dragging it over
+    xattr -dr com.apple.quarantine /Applications/PolyStrata.app           # the app, after dragging it over
     xattr -dr com.apple.quarantine <the folder you unzipped>          # an unzipped Terminal folder
 
 Then open it again. If macOS says only "the developer cannot be verified", you can instead try to open it once, then open
-System Settings > Privacy & Security and press "Open Anyway" next to the message about Strata. Only remove the mark from a
+System Settings > Privacy & Security and press "Open Anyway" next to the message about PolyStrata. Only remove the mark from a
 file you downloaded from the official release; a warning alone does not show that a file is safe or intact. Installs made
-with `curl ... | sh` carry no mark and need none of this. To see which kind you have: `spctl -a -vv /Applications/Strata.app`
+with `curl ... | sh` carry no mark and need none of this. To see which kind you have: `spctl -a -vv /Applications/PolyStrata.app`
 answers "accepted" and "Notarized Developer ID" for a notarised build. How the builds are signed is in
 [Mac packaging](../tools/packaging/mac/README.md).
 
@@ -87,8 +87,8 @@ them with the cards the model is set to use; `--output json` prints the same as 
 
 ## While installing or starting
 
-**My PC froze, or got very slow, the first time Strata started.**
-That is normal while it starts, most of all the first time. Strata loads 35-55 GB into your RAM, locks part of it for the
+**My PC froze, or got very slow, the first time PolyStrata started.**
+That is normal while it starts, most of all the first time. PolyStrata loads 35-55 GB into your RAM, locks part of it for the
 graphics card, and works out how much of the model fits on your GPU. The mouse can freeze for a few minutes. **Wait, and
 don't close the window.** The next starts are much faster. Still frozen after 10 minutes? Restart the PC, close other
 programs (browsers use a lot of RAM) and try again. If it keeps happening, pick a smaller size (Q2_0 or IQ2_XS).
@@ -131,7 +131,7 @@ Use the driver required by the engine package. CUDA 13 needs driver 580 or newer
 PC if needed, then open the app or rerun `strata launch`.
 
 **Port 8080 is already in use, or I changed a running model's settings.**
-Strata may already be running: check `strata launch --status`. To replace your existing launch, rerun the intended command
+PolyStrata may already be running: check `strata launch --status`. To replace your existing launch, rerun the intended command
 with `--restart`; it stops current answers. To run beside it, choose another port, for example `--port 8081`, if memory
 permits (source checkout: `START-HERE.bat --port 8081`). Only an address that is really taken says "already in use". Any
 other reason (Windows keeps the port reserved, or the config's `"host"` is not an address of this PC) is printed as what
@@ -187,10 +187,10 @@ pictures are read on the CPU" and goes on with the CPU reader. On a Mac the read
 about 50 s per picture there. On Intel Arc the CPU reader is the default. The model, backend and installed engine package
 must include a compatible picture reader; inspect the startup error and the model guide.
 
-**"Windows blocked the Strata engine (or the image encoder) ... Smart App Control".**
-On a clean Windows 11, Smart App Control refuses programs that are not signed, and Strata's `strata.exe` and
+**"Windows blocked the PolyStrata engine (or the image encoder) ... Smart App Control".**
+On a clean Windows 11, Smart App Control refuses programs that are not signed, and PolyStrata's `strata.exe` and
 `strata-vision.exe` are not signed yet (#735). Verify that the file is from the official release and that the message names
-a Strata component. The choices are to turn Smart App Control off (Windows Security > App & browser control > Smart App
+a PolyStrata component. The choices are to turn Smart App Control off (Windows Security > App & browser control > Smart App
 Control settings; it cannot be turned back on without a reset of Windows) or, if only the image encoder is blocked, to run
 without pictures: `strata launch --vision off` (source checkout: `START-HERE.bat --setup --vision no`), which lets text
 requests run. Do not disable system-wide protection as a routine fix, and include the blocked file and the exact message in
@@ -201,7 +201,7 @@ This is for a source checkout. The repository's history was cleaned up on 2026-1
 be updated with `git pull`. The scripts from 0.1.40.2 handle it: when no tracked file is edited they keep your old commits
 in the branch `pre-cleanup-backup` and move the clone to the new history; otherwise they print the two commands for you.
 Your models, settings and engine are untracked files and are never touched. An older UPDATE.bat / update.sh (before
-0.1.40.2) cannot do this itself: back up local work, run these once in the Strata folder, then use UPDATE.bat as usual
+0.1.40.2) cannot do this itself: back up local work, run these once in the PolyStrata folder, then use UPDATE.bat as usual
 (add `git stash` first if `git status` lists edited files):
 
     git fetch origin
@@ -236,8 +236,8 @@ engine by itself. If it keeps happening, close other programs or pick a smaller 
 Check system logs for an out-of-memory kill first. Then check `ulimit -R`. If it prints 0 (or any number), the desktop
 session sets a real-time CPU limit: the audio system (PipeWire) does that when rtkit is not installed, and every program
 started from the desktop inherits it. The kernel can then end a program with signal 9 and no message. Install `rtkit`, or
-start Strata outside the session's limits, for example `systemd-run --user --collect -p LimitRTTIME=infinity -- strata serve ...`.
-Strata prints a warning at start when it sees this limit.
+start PolyStrata outside the session's limits, for example `systemd-run --user --collect -p LimitRTTIME=infinity -- strata serve ...`.
+PolyStrata prints a warning at start when it sees this limit.
 
 **The prompt exceeds the context.**
 The conversation is longer than the context you chose. Start a new chat, shorten the input, or use the app's Summarize and
@@ -302,7 +302,7 @@ The kernel's amdgpu driver is not loaded for the card. Integrated Radeon GPUs ar
 lists every card it found and whether PolyStrata can use it.
 
 **The engine stops at start with the card's name, its architecture and the build's list.**
-The engine was compiled for another card (for example after moving the Strata folder to another PC). Update the engine
+The engine was compiled for another card (for example after moving the PolyStrata folder to another PC). Update the engine
 (`strata update`), or in a source checkout run `./setup.sh --setup --backend hip`: it compiles the engine for this card's
 architecture.
 
@@ -319,8 +319,8 @@ flickers, the engine dies, and the Event Viewer shows `VIDEO_ENGINE_TIMEOUT_DETE
 Linux). PolyStrata 0.1.39 and newer say "the GPU stopped responding" in the log. It was seen with KV streaming on
 (`--kv-resident 32768`, which setup turns on from 64K context) while reading a long prompt on a gfx1201 card. Try these
 in order, one at a time, and tell us what changed:
-1. **Send us the evidence.** The last ~80 lines of the engine log (`strata-<model>.log` in the Strata folder of a source checkout; the server window
-   shows the same lines), your AMD driver version (AMD Software > System), your card and Windows version, the Strata
+1. **Send us the evidence.** The last ~80 lines of the engine log (`strata-<model>.log` in the PolyStrata folder of a source checkout; the server window
+   shows the same lines), your AMD driver version (AMD Software > System), your card and Windows version, the PolyStrata
    version, and the exact steps (context size, how long the prompt was, which app sent it). If Windows wrote a
    dump, the newest `.dmp` in `C:\Windows\LiveKernelReports\WATCHDOG` (or `C:\Windows\Minidump`) helps; it holds no
    chats, only the driver state.
@@ -366,14 +366,14 @@ overwrite local branches or edits just to make `git pull` succeed.
   steps and the end of each model's server log.
 - **Terminal:** include `strata --version`, `strata doctor --live`, `strata launch --status`, and the relevant log excerpt.
 - **Windows app crash:** if the app closes right after you start it, it shows a message with the reason and writes
-  `desktop-crash-<date>.log` in `%LOCALAPPDATA%\Strata\logs`; Save logs includes it, and so can you, by hand.
+  `desktop-crash-<date>.log` in `%LOCALAPPDATA%\PolyStrata\logs`; Save logs includes it, and so can you, by hand.
 - **Linux app crash:** if the window crashes or will not open, run the AppImage with `--save-logs` in a terminal; it writes
   the crash log and the other logs to one file in Downloads.
-- **Installer or source checkout:** `strata-<model>.log` from the Strata folder.
+- **Installer or source checkout:** `strata-<model>.log` from the PolyStrata folder.
 - **Developer tools:** To open the developer tools in the app window on Windows or Linux, start the app with `STRATA_DEVTOOLS=1`.
 
 Look through a log before you send it, and never send an API key. Include model and quantization, OS, GPU/VRAM, RAM,
-driver, install route (app, Terminal or the installer), Strata and engine versions, exact command, expected result and
+driver, install route (app, Terminal or the installer), PolyStrata and engine versions, exact command, expected result and
 actual error. Open an [issue](https://github.com/Niko1221/Strata/issues) and attach the log. Follow
 [CONTRIBUTING.md](../.github/CONTRIBUTING.md). The full table of error messages, with the older engine fixes, is in the
 [details](DETAILS.md#troubleshooting).

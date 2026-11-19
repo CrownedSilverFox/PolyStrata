@@ -3080,7 +3080,7 @@ class JsonOutputParser(OutputParser):
 
 def parser_for_template(source: str | None):
     """The OutputParser class for a chat template's text, by the tool-call form the template documents (serve/toolformat.py):
-    the JSON form gets JsonOutputParser; the XML form every Strata model ships with, templates without tools, and forms nothing
+    the JSON form gets JsonOutputParser; the XML form every PolyStrata model ships with, templates without tools, and forms nothing
     here reads keep OutputParser (the same class as before this existed)."""
     from serve import toolformat
     return JsonOutputParser if toolformat.tool_format(source or "") == "json" else OutputParser

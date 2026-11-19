@@ -1,4 +1,4 @@
-"""serve/lifeline.py: a process Strata starts ends when the process that started it ends, however that ends.
+"""serve/lifeline.py: a process PolyStrata starts ends when the process that started it ends, however that ends.
 
     python -m unittest serve.test_lifeline
 
@@ -161,7 +161,7 @@ class Lifeline(unittest.TestCase):
     def test_the_child_is_recorded_while_it_runs_and_forgotten_after(self):
         from strata_control import procs
         proc, info = self.launch("sleep")
-        base = Path(self.temp.name) / "Strata" / "procs" if not POSIX else Path(self.temp.name) / "strata" / "procs"
+        base = Path(self.temp.name) / "PolyStrata" / "procs" if not POSIX else Path(self.temp.name) / "strata" / "procs"
         record = base / f"{info['child']}.json"
         deadline = time.monotonic() + 5
         while not record.exists() and time.monotonic() < deadline:

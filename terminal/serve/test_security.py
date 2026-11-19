@@ -69,7 +69,7 @@ class ListenAddress(unittest.TestCase):
                 self.assertNotEqual(s.server_address[1], 0)
 
     def test_bind_sets_server_name_to_the_address_and_server_port(self):
-        # (http.server set server_name to the looked-up name, "localhost" for 127.0.0.1; no Strata code reads it)
+        # (http.server set server_name to the looked-up name, "localhost" for 127.0.0.1; no PolyStrata code reads it)
         with Server(("127.0.0.1", 0), BaseHTTPRequestHandler) as s:
             self.assertEqual((s.server_name, s.server_port), ("127.0.0.1", s.server_address[1]))
             self.assertGreater(s.server_port, 0)

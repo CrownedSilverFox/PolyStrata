@@ -1,6 +1,6 @@
 # Strix Halo (Ryzen AI Max, gfx1151) on Windows: install, what you get, what to know
 
-This page is for a Windows PC with a Ryzen AI Max "Strix Halo" chip (Radeon 8060S / 8050S, `gfx1151`). It says what Strata does there out
+This page is for a Windows PC with a Ryzen AI Max "Strix Halo" chip (Radeon 8060S / 8050S, `gfx1151`). It says what PolyStrata does there out
 of the box, what speed to expect with Qwen3.8-Flash-Next IQ3_S, and the traps on this hardware. The Linux
 build, the toolchain and the opt-in switches are on [STRIX_HALO.md](STRIX_HALO.md).
 
@@ -11,7 +11,7 @@ engines 0.1.41 to 0.1.47 with a hand-made configuration (`--mmap-experts`, a lis
 ## 1. What this PC reaches
 
 Measured on 2026-10-26 on a GMKtec NucBox EVO-X2 (Ryzen AI Max+ 395, 128 GB shared memory: a 64 GB BIOS carve-out for the graphics chip
-and 64 GB that Windows sees; Windows 11 Pro, AMD Adrenalin 26.10.1 / driver 32.0.32015.7029). Strata was the 0.2.7 release candidate
+and 64 GB that Windows sees; Windows 11 Pro, AMD Adrenalin 26.10.1 / driver 32.0.32015.7029). PolyStrata was the 0.2.7 release candidate
 (Terminal and engine 0.1.51 built from commit `3e468f5de`, ROCm 10.2.0a20260930). The server was started with `strata launch` and
 nothing else was set by hand; the speeds come from `terminal/tools/strata_bench.py` against the running server (three runs per test, medians,
 the engine's own timings; the model is loaded before the clock starts). The numbers can still move before the release is cut.
@@ -43,7 +43,7 @@ were not measured for this page.
 
 ## 3. Install
 
-1. Use the Windows app (`Strata-<version>-windows-x64-setup.exe`) or the Terminal. The engine for this chip is the `windows-x86_64-hip-rdna3`
+1. Use the Windows app (`PolyStrata-<version>-windows-x64-setup.exe`) or the Terminal. The engine for this chip is the `windows-x86_64-hip-rdna3`
    package; the app or `strata launch` downloads it on the first start, and `strata update` keeps it current.
 2. Choose the model in the app, or `strata launch --family qwen --model iq3_s`. With model files you already have, add
    `--model-path <folder>` (for IQ3_S the two shards are in one folder: shard 1 is the main model, shard 2 holds the per-layer embedding

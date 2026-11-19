@@ -932,7 +932,7 @@ def render_readme(res: dict) -> str:
          f"- OS: {mc.get('os')}; GPU driver: {mc.get('gpu_driver') or 'not read'}; "
          f"CUDA (driver supports up to): {mc.get('cuda') or 'not read'}"
          + (f"; engine built for CUDA {(mc.get('engine_build') or {}).get('cuda')}" if (mc.get('engine_build') or {}).get('cuda') else ""),
-         f"- Strata: project {mc.get('strata_version') or '?'}, commit {mc.get('strata_commit') or 'not a git checkout'}; "
+         f"- PolyStrata: project {mc.get('strata_version') or '?'}, commit {mc.get('strata_commit') or 'not a git checkout'}; "
          f"engine {mc.get('engine_version') or 'not read'}"]
     for g in (mc.get("gpu_detail") or []):
         if g:

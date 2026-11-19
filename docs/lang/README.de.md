@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="apps/host/public/brand/strata-lockup-dark.svg">
-    <img src="../../app/host/public/brand/strata-lockup-light.svg" alt="Strata" width="340">
+    <img src="../../app/host/public/brand/strata-lockup-light.svg" alt="PolyStrata" width="340">
   </picture>
 </p>
 
@@ -15,15 +15,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Niko1221/Strata/releases/latest"><img src="https://img.shields.io/github/v/release/Niko1221/Strata?label=download&color=0ab887" alt="Strata herunterladen"></a>
+  <a href="https://github.com/Niko1221/Strata/releases/latest"><img src="https://img.shields.io/github/v/release/Niko1221/Strata?label=download&color=0ab887" alt="PolyStrata herunterladen"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/Niko1221/Strata" alt="MIT-Lizenz"></a>
-  <a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor-EA4AAA?logo=githubsponsors&logoColor=fff" alt="Strata über GitHub Sponsors unterstützen"></a>
-  <a href="https://buymeacoffee.com/strataengine"><img src="https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=000" alt="Strata auf Buy Me a Coffee unterstützen"></a>
+  <a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor-EA4AAA?logo=githubsponsors&logoColor=fff" alt="PolyStrata über GitHub Sponsors unterstützen"></a>
+  <a href="https://buymeacoffee.com/strataengine"><img src="https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=000" alt="PolyStrata auf Buy Me a Coffee unterstützen"></a>
 </p>
 
 <p align="center"><sub><a href="../../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <b>Deutsch</b> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.pl.md">Polski</a></sub></p>
 
-**Kostenlos, Open Source und ganz in deiner Hand.** Nutze Strata auf dem Desktop oder mit deinen liebsten Coding-Tools. Kein Konto nötig.
+**Kostenlos, Open Source und ganz in deiner Hand.** Nutze PolyStrata auf dem Desktop oder mit deinen liebsten Coding-Tools. Kein Konto nötig.
 
 ## Modelle
 
@@ -62,14 +62,14 @@ Unsicher, was passt? [Wähle ein Modell für deinen Computer](../MODELS.md#pick-
 
 ### Desktop-App
 
-**[Strata für Windows, Linux oder Mac herunterladen →](https://github.com/Niko1221/Strata/releases/latest)**
+**[PolyStrata für Windows, Linux oder Mac herunterladen →](https://github.com/Niko1221/Strata/releases/latest)**
 
 Installiere die App, wähle ein Modell und leg mit dem Chat los. Es gibt einen Installer pro System. Beim ersten Start lädt die App die Engine für deine Grafikkarte herunter. [Hilfe zum Installer](../INSTALL.md#the-app).
 
-<sub>Dateien: `Strata-0.2.16-windows-x64-setup.exe` · `Strata-0.2.16-linux-x86_64.AppImage` · `Strata-0.2.16-macos-arm64.dmg`</sub>
+<sub>Dateien: `PolyStrata-0.2.16-windows-x64-setup.exe` · `PolyStrata-0.2.16-linux-x86_64.AppImage` · `PolyStrata-0.2.16-macos-arm64.dmg`</sub>
 
 <p align="center">
-  <img src="../media/app-chat.png" width="900" alt="Strata-Desktop-App mit Chat und Live-Codevorschau nebeneinander">
+  <img src="../media/app-chat.png" width="900" alt="PolyStrata-Desktop-App mit Chat und Live-Codevorschau nebeneinander">
   <br><sub>Chat, Dateien und Live-Vorschau in einem Fenster.</sub>
 </p>
 
@@ -77,7 +77,7 @@ Installiere die App, wähle ein Modell und leg mit dem Chat los. Es gibt einen I
 
 ### Terminal-App
 
-Lieber im Terminal? Installiere Strata und starte dann **`strata launch`**.
+Lieber im Terminal? Installiere PolyStrata und starte dann **`strata launch`**.
 
 <details open>
 <summary><b>Installationsbefehle</b></summary>
@@ -105,7 +105,7 @@ Folge den Anweisungen, um ein Modell herunterzuladen und zu starten. [Terminal-A
 </details>
 
 <p align="center">
-  <img src="../media/terminal-monitor.png" width="900" alt="Strata-Terminal-App mit Modellaktivität, Tempo, Speicher und letzten Anfragen">
+  <img src="../media/terminal-monitor.png" width="900" alt="PolyStrata-Terminal-App mit Modellaktivität, Tempo, Speicher und letzten Anfragen">
   <br><sub>Behalte Modell und Hardware im Blick, während es läuft.</sub>
 </p>
 
@@ -144,16 +144,16 @@ Führe **`strata connect`** aus, um die Einrichtung für dein Tool zu sehen. [Ve
 [Alle Anleitungen](..) · [Fehlerbehebung](../TROUBLESHOOTING.md) · [Fehler melden](https://github.com/Niko1221/Strata/issues/new/choose) ·
 [Benchmarks](../COMMUNITY_BENCHMARKS.md) · [So funktioniert es](../HOW_IT_WORKS.md) · [Mitmachen](../../.github/CONTRIBUTING.md)
 
-## Strata unterstützen
+## PolyStrata unterstützen
 
 **Hilf mit, lokale KI für alle offen zu halten.** Ein GitHub-Sponsoring oder ein Kaffee hilft, Entwicklung und Tests auf mehr Hardware zu finanzieren.
 
-<a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors: Strata unterstützen" height="48"></a>
-<a href="https://buymeacoffee.com/strataengine"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee: Strata unterstützen" height="48"></a>
+<a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors: PolyStrata unterstützen" height="48"></a>
+<a href="https://buymeacoffee.com/strataengine"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee: PolyStrata unterstützen" height="48"></a>
 
 ### Treue Unterstützer
 
-Danke an alle, die Strata unterstützen.
+Danke an alle, die PolyStrata unterstützen.
 
 <!-- supporters:start (one line per public supporter, newest last; copy a line and change the GitHub name in all four places) -->
 <a href="https://github.com/ryan4yin"><img src="https://github.com/ryan4yin.png?size=96" width="48" height="48" alt="ryan4yin" title="ryan4yin"></a>
@@ -167,7 +167,7 @@ Danke an alle, die Strata unterstützen.
 <a href="https://github.com/router0mail"><img src="https://github.com/router0mail.png?size=96" width="48" height="48" alt="router0mail" title="router0mail"></a>
 <!-- supporters:end -->
 
-Alle Unterstützer und wie du Strata unterstützen kannst: [SUPPORTERS.md](../../SUPPORTERS.md)
+Alle Unterstützer und wie du PolyStrata unterstützen kannst: [SUPPORTERS.md](../../SUPPORTERS.md)
 
 [MIT-Lizenz](../../LICENSE) · [Danksagung und Modelllizenzen](../HOW_IT_WORKS.md#credits) · [Datenschutz](../SAFETY.md)
 

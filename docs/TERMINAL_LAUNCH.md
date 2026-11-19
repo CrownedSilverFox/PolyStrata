@@ -61,7 +61,7 @@ and test-starts it before using it.
    the matching `strata launch` flags.
 9. **Access:** this computer only (127.0.0.1), your network (LAN address and key), a Cloudflare quick tunnel (needs `cloudflared`)
    or Tailscale (needs it installed and connected). Also the port and an API key. Beyond this computer a key is recommended:
-   Strata makes one, and `t` turns it off. Without a key the server still starts and warns that anyone who can reach the port
+   PolyStrata makes one, and `t` turns it off. Without a key the server still starts and warns that anyone who can reach the port
    can use the model and its tools; `--no-api-key` does the same without screens, and the warning is stronger on a Cloudflare tunnel.
 10. **Save as preset** and launch. Downloads show progress, then the engine starts and the monitor opens. No web page opens
     unless you pass `--open`.
@@ -134,7 +134,7 @@ settings? Answers in progress stop." With `--no-tui` the command refuses with on
 
 ## Defaults for every launch
 
-Settings you want for every model and preset can go in one file, `run-defaults.json`, next to the `launch-presets` folder: `~/.config/strata/run-defaults.json` on Linux and macOS, `%APPDATA%\Strata\run-defaults.json` on Windows. Without the file nothing changes.
+Settings you want for every model and preset can go in one file, `run-defaults.json`, next to the `launch-presets` folder: `~/.config/strata/run-defaults.json` on Linux and macOS, `%APPDATA%\PolyStrata\run-defaults.json` on Windows. Without the file nothing changes.
 
 It holds one JSON object with server settings only: the keys of the web page's Settings view (`sampling` with `temperature`, `top_p`, `top_k`, `min_p`; `reasoning_budget_tokens`, `fit_max_tokens`, `anthropic_thinking`, `effort_position`, `aliases`, `idle_unload_s`, `lazy_load`, `engine_silence_s`, `api_monitor`) and `undeclared_tool_calls` (`"text"` or `"call"`). Each value is checked with the Settings view's rules; a key that is not allowed or has a wrong value is skipped and named at the start, the others still apply. Engine options and `mtp` do not go here.
 
@@ -195,7 +195,7 @@ With `--output json` the object has the file and environment fields, `checks` (o
 `seconds`) and `checked_server`. `ok` is true only when both checks passed. The exit code is 0 when both worked and 1 otherwise;
 then `error` says which check failed or that the server could not be reached.
 
-Each configuration was tested against a Strata server at 32K context. Known limits are printed in plain words, for example:
+Each configuration was tested against a PolyStrata server at 32K context. Known limits are printed in plain words, for example:
 Claude Code needs `CLAUDE_CODE_MAX_CONTEXT_TOKENS`; OpenCode needs `limit.input`; Hermes refuses windows under 64K unless set up
 as the config does; OpenClaw needs Node 24.16 or newer.
 
@@ -206,11 +206,11 @@ as the config does; OpenClaw needs Node 24.16 or newer.
 - the folder you name with `--install-dir` or `STRATA_INSTALL_DIR` (then only that one)
 - the Terminal's own folder
 - folders earlier installs remembered in `settings.json`
-- the desktop app's install folder, which the Terminal shares: `%LOCALAPPDATA%\Strata\install` on Windows,
+- the desktop app's install folder, which the Terminal shares: `%LOCALAPPDATA%\PolyStrata\install` on Windows,
   `$XDG_DATA_HOME/strata/install` (normally `~/.local/share/strata/install`) on Linux and macOS
 
-The data folder is the one you set, else the app's (`app-settings.json` beside its install folder, else a `Documents/Strata` that holds
-models), else Strata's default.
+The data folder is the one you set, else the app's (`app-settings.json` beside its install folder, else a `Documents/PolyStrata` that holds
+models), else PolyStrata's default.
 
 `strata models import PATH --plan` recognises the Gyro-S and Gyro-M files (TQK6/TQK7 and TQ2_T experts) and every file set setup
 installs, also under another name when the header matches. It says which run config, prepared pack, draft layer and picture reader
@@ -223,7 +223,7 @@ folder, `--output json` prints the same as JSON. It only reads folder names and 
 
 ## When there is no engine for this computer
 
-`strata launch` does not refuse. It says "Strata couldn't find an engine for this computer" with the reason, asks whether to go on
+`strata launch` does not refuse. It says "PolyStrata couldn't find an engine for this computer" with the reason, asks whether to go on
 (Enter means yes; `--yes` skips the question), downloads the model, and ends with a message that names the problem and the next step.
 The exit code is 0 and nothing is started.
 

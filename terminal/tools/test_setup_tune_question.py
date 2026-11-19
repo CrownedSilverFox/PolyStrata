@@ -1,6 +1,6 @@
 """P12 (0.2.16): setup's tuning question defaults to No, as the Terminal's Tuning step does on a first launch (FIX-TUI T5).
 
-USERTEST-LIN L2: `./setup.sh` asked "Tune Strata for this PC now? ... [y]": a person pressing Enter waited 15-30 minutes before the model started.
+USERTEST-LIN L2: `./setup.sh` asked "Tune PolyStrata for this PC now? ... [y]": a person pressing Enter waited 15-30 minutes before the model started.
 
     python -m unittest tools.test_setup_tune_question
 """

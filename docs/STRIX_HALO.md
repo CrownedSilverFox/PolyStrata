@@ -1,7 +1,7 @@
 # Strix Halo (Ryzen AI Max, gfx1151)
 
 This page is for people with a Ryzen AI Max "Strix Halo" PC (Radeon 8060S / 8050S, RDNA 3.5, `gfx1151`, one pool of LPDDR5X
-shared by the CPU and the GPU). Strata runs there through the same HIP backend as the Radeon cards in [AMD_HIP.md](AMD_HIP.md).
+shared by the CPU and the GPU). PolyStrata runs there through the same HIP backend as the Radeon cards in [AMD_HIP.md](AMD_HIP.md).
 **Status: experimental.**
 
 > **On this page:** [Quick start](#quick-start) · [What the engine does differently](#what-the-engine-does-differently) ·
@@ -16,8 +16,8 @@ Use the [current release](https://github.com/Niko1221/Strata/releases/latest). Y
 
 | System | What to install | Engine variant |
 | --- | --- | --- |
-| Linux | `Strata-0.2.16-linux-x86_64.AppImage` (it downloads the engine on first start), or `strata launch` | `linux-x86_64-hip-halo` |
-| Windows | `Strata-0.2.16-windows-x64-setup.exe` (it downloads the engine on first start), or `strata launch` | `windows-x86_64-hip-rdna3` |
+| Linux | `PolyStrata-0.2.16-linux-x86_64.AppImage` (it downloads the engine on first start), or `strata launch` | `linux-x86_64-hip-halo` |
+| Windows | `PolyStrata-0.2.16-windows-x64-setup.exe` (it downloads the engine on first start), or `strata launch` | `windows-x86_64-hip-rdna3` |
 
 Packaged engines carry the matching hipBLASLt tuning table for gfx1151 and select it on their own. Setup recognizes `gfx1151` and
 PCI ID `1002:1586`; other integrated Radeon chips have separate support limits. Unified memory is counted once. Setup does not
@@ -70,7 +70,7 @@ the default is about half of the RAM) and `amd_iommu=off`. Both are host setting
 The engine build needs no llama.cpp checkout.
 
 ```sh
-git clone https://github.com/Niko1221/Strata.git && cd Strata
+git clone https://github.com/Niko1221/Strata.git && cd PolyStrata
 cmake -S engine -B build-halo -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DSTRATA_ENABLE_HIP=ON -DSTRATA_ENABLE_CUDA=OFF \
   -DCMAKE_HIP_ARCHITECTURES=gfx1151 \
@@ -81,7 +81,7 @@ cmake --build build-halo --target strata -j 8        # about 25 minutes the firs
 ```
 
 The build warns that `gfx1151` is "unvalidated". The engine is built without llama.cpp's MMQ kernels: the prompt experts run on
-Strata's own kernels where they cover a layer and on the FP16 path elsewhere. To test:
+PolyStrata's own kernels where they cover a layer and on the FP16 path elsewhere. To test:
 `cmake --build build-halo -j 8` builds the tests and `ctest --test-dir build-halo` runs them. `hip_prefill_hcd_exact_parity` and
 `hip_prefill_hipblaslt_gemm` need the table (next section) and skip without it.
 
@@ -181,7 +181,7 @@ arena on any OS. Reports with `amdgpu_top` and `dmesg` are welcome.
 
 ## 6. Measured
 
-**Measured on:** a Strix Halo PC (gfx1151, Windows), IQ3_S model, Strata 0.2.3 (engine 0.1.48), 3 pairs against 0.2.2, from
+**Measured on:** a Strix Halo PC (gfx1151, Windows), IQ3_S model, PolyStrata 0.2.3 (engine 0.1.48), 3 pairs against 0.2.2, from
 [release-notes-0.2.3.md](release-notes-0.2.3.md). Answer speed +6% to +19% (tool calls +19%, code +18%, 64K prompt +13%, 8K prompt
 +12%, 4K prompt +8%, JSON +6%, agent chat +9%). Prompt speed +5% to +14% (8K +14%, 64K +5%, 4K unchanged because it is one chunk).
 Prompt speed at 4K, 8K and 64K is 685, 783 and 749 tokens per second. This is specific evidence, not validation of every APU or
@@ -194,7 +194,7 @@ section below.
 
 <a id="measured"></a>
 
-**Measured on:** Ryzen AI Max+ 395, 128 GB, gfx1151, Linux, Strata 0.1.40 code, the maintainers' fast configuration of section 5 on
+**Measured on:** Ryzen AI Max+ 395, 128 GB, gfx1151, Linux, PolyStrata 0.1.40 code, the maintainers' fast configuration of section 5 on
 top of the defaults of section 4, `--spec 4`, `--mtp`, `--lookup-chain 3`, `--mtp-q4 all`, `--prefill 16384`, int8 KV, all experts
 in unified memory. Prompt tok/s is (prompt tokens - 1) / prompt time. Medians of 3 runs, one fresh process per run, two engines
 interleaved, every pair printed the same token ids. "Before" is the maintainers' earlier engine branch with the same switches set

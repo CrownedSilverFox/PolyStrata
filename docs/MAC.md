@@ -1,6 +1,6 @@
 # PolyStrata on a Mac (Apple Silicon, Metal)
 
-This page is for people with an Apple Silicon Mac (M1 or newer). Strata runs there on its own Metal engine: the NVIDIA kernels
+This page is for people with an Apple Silicon Mac (M1 or newer). PolyStrata runs there on its own Metal engine: the NVIDIA kernels
 are replaced by Metal ones (`metal/`), and the host code and the server are the PC's. Intel Macs cannot run it.
 
 > **On this page:** [What you need](#what-you-need) · [Install](#install) · [Defaults](#defaults-and-options) ·
@@ -11,7 +11,7 @@ are replaced by Metal ones (`metal/`), and the host code and the server are the 
 
 There are two ways in:
 
-- **The Strata app (`.dmg`) and the Terminal (`strata launch`).** The Metal engine comes ready-made: the `.dmg` has it inside and
+- **The PolyStrata app (`.dmg`) and the Terminal (`strata launch`).** The Metal engine comes ready-made: the `.dmg` has it inside and
   the Terminal fetches it as an engine component. Nothing is built on your Mac and you need no Command Line Tools. If macOS says
   the app is "damaged", see [Troubleshooting](TROUBLESHOOTING.md#the-desktop-app-and-the-terminal). How the builds are signed:
   [packaging/mac/README.md](../tools/packaging/mac/README.md).
@@ -256,7 +256,7 @@ For everyday use follow [the app or Terminal installation](INSTALL.md). The comm
 builds the Metal engine locally.
 
 ```sh
-git clone https://github.com/Niko1221/Strata && cd Strata
+git clone https://github.com/Niko1221/Strata && cd PolyStrata
 ./setup.sh                 # asks the size; --yes takes the recommended answers
 ```
 
@@ -270,8 +270,8 @@ What the first run does (each step is skipped when it is already done):
 5. **Downloads the model.** The download resumes if interrupted. `--gguf-dir` uses files you already have.
 6. **Prepares the model:** the pack (seconds) and the MTP draft layer (about 5 GB of the original checkpoint). On a Mac that
    streams, the experts' copy takes the draft layer's place (about 3 minutes on the M4).
-   For UD-Q4_K_XL and UD-IQ4_XS-v31 it also downloads the DFlash2 drafter (0.34 GB, from Strata's signed update feed): the server then drafts
-   with DFlash2 instead of the MTP layer (`--spec 6`, `--draft-conf 0.7`; Apache-2.0, a copy of incoai/Qwen3.8-Flash-Next-DFlash2 that Strata
+   For UD-Q4_K_XL and UD-IQ4_XS-v31 it also downloads the DFlash2 drafter (0.34 GB, from PolyStrata's signed update feed): the server then drafts
+   with DFlash2 instead of the MTP layer (`--spec 6`, `--draft-conf 0.7`; Apache-2.0, a copy of incoai/Qwen3.8-Flash-Next-DFlash2 that PolyStrata
    tuned, notice in `data/dflash2-tuned/`). With no internet the download is skipped without a word and the MTP runs as before;
    `./setup.sh --setup` fetches it later. IQ3_S and the other sets keep the MTP.
 7. **Writes `strata-<model>.json` and `run-<model>.sh`, then starts the server.**
@@ -327,7 +327,7 @@ checks the decoder against the format definition and the expert kernels against 
 
 ## Measured (M5 Max, 128 GB)
 
-**Measured on:** Apple M5 Max, 128 GB, macOS 27.2, Qwen3.8-Flash-Next packs, greedy, 200 generated tokens, Strata engine version
+**Measured on:** Apple M5 Max, 128 GB, macOS 27.2, Qwen3.8-Flash-Next packs, greedy, 200 generated tokens, PolyStrata engine version
 not recorded. Decode tok/s for a short question and a story ("prompt1 / story").
 
 | | Q2_0 | IQ3_XXS | IQ3_S |

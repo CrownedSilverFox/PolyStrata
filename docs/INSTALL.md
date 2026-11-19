@@ -1,6 +1,6 @@
-# Install Strata
+# Install PolyStrata
 
-This page is for anyone installing or updating Strata (version 0.2.16). Use the **desktop app** for a graphical
+This page is for anyone installing or updating PolyStrata (version 0.2.16). Use the **desktop app** for a graphical
 interface, or the **Terminal** for `strata launch` and coding tools. Both use released engine packages. A normal
 install does not need a source checkout or a startup `.bat` file.
 
@@ -41,10 +41,10 @@ hardware drivers. Models and updates need an internet connection to download.
 
 1. Open the [latest release](https://github.com/Niko1221/Strata/releases/latest).
 2. Download the one installer for your system. There is one per system, not one per graphics card:
-   - **Windows:** run `Strata-0.2.16-windows-x64-setup.exe`. It installs for your user and needs no administrator rights.
-   - **Linux:** make `Strata-0.2.16-linux-x86_64.AppImage` executable, then open it. If FUSE is unavailable, run the
+   - **Windows:** run `PolyStrata-0.2.16-windows-x64-setup.exe`. It installs for your user and needs no administrator rights.
+   - **Linux:** make `PolyStrata-0.2.16-linux-x86_64.AppImage` executable, then open it. If FUSE is unavailable, run the
      downloaded file with `--appimage-extract-and-run`. [Linux help](TROUBLESHOOTING.md).
-   - **Mac:** open `Strata-0.2.16-macos-arm64.dmg`, drag Strata into Applications, then open it. [Mac help](MAC.md).
+   - **Mac:** open `PolyStrata-0.2.16-macos-arm64.dmg`, drag PolyStrata into Applications, then open it. [Mac help](MAC.md).
 3. On Windows and Linux the installer has no engine inside. On first start the app shows the engine for your
    graphics card with its size and one **Download** button, with progress and resume. If you already downloaded the
    engine file, choose **I already have the file** and it installs without internet. The Mac file keeps its small
@@ -85,7 +85,7 @@ strata launch
 ```
 
 Follow the screens to choose a model, context, storage folder and access settings. The monitor opens after startup.
-Use the address printed by Strata; the default local endpoint is `http://127.0.0.1:8080`.
+Use the address printed by PolyStrata; the default local endpoint is `http://127.0.0.1:8080`.
 The Terminal opens a browser only when you add `--open`.
 
 For a script or AI agent, inspect a plan before downloading. This example selects ISTA-DASLab Q2_0 explicitly:
@@ -136,12 +136,12 @@ Source checkouts have a [separate update workflow](SOURCE_INSTALL.md#updating).
 | Item | Default location |
 | --- | --- |
 | Desktop chats and host state | `~/.strata` (or `STRATA_HOME`) |
-| Engine components, Windows | `%LOCALAPPDATA%\Strata\components` |
+| Engine components, Windows | `%LOCALAPPDATA%\PolyStrata\components` |
 | Engine components, Linux / Mac | `$XDG_DATA_HOME/strata/components`, normally `~/.local/share/strata/components` |
 | Terminal files | The `terminal` folder beside `components`; the installer prints the exact path |
 | Models | The folder chosen in the app or launch screens; an existing model library is reused |
 
-The desktop app normally proposes `Documents/Strata/Models` for a new library. The Terminal discovers saved
+The desktop app normally proposes `Documents/PolyStrata/Models` for a new library. The Terminal discovers saved
 folders from earlier installs. Use the path shown by the app or `strata models list`, not an assumed folder name.
 `--data-dir` changes where new downloads go; it does not move existing models unless you add `--move-data`.
 See [model discovery](TERMINAL_LAUNCH.md#models-you-already-have).

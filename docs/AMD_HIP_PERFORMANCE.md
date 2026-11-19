@@ -11,7 +11,7 @@ refills, to avoid repeated pageable-source registrations.
 ## Reproduce the configuration
 
 Build instructions are in [AMD_HIP.md](AMD_HIP.md). The numbers
-below were measured on a build with llama.cpp's MMQ kernels (Strata 0.2.15 and earlier; that build option was
+below were measured on a build with llama.cpp's MMQ kernels (PolyStrata 0.2.15 and earlier; that build option was
 removed in 0.2.16). To repeat them, build the v0.2.15 tag with `-DSTRATA_PREFILL_MMQ=ON -DSTRATA_MMQ=ON` and use these
 runtime variables:
 

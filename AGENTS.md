@@ -9,11 +9,11 @@ compatible pack that fits the selected model and hardware. ISTA-DASLab is the de
 memory-saving fallback and is currently slower. Honor an explicit user choice. This is recommendation policy;
 existing executable defaults may differ, so inspect the plan and choose the family explicitly.
 
-Strata has three parts:
+PolyStrata has three parts:
 
 - **The app** (`app/desktop`, the Tauri shell; `app/host`, the Node host and the web UI). It is for people who do
   not want a terminal. One installer per system ([latest release](https://github.com/Niko1221/Strata/releases/latest)):
-  `Strata-0.2.16-windows-x64-setup.exe`, `Strata-0.2.16-linux-x86_64.AppImage`, `Strata-0.2.16-macos-arm64.dmg`.
+  `PolyStrata-0.2.16-windows-x64-setup.exe`, `PolyStrata-0.2.16-linux-x86_64.AppImage`, `PolyStrata-0.2.16-macos-arm64.dmg`.
   The Windows and Linux installers carry no engine: the app downloads the engine for the graphics card on first
   start, or installs a file the user already has. The Mac dmg keeps its small Metal engine inside.
 - **The Terminal** (`strata.py`, `strata_cli/`, `strata_control/`): the `strata` command. It sets up a model, serves
@@ -64,7 +64,7 @@ short version is:
 Keep the server on `127.0.0.1` unless the user asks for more. Beyond it an API key is recommended: `--access lan` makes one for you, and `--no-api-key` serves without one (a warning, never a refusal; on a public tunnel the warning is stronger). Source setup (`START-HERE.bat`, `setup.sh`) is the fallback for a developer or for a system with no release package; it is
 documented in [docs/SOURCE_INSTALL.md](docs/SOURCE_INSTALL.md). Those wrappers exist in a source checkout, not in the
 released app. Do not tell an app user to find a `.bat` file.
-Source setup does not make an unsupported model or backend compatible. Strata's MCP server ([docs/MCP_SERVER.md](docs/MCP_SERVER.md)) offers the same steps as tools.
+Source setup does not make an unsupported model or backend compatible. PolyStrata's MCP server ([docs/MCP_SERVER.md](docs/MCP_SERVER.md)) offers the same steps as tools.
 
 ## Working on the code
 

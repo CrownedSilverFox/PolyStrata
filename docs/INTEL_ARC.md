@@ -1,6 +1,6 @@
 # Intel Arc on Linux
 
-Strata runs on Intel Arc cards on Linux through its own engine ported to SYCL (Intel oneAPI). This page is for people with
+PolyStrata runs on Intel Arc cards on Linux through its own engine ported to SYCL (Intel oneAPI). This page is for people with
 an Arc A-series (Alchemist) or B-series (Battlemage) card. It covers the released Terminal route, what you need, how to
 build the engine from source, and which cards were tested. The port's workflow and measurements are in [INTEL.md](INTEL.md).
 
@@ -24,7 +24,7 @@ pack for your model from the GGUF files (a few minutes, once), writes the run se
 - **A PC with an NVIDIA or AMD card as well** uses that card by default, and `--plan` says the Intel cards exist. To use the Intel cards
   add `--backend intel` once: the choice is remembered (in the settings file) for the next launch, `strata update` and the app's engine
   check. `strata launch --backend auto` goes back to the PC's own choice. Nothing is refused either way.
-- **Models are not downloaded for Intel cards yet.** Give the folder with `--model-path`; Strata does not touch your files.
+- **Models are not downloaded for Intel cards yet.** Give the folder with `--model-path`; PolyStrata does not touch your files.
 - **The draft layer (MTP) is not built for Intel cards**, so answers are a little slower than on a card with the full setup. An
   existing `mtp/rt` folder in the data folder is used.
 - `strata doctor --live` checks the driver, the render group and the card, and `strata update --check` shows the engine package.
@@ -56,7 +56,7 @@ engine package. Otherwise [build the image yourself](DOCKER.md#build-it-yourself
   (about 5 GB), `cmake` 3.24+, `ninja`, `git`, Python 3.
 - For `./setup.sh --backend sycl`: **Docker** and the GPU driver, nothing else from the list above. `engine/sycl/setup_intel.py`
   builds and runs the engine in the `strata-sycl-dev` image from `engine/sycl/tools/Dockerfile`, which starts from a community
-  llama.cpp SYCL image (`ghcr.io/snailium/...`), not an Intel or Strata image. On Ubuntu:
+  llama.cpp SYCL image (`ghcr.io/snailium/...`), not an Intel or PolyStrata image. On Ubuntu:
   `sudo apt install docker.io git`, then `sudo usermod -aG docker,render $USER` and log in again.
 - VRAM: the port keeps the experts on the card (`--stream-experts`). A 32 GB card holds the Coder IQ1_M or IQ2_XS. Smaller
   cards mirror part of the experts in RAM and are slower.
@@ -66,10 +66,10 @@ engine package. Otherwise [build the image yourself](DOCKER.md#build-it-yourself
 
 ## Build with Docker (what `setup --backend sycl` uses)
 
-About 10 minutes the first time. From the checkout, called `Strata` here:
+About 10 minutes the first time. From the checkout, called `PolyStrata` here:
 
 ```sh
-cd Strata
+cd PolyStrata
 docker build --pull -t strata-sycl-dev engine/sycl/tools     # once: about 6 minutes, a 13 GB image
 H=$(basename "$PWD")
 # Arc B-series: bmg-g31 (Pro B70), bmg-g21 (B580, B570, Pro B60). Arc A-series (Alchemist): leave out AOT (JIT) and use build-sycl

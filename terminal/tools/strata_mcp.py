@@ -49,7 +49,7 @@ PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")   # the revisions this se
 VERSION = "0.1.0"
 WIN = os.name == "nt"
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
-# The desktop app runs this under Strata Control's Python (STRATA_CONTROL_INSTALL=1): the install runs on that Python, makes no
+# The desktop app runs this under PolyStrata Control's Python (STRATA_CONTROL_INSTALL=1): the install runs on that Python, makes no
 # .venv and installs no package (setup.py's own CONTROL mode).
 CONTROL = os.environ.get("STRATA_CONTROL_INSTALL") == "1"
 DEFAULT_PORT = 8080
@@ -121,7 +121,7 @@ FALLBACK_MODELS = {
                               "and speed as NVFP4", "download_gb": 128.0, "ram_gb": 80, "arena_gb": 68.0,
                      "families": ("nvfp4",), "vision": True},
     "NVFP4-QAD": {"about": "NVIDIA's FP4, trained for FP4 - slightly faster on short prompts; a 102 GB download "
-                           "that this PC turns into a Strata pack once; it reads pictures",
+                           "that this PC turns into a PolyStrata pack once; it reads pictures",
                   "download_gb": 102.2, "ram_gb": 80, "arena_gb": 68.0, "families": ("nvfp4",), "vision": True},
 }
 FALLBACK_FAMILIES = {
@@ -694,7 +694,7 @@ class Strata:
 
     def __init__(self, root: Path | str = DEFAULT_ROOT, src: Path | str | None = None):
         self.root = Path(root).resolve()
-        # where setup.py, tools/ and serve/ are (the app: inside Strata Control); `root` is where the installs live
+        # where setup.py, tools/ and serve/ are (the app: inside PolyStrata Control); `root` is where the installs live
         self.src = Path(src).resolve() if src else self.root
         self.state_dir = self.root / STATE_DIR
         self.lock = threading.Lock()                    # install / start / stop one at a time
@@ -895,7 +895,7 @@ class Strata:
                 "ready": not missing and bool(cfg), "missing_files": missing[:3], "parts_missing": len(gaps),
                 "disk_gb": own_usage["gb"], "disk_bytes": own_usage["bytes"],
                 "shared_bytes": own_usage["shared_bytes"],
-                # what Delete would remove (files in Strata's own folders that no other model uses); the person's own GGUF folders stay
+                # what Delete would remove (files in PolyStrata's own folders that no other model uses); the person's own GGUF folders stay
                 "removable_gb": plan["gb"], "kept_files": len(plan["keep"]),
                 "last_used": time.strftime("%Y-%m-%d %H:%M", time.localtime(path.stat().st_mtime))}
 
@@ -967,7 +967,7 @@ class Strata:
 
     def used_files(self, cfg: dict) -> dict:
         """Every file a model really uses, from its run config: all parts of a multi-part GGUF (the config names the first), the
-        picture reader, the packs and the draft layer folders.  {file identity: bytes}, wherever they live (the Strata folders or the
+        picture reader, the packs and the draft layer folders.  {file identity: bytes}, wherever they live (the PolyStrata folders or the
         person's own)."""
         files, dirs = self.model_paths(cfg)
         paths = list(files)
@@ -1011,7 +1011,7 @@ class Strata:
 
     @staticmethod
     def made_by_strata(p: Path, is_dir: bool) -> bool:
-        """A download or pack Strata wrote itself, even in a models folder the person picked or the app chose: a finished GGUF has its
+        """A download or pack PolyStrata wrote itself, even in a models folder the person picked or the app chose: a finished GGUF has its
         .done mark beside it, a prepared pack has its conversion record. The person's own GGUF files have neither (#3716)."""
         try:
             if is_dir:
@@ -1022,7 +1022,7 @@ class Strata:
 
     def removal_plan(self, config: Path) -> dict:
         """What deleting this model removes and what it keeps. A file or folder another installed model's config still names
-        (the shared MTP draft, a shared PLE shard) is kept; so is anything outside Strata's own folders."""
+        (the shared MTP draft, a shared PLE shard) is kept; so is anything outside PolyStrata's own folders."""
         cfg = self.read_config(config)
         files, dirs = self.model_paths(cfg)
         files = self.with_shards(files)
@@ -1046,7 +1046,7 @@ class Strata:
             if not p.exists():
                 continue
             if not self.allowed(p) and not self.made_by_strata(p, is_dir):
-                keep.append({"path": str(p), "reason": "outside Strata's folders"})
+                keep.append({"path": str(p), "reason": "outside PolyStrata's folders"})
             elif shared(p, is_dir):
                 keep.append({"path": str(p), "reason": "another installed model still uses it"})
             else:
@@ -1194,7 +1194,7 @@ class Strata:
             amd = rocm_smi_gpus()
         if not WIN and not amd:                         # no setup module, no rocm-smi (ROCm from a Python venv): the kernel's own list
             amd = kfd_gpus()
-        # A PC whose only NVIDIA cards are Pascal / Volta (two GTX 1080s) and that has no AMD card Strata can use: setup runs them with the
+        # A PC whose only NVIDIA cards are Pascal / Volta (two GTX 1080s) and that has no AMD card PolyStrata can use: setup runs them with the
         # CUDA 12 engine (old_gpus_opt_in), so the app must not call it "no supported graphics card" and start both cards Off (#3655).
         # A PC with a newer card keeps recommending that one; naming an old card is still the opt-in.
         try:
@@ -1207,7 +1207,7 @@ class Strata:
         if any(g.get("usable") for g in nv):
             for g in amd:                             # a Ryzen's integrated graphics beside an NVIDIA card: the engine runs on the NVIDIA card
                 if g.get("uma") and g.get("usable"):
-                    g["usable"], g["problem"] = False, "integrated graphics: Strata uses the NVIDIA card in this computer"
+                    g["usable"], g["problem"] = False, "integrated graphics: PolyStrata uses the NVIDIA card in this computer"
         try:                                            # does the card drive a display?  (the app keeps less VRAM free on one that does not, #3215)
             mark_display(nv + amd, nvidia_display_active() if nv else {}, windows_desktop_adapters() if WIN and amd else [])
         except Exception:                               # noqa: BLE001 - unknown stays unknown: the app then keeps its safety default
@@ -1251,7 +1251,7 @@ class Strata:
 
     @staticmethod
     def _engine_code(hw: dict) -> None:
-        """An AMD card the installed engine package has no code for is not one Strata can run on (the engine would stop on it, #3203): flag it
+        """An AMD card the installed engine package has no code for is not one PolyStrata can run on (the engine would stop on it, #3203): flag it
         unusable with the plain reason, so the card lists and "Automatic" leave it out.  Only a package that lists its archs speaks here."""
         amd = [g for g in hw.get("gpus", []) if g.get("vendor") == "amd" and g.get("arch")]
         if not amd:
@@ -1268,7 +1268,7 @@ class Strata:
         for g in amd:
             if g["arch"] not in built and g.get("usable") is not False:
                 g["usable"] = False
-                g["problem"] = (ec.no_package_note([g["arch"]]) or f"this Strata engine has no code for {g['arch']} (it is built for {', '.join(built)})")
+                g["problem"] = (ec.no_package_note([g["arch"]]) or f"this PolyStrata engine has no code for {g['arch']} (it is built for {', '.join(built)})")
 
     @staticmethod
     def _engine_vendor(hw: dict) -> None:
@@ -1302,7 +1302,7 @@ class Strata:
     # ---- a Mac (Apple Silicon): unified memory, the Metal engine.  The rules are strata_control/mac_fit.py's (the same module
     # metal/setup_mac.py uses), so the app, the Terminal and a Mac that builds the engine itself judge a model the same way.
     def mac(self):
-        """strata_control/mac_fit.py, or None when this Strata folder does not carry it."""
+        """strata_control/mac_fit.py, or None when this PolyStrata folder does not carry it."""
         try:
             if str(self.src) not in sys.path:
                 sys.path.insert(0, str(self.src))
@@ -1350,7 +1350,7 @@ class Strata:
             return {"family": None, "model": None, "why": why}
         if ram < mf.MIN_STREAM_RAM_GB:
             return {"family": None, "model": None,
-                    "why": f"{ram:.0f} GB of unified memory: Strata needs {mf.MIN_STREAM_RAM_GB:.0f} GB or more on a Mac (32 GB or more is what it was tested on)"}
+                    "why": f"{ram:.0f} GB of unified memory: PolyStrata needs {mf.MIN_STREAM_RAM_GB:.0f} GB or more on a Mac (32 GB or more is what it was tested on)"}
         model, notes = mf.recommend_model(ram)
         notes = [n for n in notes if "UD-Q4_K_XL" not in n]          # the app does not offer the Unsloth files yet
         if model not in self._mac_sizes(models):
@@ -1404,7 +1404,7 @@ class Strata:
         ram = hw.get("ram_gb") or 0
         if not usable:
             why = ("no NVIDIA RTX 20-series-or-newer GPU found (nvidia-smi did not list one)"
-                   + ("; the AMD graphics in this PC is not a card Strata supports (an RX 7000 or 9000 series card, or a Ryzen AI Max, is needed)" if WIN and any(
+                   + ("; the AMD graphics in this PC is not a card PolyStrata supports (an RX 7000 or 9000 series card, or a Ryzen AI Max, is needed)" if WIN and any(
                        "amd" in str(a.get("name", "")).lower() or "radeon" in str(a.get("name", "")).lower()
                        for a in hw.get("display_adapters", [])) else ""))
             return {"family": None, "model": None, "why": why}
@@ -1926,7 +1926,7 @@ def physical_cores() -> int | None:
 
 def progress_words_for(step, lines, download):
     """(the plain sentence, its phase) for what setup is doing now (strata_control/progress_words.py, the words the Terminal uses too);
-    None when this Strata folder does not carry the module."""
+    None when this PolyStrata folder does not carry the module."""
     try:
         from strata_control import progress_words
     except ImportError:
@@ -2064,7 +2064,7 @@ def kfd_gpus(sysfs: str = "/sys") -> list:
             name = f"AMD Radeon ({arch})"
         ok = arch in KFD_SUPPORTED
         out.append({"index": len(out), "name": name, "vram_gb": round(vram, 1), "arch": arch, "driver": "amdgpu", "vendor": "amd",
-                    "usable": ok, "problem": None if ok else f"not supported - Strata's AMD backend does not list {arch}"})
+                    "usable": ok, "problem": None if ok else f"not supported - PolyStrata's AMD backend does not list {arch}"})
     return out
 
 
@@ -2130,8 +2130,8 @@ def tool_defs(models: dict, families: dict, contexts: list) -> list:
          "inputSchema": {"type": "object", "additionalProperties": False, "required": ["model"],
                          "properties": {"model": installed_model, "confirm": {"type": "boolean"}}},
          "annotations": {"readOnlyHint": False, "destructiveHint": True}},
-        {"name": "strata_install", "title": "Install Strata",
-         "description": "Install a Strata model on this PC by running Strata's setup non-interactively in the "
+        {"name": "strata_install", "title": "Install PolyStrata",
+         "description": "Install a PolyStrata model on this PC by running PolyStrata's setup non-interactively in the "
                         "background (Python packages, the engine, a 13-114 GB model download, preparation, start "
                         "script). Without confirm=true it only returns the plan (what would be downloaded, disk "
                         "space): show it to the user and call again with confirm=true once they agree. Returns at "
@@ -2180,10 +2180,10 @@ def tool_defs(models: dict, families: dict, contexts: list) -> list:
                          "description": "setup's low-RAM mode (default auto)"},
              "port": {**port, "description": "the port the model will listen on (default 8080)"},
              "data_dir": {"type": "string", "maxLength": 260,
-                          "description": "where the model files go (default: the Strata-data folder next to the "
-                                         "Strata folder). Only the current data folder, a folder inside the Strata "
-                                         "folder, or a new absolute path whose last folder is named Strata... "
-                                         "(e.g. D:\\Strata-data) outside system folders"},
+                          "description": "where the model files go (default: the PolyStrata-data folder next to the "
+                                         "PolyStrata folder). Only the current data folder, a folder inside the PolyStrata "
+                                         "folder, or a new absolute path whose last folder is named PolyStrata... "
+                                         "(e.g. D:\\PolyStrata-data) outside system folders"},
              "drafter": {"type": "string", "enum": ["mtp", "dflash2"],
                          "description": "which drafter this model will use: dflash2 downloads only DFlash2's drafter (a separate step), not the MTP draft layer's ~5 GB; "
                                         "mtp (the default) downloads the draft layer"},
@@ -2519,7 +2519,7 @@ class Tools:
         if arc:
             from strata_control import intel_app
             if mac or not intel_app.supported_here() or not any(g.get("vendor") == "intel" for g in hw.get("gpus", [])):
-                raise ToolError("no Intel Arc card Strata can use was found in this computer (the Intel Arc engine runs on Linux)")
+                raise ToolError("no Intel Arc card PolyStrata can use was found in this computer (the Intel Arc engine runs on Linux)")
             if not intel_app.can_set_up(family, families[family]):
                 raise ToolError(f"{families[family]['title']} {model} can't be set up for an Intel Arc card yet; "
                                 "the Qwen3.8-Flash-Next, Swift, Coder, Gyro and Unsloth sizes can")
@@ -3034,8 +3034,8 @@ def install_job(spec_path: str) -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="PolyStrata's MCP server (stdio): install, start, check and stop PolyStrata "
                                              "from an AI assistant. See docs/MCP_SERVER.md.")
-    ap.add_argument("--root", help="the Strata folder (default: the one this file is in)")
-    ap.add_argument("--src", help="where setup.py, tools/ and serve/ are, when that is not the Strata folder (the app)")
+    ap.add_argument("--root", help="the PolyStrata folder (default: the one this file is in)")
+    ap.add_argument("--src", help="where setup.py, tools/ and serve/ are, when that is not the PolyStrata folder (the app)")
     ap.add_argument("--install-job", help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     if a.install_job:
@@ -3046,12 +3046,12 @@ def main(argv=None) -> int:
     root = Path(a.root).expanduser().resolve() if a.root else DEFAULT_ROOT
     src = Path(a.src).expanduser().resolve() if a.src else root
     if not (src / "setup.py").is_file() or not (src / "serve" / "server.py").is_file():
-        log(f"{src} is not a Strata folder (no setup.py / serve/server.py)")
+        log(f"{src} is not a PolyStrata folder (no setup.py / serve/server.py)")
         return 2
     out = sys.stdout.buffer
     sys.stdout = sys.stderr                             # stray prints must never corrupt the protocol stream
     server = McpServer(Strata(root, src), out)
-    log(f"ready (Strata folder {root})")
+    log(f"ready (PolyStrata folder {root})")
     try:
         server.serve(sys.stdin.buffer)
     except KeyboardInterrupt:

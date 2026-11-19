@@ -34,7 +34,7 @@ SHA-256), so a PC that has one of them can link those two shards instead of down
 
 | Format (role) | CUDA decode (grouped experts) | CUDA prompt | CPU pool | AMD (HIP) decode | AMD prompt | Intel (SYCL) decode | Intel prompt |
 |---|---|---|---|---|---|---|---|
-| Q4_K (gate/up) | yes | FP16 path; MMQ with `STRATA_MMQ_KQ=1`; UD-Q4_K_XL's experts (a Q4_K or Q5_K gate/up with a Q5_1 or Q8_0 down) are read by Strata's own kernels on RTX A6000, RTX 3090 and RTX PRO 5000 class cards, and on RTX A4000 and RTX 5070 class cards for the launches Strata stages, and on the DGX Spark (its defaults table sets the switch); `STRATA_PF_FUSED_KQ=0` gives MMQ back | ggml AVX2 dot; multi-token AVX2 (`STRATA_KQ256=1`) | yes (CUDA layout; `STRATA_EXPERT_V2K=1` bitwise) | FP16 path; MMQ with `STRATA_MMQ_KQ=1`; gfx11 fused (`STRATA_PF_FUSED_KQ=1`) | kernels built, not run with these files | FP16 path |
+| Q4_K (gate/up) | yes | FP16 path; MMQ with `STRATA_MMQ_KQ=1`; UD-Q4_K_XL's experts (a Q4_K or Q5_K gate/up with a Q5_1 or Q8_0 down) are read by PolyStrata's own kernels on RTX A6000, RTX 3090 and RTX PRO 5000 class cards, and on RTX A4000 and RTX 5070 class cards for the launches PolyStrata stages, and on the DGX Spark (its defaults table sets the switch); `STRATA_PF_FUSED_KQ=0` gives MMQ back | ggml AVX2 dot; multi-token AVX2 (`STRATA_KQ256=1`) | yes (CUDA layout; `STRATA_EXPERT_V2K=1` bitwise) | FP16 path; MMQ with `STRATA_MMQ_KQ=1`; gfx11 fused (`STRATA_PF_FUSED_KQ=1`) | kernels built, not run with these files | FP16 path |
 | Q5_K (gate/up) | yes | as Q4_K | ggml AVX2 dot | as Q4_K | as Q4_K | kernels built, not run with these files | FP16 path |
 | Q6_K (gate/up) | yes (since this change; was `-DSTRATA_Q6K_EXPERTS=ON`) | FP16 path; MMQ with `STRATA_MMQ_KQ=1` | ggml AVX2 dot | yes (CUDA layout) | FP16 path; MMQ with `STRATA_MMQ_KQ=1` | kernels built, not run with these files | FP16 path |
 | Q5_1 (down) | yes | as Q4_K | ggml AVX2 dot; multi-token AVX2 (`STRATA_KQ256=1`) | yes (CUDA layout; V2K) | as Q4_K | kernels built, not run with these files | FP16 path |
@@ -46,7 +46,7 @@ SHA-256), so a PC that has one of them can link those two shards instead of down
   kernel needs VRAM later, mid-prompt), which is why kernels for formats a model does not have used to take expert
   slots from every model. The Q6_K expert kernels are now part of every build: one more instance per grouped kernel,
   +19 KB of sm_60 code, and the expert-cache slot counts measured unchanged (IQ3_XXS: 6,028 slots on a P100, 15,878
-  and 1,980 on an R9700). Q4_K, Q5_K, Q5_1 and Q6_K experts take Strata's fused prompt kernels where they cover
+  and 1,980 on an R9700). Q4_K, Q5_K, Q5_1 and Q6_K experts take PolyStrata's fused prompt kernels where they cover
   a layer, and the FP16 path elsewhere. The separate K-quant library (`libstrata_kq.so` / `strata_kq.dll`) left in 0.2.16.
 - `STRATA_MMQ_KQ=1` is opt-in because MMQ rounds the prompt's products differently from the FP16 path (the output
   differs at the rounding level); its speed and KL are measured before it becomes a default.

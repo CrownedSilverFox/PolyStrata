@@ -783,7 +783,7 @@ class StrataEngine:
         # retry_vram_args: the same start with no drafter (nodraft_retry_args), used instead when the engine ended because a card ran out of memory: swapping DFlash2 for
         # the MTP takes MORE memory from a card that is already short, so that direction is never taken then
         self.spawn = (exe, list(args), cwd, log, env, False, cpus)   # to start it again after it died (issue #27)
-        # the all-cards split engine (sFNX, strata-split-N[-arch]): its GEN parser accepts fewer keys than Strata's engine (tests/split/test_split_gen_keys.py pins them)
+        # the all-cards split engine (sFNX, strata-split-N[-arch]): its GEN parser accepts fewer keys than PolyStrata's engine (tests/split/test_split_gen_keys.py pins them)
         self.split_engine = os.path.basename(str(exe)).startswith("strata-split")
         self.session_save_reclaim = '--session-save-reclaim' in args
         paths = {k: v for k, v in zip(args, args[1:]) if k in ("--native", "--pack", "--model")}
@@ -845,7 +845,7 @@ class StrataEngine:
         oomd_pacer.make_room(args)                       # Linux desktop: the file cache an earlier start left is dropped first, so the engine's RAM is free (serve/oomd_pacer.py)
         spawned_at = time.monotonic()
         try:
-            self.proc = popen("the Strata engine", [exe, "--serve", *args], cwd=cwd, stdin=subprocess.PIPE,
+            self.proc = popen("the PolyStrata engine", [exe, "--serve", *args], cwd=cwd, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=self.log, text=True, encoding="utf-8", errors="replace",
                               bufsize=1, env=env, **pin)    # (#5044: a byte that is not UTF-8 killed the reader thread)
         except OSError:                                  # nothing started: the narrator stops, the log handle goes back
@@ -1280,7 +1280,7 @@ class StrataEngine:
                 raise EngineDied("the engine did not answer the VRAM command")
 
     def pen_from_key(self, orig_len: int, prompt_len: int) -> str:
-        """` pen_from=N` for a leg that continues a request (prompt + what it generated): where the reply began, Strata's penalty window start. The all-cards split engine
+        """` pen_from=N` for a leg that continues a request (prompt + what it generated): where the reply began, PolyStrata's penalty window start. The all-cards split engine
         (sFNX) counts its penalty window over the last penalty_last_n tokens of the whole context, so the continued prompt gives it the same window and the engine refuses the
         key (GEN: unknown key pen_from): it is not sent."""
         if self.split_engine or prompt_len <= orig_len:
@@ -2936,7 +2936,7 @@ class Vision:
         self.gpu_spawn, self.cpu_spawn = self.spawn, self.fallback   # an on-demand reader tries the GPU one again at every start
         self.on_cpu = False                             # the CPU reader is what runs (the GPU one did not start, or there was no room)
         self.cpu_note = None                            # why, in words for the person (strata_control/reader_room.py), when the card had no room
-        self.reader = None                              # "own" (Strata's) or "mtmd" (llama.cpp's) from the READY line; None for an older reader
+        self.reader = None                              # "own" (PolyStrata's) or "mtmd" (llama.cpp's) from the READY line; None for an older reader
         self.proc = None
         self.stopped = True
         self.lock = threading.Lock()
@@ -3101,7 +3101,7 @@ class Vision:
             room = reader_room.find((line + chr(10) + chr(10).join(strays) + chr(10) + vision_log_tail(log, since=since)).splitlines())
             raise (VisionNoRoom(message, room) if room else RuntimeError(message))
         self.stopped = False
-        # "READY <n_embd> <reader>": the reader that runs (own: Strata's; an older strata-vision says only "READY <n_embd>", or "mtmd" for llama.cpp's).
+        # "READY <n_embd> <reader>": the reader that runs (own: PolyStrata's; an older strata-vision says only "READY <n_embd>", or "mtmd" for llama.cpp's).
         # Since 0.2.16 strata-vision has no other reader to fall back on: a GPU reader that does not start is replaced by the CPU reader (_start).
         words = line.split()
         self.reader = words[2] if len(words) > 2 else None
@@ -4796,7 +4796,7 @@ class Service:
         return self.vram_reserve if self.vram_reserve_asked else 0
 
     def _engine_has_vram_command(self) -> bool:
-        """Does the running engine know the VRAM command?  The Strata engine says so in its INFO line (vram_elastic=0 or 1, every engine
+        """Does the running engine know the VRAM command?  The PolyStrata engine says so in its INFO line (vram_elastic=0 or 1, every engine
         since 0.1.39; 0 refuses the command with its reason).  The Qwen3.6 engine path (src/qwen35/q36_engine.cu) reports no such key and
         has no such command: it answered "VRAM n" with its usage text ("expected: GEN <max_new> ..."), 0.2.15 release test."""
         return "vram_elastic" in (getattr(self.engine, "info", None) or {})
@@ -5750,7 +5750,7 @@ class Service:
                 self.forget_prompt(encoded_ids)
                 raise ContextOverflow("request exceeds the context window: "
                                       f"the prompt ({len(ids)} tokens) leaves {max(0, room)} of the {ctx}-token "
-                                      f"context, fewer than the {floor} an answer needs; Strata never truncates "
+                                      f"context, fewer than the {floor} an answer needs; PolyStrata never truncates "
                                       f"requests. Shorten the conversation, or send max_tokens {max(0, room)} or less",
                                       prompt=len(ids), context=ctx, max_new=max_new, min_room=floor)
             if not fit:
@@ -8547,7 +8547,7 @@ def make_handler(svc: Service):
             try:
                 ids, thinking, max_new = svc.prepare(messages, tools, kw, max_new, force=force, req=req, cancel=cancel)
             except ContextOverflow as e:
-                raise ValueError(e.anthropic_text()) from None       # #4838: Anthropic's own wording first, Strata's sentence after it
+                raise ValueError(e.anthropic_text()) from None       # #4838: Anthropic's own wording first, PolyStrata's sentence after it
             _debug_req("anthropic", req, messages, tools, max_new, thinking, len(ids))
             events = anthropic_events(svc, req, ids, thinking, callable_tools, max_new, cancel, force=force,
                                       deferred=deferred, note=self._note)
@@ -9207,7 +9207,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
     split_joined_args(cfg)
     from strata_control import retired
     _ds = retired.config_reason(cfg) if a.config else None
-    if _ds:                                             # DeepSeek: this Strata no longer runs it; stop before the engine starts (retired.py)
+    if _ds:                                             # DeepSeek: this PolyStrata no longer runs it; stop before the engine starts (retired.py)
         print(retired.server_line(_ds), flush=True)
         return 2
     if a.config and a.engine == "strata":
@@ -9630,7 +9630,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
                   flush=True)
         if os.name == "nt":
             print("       nothing arrives? Windows Firewall blocks it until allowed: accept its prompt for Python, or run "
-                  "in an admin PowerShell:\n         New-NetFirewallRule -DisplayName \"Strata " + str(bound_port) + "\" "
+                  "in an admin PowerShell:\n         New-NetFirewallRule -DisplayName \"PolyStrata " + str(bound_port) + "\" "
                   "-Direction Inbound -Protocol TCP -LocalPort " + str(bound_port) + " -Action Allow -Profile Private\n"
                   "       (and set this network to Private in Windows' network settings)", flush=True)
     if a.open and cfg.get("open_browser") is not False:   # #609: the config's "open_browser": false wins (an older

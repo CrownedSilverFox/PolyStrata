@@ -27,7 +27,7 @@ Choose a model that fits the combined memory. A split can add capacity without a
 
 | Source setup flag | Meaning |
 | --- | --- |
-| `--gpus 0,2` | These cards together, numbered as `nvidia-smi` numbers them. Strata puts the faster card last. Remembered. |
+| `--gpus 0,2` | These cards together, numbered as `nvidia-smi` numbers them. PolyStrata puts the faster card last. Remembered. |
 | `--gpus all` | Every card that can share the model. |
 | `--gpu 0` | One card (at a start: for that start only). |
 | `--layer-split auto` | The default. Or the first layer of each later card, for example `18` or `16,32`. |
@@ -52,7 +52,7 @@ Every card has one of three roles.
 | --- | --- |
 | **Main** | Runs the last stage of the split: the output head, the draft layer and the check of its guesses. A prompt chunk waits on it. Exactly one card is Main. |
 | **Helper** | Holds a share of the layers and of the expert cache, so more of the model sits on graphics cards instead of being read from the drive. The effect on speed depends on the cards and the workload. |
-| **Off** | Strata does not touch the card (a game, the screen, a card that is too small). |
+| **Off** | PolyStrata does not touch the card (a game, the screen, a card that is too small). |
 
 The Main card is the last card in the engine's order. The first card runs the first layers and, by default, the picture reader.
 

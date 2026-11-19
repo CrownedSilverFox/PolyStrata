@@ -1,18 +1,18 @@
-# Is Strata safe and private?
+# Is PolyStrata safe and private?
 
-This page says what Strata downloads, where from, when it uses the internet, what stays on your PC and how the downloads
+This page says what PolyStrata downloads, where from, when it uses the internet, what stays on your PC and how the downloads
 are checked. Everything here comes from reading the code of this version. Each section names the files, so you or anyone
-you trust can check it. Where Strata does less than you might hope, the page says so.
+you trust can check it. Where PolyStrata does less than you might hope, the page says so.
 
 ## At a glance
 
 - **Your chats, prompts, files, pictures and models stay on your PC.** They leave only when you choose it: you add an
   outside model service, you open the server to other devices or to the internet, or the agent searches the web or opens a page
   (see [What the agent can do](#what-the-coding-agent-can-do-on-your-pc)).
-- **There is no telemetry.** Strata sends no usage data, no crash reports and no analytics, and has no account to sign in to.
+- **There is no telemetry.** PolyStrata sends no usage data, no crash reports and no analytics, and has no account to sign in to.
 - **Starting and running a model never downloads anything.** Downloads and updates are steps that you start.
 - **The server listens on your PC only.** Reaching it from another device needs an API key.
-- **Once a model is downloaded, Strata runs without internet.** Starting, loading, serving and chatting need no
+- **Once a model is downloaded, PolyStrata runs without internet.** Starting, loading, serving and chatting need no
   connection. Only things you ask for use it: the agent's web search and web pages, an outside model service, the tunnel,
   and installs and updates.
 - **Downloads are checked.** Updates come from a signed feed. Every model file has a fixed SHA-256 and size, and an install
@@ -20,41 +20,41 @@ you trust can check it. Where Strata does less than you might hope, the page say
 - **In its default mode the coding agent asks before it changes anything**, and once per chat before its first web search or web page.
 - **The code is open.** Anyone can read it, and security problems go to [SECURITY.md](../.github/SECURITY.md).
 
-## Does Strata phone home?
+## Does PolyStrata phone home?
 
 No. A search of the app, the Terminal, the engine server and the installers found no analytics library, no crash
 reporter and no code that reports usage anywhere. The app's privacy notes say the same
-(`app/host/src/components/PrivacyNotes.tsx`: "Strata sends no usage telemetry").
+(`app/host/src/components/PrivacyNotes.tsx`: "PolyStrata sends no usage telemetry").
 
 Some things sound similar and stay on your PC:
 
 - The Monitor, `/metrics` and `/v1/telemetry` show hardware readings (temperature, speed, memory) to you. They are served
   from your own PC, and they need your API key when you set one.
 - When the app window crashes (Linux) or the app fails to start (Windows, Mac), a crash log is written to a folder on your disk
-  (on Windows, `%LOCALAPPDATA%\Strata\logs`). Nothing sends it. **Save logs**
+  (on Windows, `%LOCALAPPDATA%\PolyStrata\logs`). Nothing sends it. **Save logs**
   (Settings, Engine, Diagnostics) puts a text file in your Downloads folder, and you decide whether to attach it to a bug report.
-- The coding agent is a separate component (the DeepSeek Harness, MIT). It has its own telemetry switch, and Strata starts it
+- The coding agent is a separate component (the DeepSeek Harness, MIT). It has its own telemetry switch, and PolyStrata starts it
   with that switch off (`app/host/server/agent/harness-runtime.mjs`).
 
 Like any download, each connection below shows the other side your IP address and the file you asked for.
 
-## When Strata uses the internet
+## When PolyStrata uses the internet
 
 | What | Where it goes | When |
 | --- | --- | --- |
 | Model files, the picture reader, the speed-up layer (MTP) | huggingface.co, or the mirror in `HF_ENDPOINT` if you set one | When you install a model |
-| The same files from ModelScope, for PCs that cannot reach Hugging Face | modelscope.cn | Only if you ask for it (`--source modelscope`). Strata never switches to it by itself |
+| The same files from ModelScope, for PCs that cannot reach Hugging Face | modelscope.cn | Only if you ask for it (`--source modelscope`). PolyStrata never switches to it by itself |
 | Engine, Terminal and Control updates | The signed feed on GitHub Releases of Niko1221/Strata | When you install an engine, press **Update engine** or **Check for updates**, or run `strata update`. Opening **Settings, Engine** does not connect: it shows the result of your last check |
-| App updates | `latest.json` on the same GitHub Releases, through Tauri's updater | When you press **Check for updates** or **Update Strata** |
-| llama.cpp source code (a fixed commit) | github.com/ggml-org/llama.cpp | During a model install, if it is not on your PC yet. Strata uses only its model-preparation scripts |
+| App updates | `latest.json` on the same GitHub Releases, through Tauri's updater | When you press **Check for updates** or **Update PolyStrata** |
+| llama.cpp source code (a fixed commit) | github.com/ggml-org/llama.cpp | During a model install, if it is not on your PC yet. PolyStrata uses only its model-preparation scripts |
 | Web search and web pages | DuckDuckGo, with Bing as the second source; or Exa, Perplexity or DeepSeek if you save a key for them. Any page the agent is asked to open goes to that page's site | When the agent uses its search or "open web pages" tool. In Manual mode it asks you first, once per chat |
 | Outside model services | The service you add (OpenAI, Anthropic, OpenRouter, a server on your network and others) | Only for chats with that model, and only after you add its key |
-| Cloudflare tunnel | Cloudflare, through the `cloudflared` program | Only while you have the tunnel on, and Strata makes an API key for it unless you pass `--no-api-key` (then it warns that anyone who finds the address can use your model) |
-| Tailscale, local network | Not Strata's traffic. Strata only reads Tailscale's status and shows the address | Only if you choose that access in `strata launch` |
+| Cloudflare tunnel | Cloudflare, through the `cloudflared` program | Only while you have the tunnel on, and PolyStrata makes an API key for it unless you pass `--no-api-key` (then it warns that anyone who finds the address can use your model) |
+| Tailscale, local network | Not PolyStrata's traffic. PolyStrata only reads Tailscale's status and shows the address | Only if you choose that access in `strata launch` |
 | An image link in an API request | The address in the link | Only when a program sends your server a request with an `http(s)` image link. `--offline` refuses it |
 | Remote tool servers (MCP) | The address you put in the run config | Only when you add one |
 | A website you open in the app's preview pane | That website | Only when you type an address into **Open a website** |
-| Share to X or Reddit (Monitor screenshot) | Your browser opens x.com or reddit.com with a caption and a link to the Strata page | Only when you click it. The screenshot is saved to your disk, not uploaded |
+| Share to X or Reddit (Monitor screenshot) | Your browser opens x.com or reddit.com with a caption and a link to the PolyStrata page | Only when you click it. The screenshot is saved to your disk, not uploaded |
 
 That is the full list found in the code. Some details:
 
@@ -72,7 +72,7 @@ That is the full list found in the code. Some details:
   `STRATA_PACKAGED=1` and `STRATA_NO_ACQUIRE=1` for its parts (`app/desktop/src-tauri/src/main.rs`), and the downloaders
   refuse to run under them (`terminal/strata_control/acquisition.py`, `app/host/server/acquisition.mjs`). That is why the app
   never downloads `cloudflared` for you while it runs.
-- **The engine itself has no network code.** The part of Strata that runs the model (`src/`, `include/`, `sycl/`, `metal/`)
+- **The engine itself has no network code.** The part of PolyStrata that runs the model (`src/`, `include/`, `sycl/`, `metal/`)
   contains no networking. The app's own pages load no fonts, scripts or trackers from the internet.
 - **Building from source** reaches more places. Python from python.org or winget (`START-HERE.bat`), a standalone Python
   from GitHub on a Mac (`setup.sh`), Python packages from PyPI (`terminal/requirements.txt`, pinned versions), NVIDIA's CUDA libraries
@@ -94,7 +94,7 @@ That is the full list found in the code. Some details:
   so set one yourself in that case.
 - **When you use an outside model**, the conversation (and the instructions of skills you switched on) go to that service.
   The app says so in its privacy notes. The service's own rules then apply.
-- **Programs you connect** (Claude Code, Codex, and so on) are separate programs with their own network behaviour. Strata
+- **Programs you connect** (Claude Code, Codex, and so on) are separate programs with their own network behaviour. PolyStrata
   does not control what they send.
 
 The server also has browser protections (a host check, an origin check, no CORS by default). They are in
@@ -105,12 +105,12 @@ The server also has browser protections (a host check, an origin check, no CORS 
 **Updates for the engine, the Terminal and Control.**
 
 1. The release publishes `strata-feed.json` and `strata-feed.json.sig`, signed with an Ed25519 key. The matching public key is
-   inside every installed Strata (`strata_control/update_keys.json`). The private key is kept offline by the owner.
+   inside every installed PolyStrata (`strata_control/update_keys.json`). The private key is kept offline by the owner.
 2. Before it uses the feed, your PC checks the signature, that the feed has not expired and that it is not older than the
    last feed it accepted (so an old feed cannot be replayed).
 3. Each engine package is checked against its SHA-256 and its signed manifest, then every file in it against its own hash,
    then it is checked to fit your PC.
-4. The new engine is test-started before Strata switches to it. If anything fails, you keep the engine you had.
+4. The new engine is test-started before PolyStrata switches to it. If anything fails, you keep the engine you had.
 
 Updates never replace your models or saved tuning. The full description is in [packaging/UPDATES.md](../tools/packaging/UPDATES.md).
 
@@ -124,7 +124,7 @@ the Gyro files, Qwen3.6, the NVFP4 packs, the picture reader, the image model fi
 tensor). A file that does not match is deleted and the install stops. A file whose size on the server is not the pinned
 size stops it before the download starts.
 
-- If the pinned version of a file is gone from Hugging Face, the install stops and says to update Strata. It does not take
+- If the pinned version of a file is gone from Hugging Face, the install stops and says to update PolyStrata. It does not take
   the repository's current file instead. A tester can set `STRATA_ALLOW_UNPINNED=1` to take the current file anyway, without
   the check. It is off by default, and setup says so when it is set.
 - Starting a model does not check its files, and running setup again for a model you have does not download or hash them
@@ -191,8 +191,8 @@ The agent runs on a loopback address with a random token, so other programs on t
 
 ## Open source and reporting a problem
 
-Strata is MIT-licensed and the whole code is at [github.com/Niko1221/Strata](https://github.com/Niko1221/Strata). Read it, build
-it and compare. Strata has not had an outside security audit yet.
+PolyStrata is MIT-licensed and the whole code is at [github.com/Niko1221/Strata](https://github.com/Niko1221/Strata). Read it, build
+it and compare. PolyStrata has not had an outside security audit yet.
 
 To report a security problem, use GitHub's private reporting (the repository's **Security** tab), as described in
 [SECURITY.md](../.github/SECURITY.md). Ordinary questions and ideas can go to an

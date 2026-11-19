@@ -6,7 +6,7 @@ chunk behave. For sizes and memory, see [MODELS.md](MODELS.md). This is the Stra
 in setup with `--family qwen36-strata`; `--family qwen36` runs the same model on strata-poly instead
 ([BACKENDS.md](BACKENDS.md#qwen36-on-two-engines)).
 
-Strata runs [Unsloth's GGUFs with the MTP layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF)
+PolyStrata runs [Unsloth's GGUFs with the MTP layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF)
 (UD-Q4_K_XL, UD-Q6_K_XL, Q8_0) on its own engine path (`engine/src/qwen35`; `strata` switches to it from the file's
 architecture). It runs on NVIDIA and AMD cards. The Intel Arc and Mac engines do not run it.
 
@@ -29,7 +29,7 @@ strata launch --family qwen36 --model ud-q4_k_xl --vision on --parallel 2
 
 The vision encoder is Unsloth's `mmproj-F16.gguf` (0.9 GB, pinned revision, SHA-256 checked by setup): a 27-layer ViT
 with a 2x2 merger, the same projector family as the Flash-Next models' (`qwen3vl_merger`; only its output width
-differs: 2048 here, 2560 there). Strata runs it with the same helper (`strata-vision`), so the
+differs: 2048 here, 2560 there). PolyStrata runs it with the same helper (`strata-vision`), so the
 encoder choices are the Flash-Next ones ([Images](DETAILS.md#images-vision)).
 
 Pictures are on by default, by the same rule as for every model on NVIDIA and AMD cards:
@@ -46,7 +46,7 @@ Pictures work with several requests at once, with the MTP drafts and with the co
 sent again continues from the held state when its pictures are the same (matched by the server's key for each
 picture). A different picture starts that conversation again.
 
-> **Measured on:** RTX 3060 12 GB (CUDA) and an R9700 box (32 threads) and a 3060 box (10 threads), UD-Q4_K_XL, Strata
+> **Measured on:** RTX 3060 12 GB (CUDA) and an R9700 box (32 threads) and a 3060 box (10 threads), UD-Q4_K_XL, PolyStrata
 > 0.1.45.
 
 | Encoder | Time per picture (640x400 = 260 tokens / 800x450 = 350 tokens) | VRAM |
@@ -120,7 +120,7 @@ Every change on the decode path gives the old kernels' bits. `STRATA_Q36_VERIFY=
 kernel beside each new one on the real activations and compares them bit for bit. `STRATA_Q36_OLD_KERNELS=1` switches
 the new kernels off. Gate/up for Q4_K experts uses the V2K kernels (`STRATA_EXPERT_V2K`, the default on gfx12).
 
-> **Measured on:** AMD Radeon AI PRO R9700 32 GB (HIP gfx1201), UD-Q4_K_XL, Strata 0.1.45 against the engine before it,
+> **Measured on:** AMD Radeon AI PRO R9700 32 GB (HIP gfx1201), UD-Q4_K_XL, PolyStrata 0.1.45 against the engine before it,
 > 5 interleaved pairs, medians; llama.cpp 972b5fc HIP on the same file (`-fa 1`).
 
 | | Before | 0.1.45 | llama.cpp |
@@ -161,11 +161,11 @@ the box's GPU lock.
 
 ### Pictures checked against llama.cpp
 
-> **Measured on:** R9700 32 GB (HIP), UD-Q4_K_XL, Strata 0.1.45. llama.cpp's `mtmd` and its own graph, the encoder on the
+> **Measured on:** R9700 32 GB (HIP), UD-Q4_K_XL, PolyStrata 0.1.45. llama.cpp's `mtmd` and its own graph, the encoder on the
 > CPU on both sides, the same prompt ids, llama.cpp's answer fed to both, logits compared step by step over 24 steps.
 > The floor is llama.cpp's CPU backend against its own HIP run.
 
-| Picture and question | Prompt tokens | First token | Mean KL, llama.cpp HIP vs Strata | Floor |
+| Picture and question | Prompt tokens | First token | Mean KL, llama.cpp HIP vs PolyStrata | Floor |
 | --- | ---: | --- | ---: | ---: |
 | 640x400, text in the image | 288 | same | 0.029 | 0.056 |
 | 640x400, list the shapes | 294 | same | 0.035 | 0.039 |
@@ -180,9 +180,9 @@ tokens as without them (10 prompts x 128 greedy tokens).
 ### Aggregate decode speed, several requests at once
 
 > **Measured on:** same prompts, greedy, 128 new tokens each, wall time from first request to last answer, 5
-> interleaved pairs, medians, Strata 0.1.45 with `--batch 8 --mtp 0` against `llama-server -np N`.
+> interleaved pairs, medians, PolyStrata 0.1.45 with `--batch 8 --mtp 0` against `llama-server -np N`.
 
-| Card | Requests | Strata tok/s | llama.cpp | Ratio |
+| Card | Requests | PolyStrata tok/s | llama.cpp | Ratio |
 | --- | ---: | ---: | ---: | ---: |
 | R9700 32 GB, UD-Q4_K_XL | 1 | 83.9 | 73.8 | 1.14 |
 | | 2 | 173.5 | 107.4 | 1.61 |
@@ -192,11 +192,11 @@ tokens as without them (10 prompts x 128 greedy tokens).
 | | 2 | 85.1 | 52.5 | 1.62 |
 | | 4 | 99.3 | 63.0 | 1.58 |
 
-All pairs were faster for Strata. Every slot's tokens equal the tokens of the same request alone.
+All pairs were faster for PolyStrata. Every slot's tokens equal the tokens of the same request alone.
 
 ### Several requests with the base engine, and with `--batch-mtp`
 
-> **Measured on:** R9700 32 GB, 5 interleaved pairs, Strata 0.1.45 (before the speed work below).
+> **Measured on:** R9700 32 GB, 5 interleaved pairs, PolyStrata 0.1.45 (before the speed work below).
 
 | Requests | `--mtp 0` | `--mtp 2 --batch-mtp` | Ratio |
 | ---: | ---: | ---: | ---: |
@@ -221,7 +221,7 @@ one-at-a-time-with-drafts (1.59x with `--batch-mtp`).
 
 ### Prompt read beside decoding slots
 
-> **Measured on:** R9700 32 GB, Strata 0.1.45, three decoding slots.
+> **Measured on:** R9700 32 GB, PolyStrata 0.1.45, three decoding slots.
 
 A 3,008-token prompt was read in 0.95 s (3,200 tok/s, 6 chunks). Each decoding slot paused at most 160 ms (one chunk)
 and produced 20 tokens meanwhile. With `STRATA_Q36_READ_WINDOWS=4` they produced 65 tokens during a 1.14 s read.
@@ -243,7 +243,7 @@ the experts to the hybrid placement (205 of 256 per layer in VRAM): prompt 3,500
 not the default.
 
 > **Measured on:** RTX 3060 12 GB (CUDA sm_86, 20 threads), UD-Q4_K_XL in the hybrid mode (37 of 256 experts per layer
-> in VRAM), Strata 0.1.45.
+> in VRAM), PolyStrata 0.1.45.
 
 Decode tg128 58.5 to 59.7 tok/s (+2%), pp2048 1,958 to 2,022 (+3.3%), 10/10 prompts identical, plain and with `--mtp 2`.
 llama.cpp 972b5fc CUDA (`-ncmoe 26 -t 8 -ub 2048`): pp2048 1,328, tg128 48 to 52. The GPU part of a token is the dense

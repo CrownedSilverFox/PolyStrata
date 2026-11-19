@@ -9,7 +9,7 @@ and rerun a model you already have; they do not download one. All options, permi
 
 ## Read a running server
 
-With Strata already serving locally, get one machine-readable snapshot:
+With PolyStrata already serving locally, get one machine-readable snapshot:
 
 ```sh
 strata status --url http://127.0.0.1:8080 --json

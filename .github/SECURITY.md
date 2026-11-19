@@ -5,7 +5,7 @@
 Please report anything that should not be public until it is fixed **privately**, through GitHub's private
 vulnerability reporting: the repository's **Security** tab, **Report a vulnerability**
 ([direct link](https://github.com/Niko1221/Strata/security/advisories/new)). Say what you found, how to reproduce it
-(the request, the config keys involved, the Strata version), and what an attacker gains. We answer there, fix it in
+(the request, the config keys involved, the PolyStrata version), and what an attacker gains. We answer there, fix it in
 a release, and credit you in the advisory unless you ask us not to.
 
 Ordinary hardening ideas and findings that are safe to discuss in public are welcome as an
@@ -16,7 +16,7 @@ Supported: the latest release. Fixes go into the next release, not into older on
 
 ## What the server exposes
 
-Strata runs a model on your PC and serves it over HTTP (`terminal/serve/server.py`). Out of the box it is reachable from
+PolyStrata runs a model on your PC and serves it over HTTP (`terminal/serve/server.py`). Out of the box it is reachable from
 this PC only. The details and every setting are in [docs/DETAILS.md](../docs/DETAILS.md) ("From other devices",
 "Host names", "Web pages without an API key", "Tools from MCP servers").
 
@@ -31,13 +31,13 @@ this PC only. The details and every setting are in [docs/DETAILS.md](../docs/DET
   it knows (`localhost`, an IP address, the address it listens on and, when it listens beyond this PC, this PC's
   name). Others get 403. `"allowed_hosts"` adds names; with an API key the key decides.
 - **Origin check (0.1.38).** Without an API key, a browser `POST` to `/v1/*` from another web site's page (it carries
-  an `Origin` header) gets 403 unless that origin is Strata's own page, `localhost`, an allowed host, or listed in
+  an `Origin` header) gets 403 unless that origin is PolyStrata's own page, `localhost`, an allowed host, or listed in
   `"trusted_origins"` / `"cors_origins"`. Changing settings (`/settings`, and `/config`: the few run config keys the
   page's Model settings may change - never the network, key, MCP or program keys), `/load` and `/unload` and the
-  MCP tools are accepted only as JSON from Strata's own page (or `"trusted_origins"`), so a page elsewhere cannot
+  MCP tools are accepted only as JSON from PolyStrata's own page (or `"trusted_origins"`), so a page elsewhere cannot
   change settings or run tools.
 - **CORS** is off unless `"cors_origins"` lists origins, and then only for `/v1/*`.
-- **MCP tools** are opt-in: only the servers you put in the run config, only for requests from Strata's own page
+- **MCP tools** are opt-in: only the servers you put in the run config, only for requests from PolyStrata's own page
   that ask for them. They run with your user's rights, and the model decides when to call them.
 - **The request monitor** (`/api-monitor`, which keeps the last prompts and answers in memory) is off unless
   `"api_monitor": true` is set. Apart from it, the server keeps in its process memory the text and tokens of its
@@ -46,7 +46,7 @@ this PC only. The details and every setting are in [docs/DETAILS.md](../docs/DET
 
 ## The desktop app and the Terminal
 
-Strata comes in three parts that share one engine: the **desktop app**, the **Terminal** (`strata`) and the **engine** that runs
+PolyStrata comes in three parts that share one engine: the **desktop app**, the **Terminal** (`strata`) and the **engine** that runs
 the model. The section above is about the engine's HTTP server. This is what the other two add.
 
 - **The app's host listens on this PC only.** The app serves its page from a local host process on `127.0.0.1` (port 8791 unless
@@ -62,9 +62,9 @@ the model. The section above is about the engine's HTTP server. This is what the
   guarantee than a socket other users cannot open: on Windows the token is what protects it, as with any loopback service that has a
   token (`terminal/strata_control/owner_transport.py`). The bridge between the app shell and the host (used for the app update) is also loopback and protected by a token.
 - **Starting a model and serving never download anything.** Downloads and updates are one explicit step: `strata update`, or "Update
-  engine" and "Update Strata" in the app's Settings. Models and saved tuning are never replaced by an update.
+  engine" and "Update PolyStrata" in the app's Settings. Models and saved tuning are never replaced by an update.
 - **Updates come from a signed feed.** The release publishes `strata-feed.json` and `strata-feed.json.sig` (Ed25519). An installed
-  Strata checks the signature against the public key it carries (`strata_control/update_keys.json`), refuses a feed older than the last
+  PolyStrata checks the signature against the public key it carries (`strata_control/update_keys.json`), refuses a feed older than the last
   one it accepted (a replayed old feed) or expired, and checks every engine package against its SHA-256, its signed manifest and the
   card in your PC before it test-starts it and switches to it. Any failure keeps the engine you had. The app installer itself is signed
   with a separate key (Tauri's minisign key) that the app and the Terminal both check. The private keys are kept offline by the owner.
@@ -92,5 +92,5 @@ by someone who controls it. Later updates are checked against the key already on
 If that is not enough: save the script (`curl -fsSLO --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh`), read it, and
 run it from the file; or install the desktop app or build from source instead and check the code you build.
 
-Strata has not had an outside security audit yet.
-What Strata downloads, when it uses the internet, what stays on your PC and how downloads are checked is written up in [docs/SAFETY.md](../docs/SAFETY.md).
+PolyStrata has not had an outside security audit yet.
+What PolyStrata downloads, when it uses the internet, what stays on your PC and how downloads are checked is written up in [docs/SAFETY.md](../docs/SAFETY.md).

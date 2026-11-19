@@ -1,8 +1,8 @@
 # Closing: what ends the engine, and when
 
-The rule: **a Strata server, and the engine it started, end when whatever started them ends, however that ends.** There is a
+The rule: **a PolyStrata server, and the engine it started, end when whatever started them ends, however that ends.** There is a
 clean path (the engine finishes or cancels its request, frees its memory, exits) and, behind it, a guarantee that does not
-need any Strata code to run (a crash, `kill -9`, the console closed, logoff). The clean path is tried first; if the engine
+need any PolyStrata code to run (a crash, `kill -9`, the console closed, logoff). The clean path is tried first; if the engine
 does not exit in time it is killed. After either, the port and the GPU memory are free.
 
 ## The two ways to run an engine
@@ -44,7 +44,7 @@ in that order instead of the engine dying under a request.
 
 ## Leftovers, and how they are found
 
-Every engine, image encoder and server Strata starts writes a small private record (`<state>/procs/<pid>.json`: PID, start
+Every engine, image encoder and server PolyStrata starts writes a small private record (`<state>/procs/<pid>.json`: PID, start
 time, command line, and the same for its parent). Records are removed when the process ends. If everything dies anyway and a
 process is left, the next of these ends it, after the check above:
 
@@ -55,7 +55,7 @@ process is left, the next of these ends it, after the check above:
 * `strata runtime cleanup [--profile NAME]`, on demand (`--json` for scripts); a running instance is never touched;
 * the app host, once at start.
 
-Engines older Strata versions left behind wrote no record. At an engine start, an **orphan of exactly the executable about to
+Engines older PolyStrata versions left behind wrote no record. At an engine start, an **orphan of exactly the executable about to
 be started** (`--serve` on its command line, no live parent: its server is gone) is ended the same way; another
 installation's engine, or any process whose parent is alive, is not. Set `STRATA_KEEP_LEFTOVERS=1` to turn both checks off.
 

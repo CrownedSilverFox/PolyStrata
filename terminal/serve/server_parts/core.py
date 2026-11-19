@@ -266,7 +266,7 @@ def tool_retry_note(reason: str, names: list[str], declared: list[str], near: st
             "unreadable": "it is not in a form that can be read"}[reason]
     listed = ", ".join(declared[:40]) + (f" and {len(declared) - 40} more" if len(declared) > 40 else "")
     hint = f" Did you mean `{near}`?" if near else ""
-    return (f"[Strata server] Your last reply ended with a tool call that was not run: {what}.{hint} The tools you can "
+    return (f"[PolyStrata server] Your last reply ended with a tool call that was not run: {what}.{hint} The tools you can "
             f"call are: {listed}. Write the call again in this form, with a tool from that list:\n"
             f"{CALL_START}\n{FUNC_START}TOOL_NAME>\n<parameter=PARAMETER_NAME>\nvalue\n</parameter>\n{FUNC_END}\n{CALL_END}\n"
             "or answer in plain text if no tool is needed.")

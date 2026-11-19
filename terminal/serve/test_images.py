@@ -144,7 +144,7 @@ class Command(unittest.TestCase):
             cfg = {"exe": "sd-cli", "diffusion_model": "d", "vae": "v", "llm": "l", "out_dir": d}
             for ok in ("sdcpp", "strata"):
                 images_api.ImageGen({**cfg, "noise": ok})
-            for bad in ("on", "", "Strata", True, 1):
+            for bad in ("on", "", "PolyStrata", True, 1):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     images_api.ImageGen({**cfg, "noise": bad})
 
@@ -153,7 +153,7 @@ class NoiseRefusal(unittest.TestCase):
     """images "noise": "strata" with an sd-cli that was built without the generator: the job is refused, in plain
     words with one next step, instead of quietly running on stable-diffusion.cpp's noise."""
 
-    WORDS = ("Image generation is set to use Strata's own noise (\"noise\": \"strata\" in the images settings), but the "
+    WORDS = ("Image generation is set to use PolyStrata's own noise (\"noise\": \"strata\" in the images settings), but the "
              "image program here was built without it. Run setup again with: --images qwen-image --image-noise on")
 
     def gen(self, d, build=None, **kw):
@@ -593,11 +593,11 @@ class VaeDecoderSwitch(unittest.TestCase):
 
     def test_the_owners_words(self):
         self.assertEqual(images_api.VAE_MISSING,
-                         "Image generation is set to use Strata's own picture decoder (\"vae_decoder\": \"strata\" in the "
+                         "Image generation is set to use PolyStrata's own picture decoder (\"vae_decoder\": \"strata\" in the "
                          "images settings), but the image program here was built without it. Run setup again with: "
                          "--images qwen-image --image-vae on")
         self.assertEqual(images_api.VAE_BACKEND.format(backend="vulkan"),
-                         "Image generation is set to use Strata's own picture decoder (\"vae_decoder\": \"strata\" in the "
+                         "Image generation is set to use PolyStrata's own picture decoder (\"vae_decoder\": \"strata\" in the "
                          "images settings), which needs the CUDA (NVIDIA) or ROCm (AMD) build of the image program; this "
                          "one was built for vulkan. Set \"vae_decoder\" to \"sdcpp\" in the images settings.")
 
@@ -624,7 +624,7 @@ class VaeDecoderSwitch(unittest.TestCase):
             cfg = {"exe": "sd-cli", "diffusion_model": "d", "vae": "v", "llm": "l", "out_dir": d}
             for ok in ("sdcpp", "strata"):
                 images_api.ImageGen({**cfg, "vae_decoder": ok})
-            for bad in ("on", "", "Strata", True, 1):
+            for bad in ("on", "", "PolyStrata", True, 1):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     images_api.ImageGen({**cfg, "vae_decoder": bad})
 

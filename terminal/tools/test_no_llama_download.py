@@ -1,6 +1,6 @@
-"""OWN-1B: nothing downloads llama.cpp to build, package or install Strata.
+"""OWN-1B: nothing downloads llama.cpp to build, package or install PolyStrata.
 
-ggml (third_party/strata-ggml) and gguf-py (third_party/strata-gguf-py) are vendored at the llama.cpp pin; strata-vision is Strata's own reader since
+ggml (third_party/strata-ggml) and gguf-py (third_party/strata-gguf-py) are vendored at the llama.cpp pin; strata-vision is PolyStrata's own reader since
 0.2.16 (third_party/strata-llama only feeds its test oracles). This test reads the release scripts, Docker files, CI workflows and setup.py and fails when one of them fetches llama.cpp again or requires a checkout.
 The overrides (STRATA_GGML_DIR, LLAMA, GG, --llama, STRATA_GGUF_PY) stay for two releases and are allowed: they only POINT at a checkout.
 

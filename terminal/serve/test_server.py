@@ -2231,7 +2231,7 @@ class GpuChoice(unittest.TestCase):
 
     DEVICES_MINI_PC = (
         "device 0: AMD Radeon 760M Graphics\n  arch gfx1103, 8.0 GiB, wave32\n  cannot run: GPU 0 (AMD Radeon 760M Graphics, gfx1103) is not an "
-        "architecture this Strata engine was compiled for (gfx1200,gfx1201); compile it\n"
+        "architecture this PolyStrata engine was compiled for (gfx1200,gfx1201); compile it\n"
         "device 1: AMD Radeon RX 9070 XT\n  arch gfx1201, 15.9 GiB, wave32\n")
 
     def test_automatic_card_skips_what_the_engine_cannot_run(self):
@@ -2253,11 +2253,11 @@ class GpuChoice(unittest.TestCase):
         self.assertEqual(pick_hip_devices(flagged), ([1], None))
         # nothing runnable: the plain line names the cards, what the engine is built for and, for the RX 6800 XT, that no package exists
         nothing = parse_hip_devices(
-            "device 0: AMD Radeon 760M Graphics\n  arch gfx1103, 8.0 GiB, wave32\n  cannot run: x is not an architecture this Strata engine was compiled for "
+            "device 0: AMD Radeon 760M Graphics\n  arch gfx1103, 8.0 GiB, wave32\n  cannot run: x is not an architecture this PolyStrata engine was compiled for "
             "(gfx1200,gfx1201); y\ndevice 1: AMD Radeon RX 6800 XT\n  arch gfx1030, 16.0 GiB, wave32\n  cannot run: z compiled for (gfx1200,gfx1201); y\n")
         picked, problem = pick_hip_devices(nothing)
         self.assertIsNone(picked)
-        self.assertIn("none of this computer's graphics cards has code in this Strata engine (it is built for gfx1200,gfx1201)", problem)
+        self.assertIn("none of this computer's graphics cards has code in this PolyStrata engine (it is built for gfx1200,gfx1201)", problem)
         self.assertIn("AMD Radeon RX 6800 XT (gfx1030)", problem)
         self.assertIn("760M Graphics (gfx1103, integrated)", problem)
         # through the engine's own program, and never over a card the config or the environment names
