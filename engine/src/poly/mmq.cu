@@ -136,9 +136,12 @@ void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int type, int64
     ck("mmq quantize");
 }
 
+bool Mmq::reads_by_index(int, int64_t) { return false; }
+
 void Mmq::mul(const void* w, int type, int64_t w_rows, int64_t w_cols, size_t stride, int n, const void* xq,
               const int32_t* bounds, const int32_t* ids, int64_t total_rows, int64_t max_rows, float* dst,
-              int64_t ld_dst, void* stream) {
+              int64_t ld_dst, void* stream, const int32_t* from) {
+    if (from) throw std::logic_error("strata-poly prompt product: llama.cpp's tiles read no rows by index");
     if (n <= 0 || max_rows <= 0) return;
     const ggml_type t = (ggml_type) type;
     // the matrices are the channels of x; the tokens' rows are the columns of y and of dst

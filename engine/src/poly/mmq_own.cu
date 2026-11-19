@@ -32,9 +32,10 @@ bool Mmq::fits(int, int64_t, int64_t) { return false; }
 size_t Mmq::q8_bytes(int64_t rows, int64_t cols) { return (size_t) rows * (size_t) cols * 2; }
 bool Mmq::half_sums(int) { return false; }
 bool Mmq::split_exact(int, int64_t) { return true; }
+bool Mmq::reads_by_index(int, int64_t) { return false; }
 void Mmq::quantize(const float*, const int32_t*, void*, int, int64_t, int64_t, int64_t, void*) {}
 void Mmq::mul(const void*, int, int64_t, int64_t, size_t, int, const void*, const int32_t*, const int32_t*, int64_t, int64_t,
-              float*, int64_t, void*) {
+              float*, int64_t, void*, const int32_t*) {
     throw std::runtime_error("strata-poly prompt product: not in a HIP build");
 }
 }  // namespace strata::poly
@@ -203,6 +204,8 @@ bool Mmq::half_sums(int) { return false; }
 
 bool Mmq::split_exact(int, int64_t) { return true; }
 
+bool Mmq::reads_by_index(int ggml_type, int64_t w_cols) { return int8_rows(ggml_type, w_cols); }
+
 void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int ggml_type, int64_t cols, int64_t ld, int64_t rows,
                    void* stream) {
     if (rows <= 0) return;
@@ -214,7 +217,7 @@ void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int ggml_type, 
 
 void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size_t stride, int n, const void* xq,
               const int32_t* bounds, const int32_t* ids, int64_t total_rows, int64_t max_rows, float* dst,
-              int64_t ld_dst, void* stream) {
+              int64_t ld_dst, void* stream, const int32_t* from) {
     if (n <= 0 || total_rows <= 0) return;
     Ctx& c = *(Ctx*) ctx_;
     const cudaStream_t s = (cudaStream_t) stream;
@@ -227,12 +230,13 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
     }
     if (int8_rows(ggml_type, w_cols)) {   // straight to dst's rows
         if (!kernels::gemm_iq_i8_grouped(ggml_type, w, stride, (int) w_rows, (int) w_cols, xq, total_rows, bounds, n,
-                                         (int) max_rows, ids, dst, ld_dst, stream))
+                                         (int) max_rows, ids, dst, ld_dst, stream, from))
             throw std::runtime_error("strata-poly prompt product: the int8 kernel did not start for tensor type " +
                                      std::to_string(ggml_type) + " with [" + std::to_string(w_rows) + ", " +
                                      std::to_string(w_cols) + "]");
         return;
     }
+    if (from) throw std::logic_error("strata-poly prompt product: rows by index need the int8 kernel");
     // straight into dst where row i is row i (finish_rows then works in place); else by way of a buffer of this path's own
     float* y = dst;
     int64_t ldy = ld_dst;

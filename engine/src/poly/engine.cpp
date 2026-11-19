@@ -5374,16 +5374,23 @@ void Engine::moe_rows(Layer& L, int il, int n) {
     // A mixed layer multiplies gate and up apart, n_ff rows each, up's into the second half of a row: its rows
     // quantized for up's type too, since quantize() writes them for the matrix type they meet.
     const int64_t gu_rows = L.mixed() ? ff : ff2;
+    // Gate and up read each token's row once for every expert it chose: where the product can read rows by index,
+    // the call's n rows are quantized once and each expert's rows read by token, where they were quantized once an
+    // expert (rg rows), 8 times the work for Qwen3.6.
+    const bool by_token = Mmq::reads_by_index(gt, n_embd_) && (!L.mixed() || Mmq::reads_by_index(ut, n_embd_));
+    const int32_t* tok_of = by_token ? d_tok : nullptr;
+    const int64_t q_rows = by_token ? n : rg;
     const auto up_mul = [&](const uint8_t* w, size_t stride, int m, const int32_t* bounds, int64_t most) {
         if (L.mixed())
-            mmq_->mul(w + L.gu_bytes, ut, ff, n_embd_, stride, m, mqu_, bounds, iota_, rg, most, gu_ + ff, ff2, st_);
+            mmq_->mul(w + L.gu_bytes, ut, ff, n_embd_, stride, m, mqu_, bounds, iota_, q_rows, most, gu_ + ff, ff2, st_,
+                      tok_of);
     };
     int holds = -1;   // the round in the buffer when this call is done
     // The card's part.  With the CPU's beside it, the rows of its experts' places are left at nothing.
     const auto card = [&] {
         if (n_cpu > 0) ck(cudaMemsetAsync(dx_, 0, (size_t) rr * n_embd_ * sizeof(float), cs(st_)), "expert rows");
-        if (rg > 0) Mmq::quantize(xn_, d_tok, mq_, gt, n_embd_, n_embd_, rg, st_);
-        if (rg > 0 && L.mixed()) Mmq::quantize(xn_, d_tok, mqu_, ut, n_embd_, n_embd_, rg, st_);
+        if (rg > 0) Mmq::quantize(xn_, tok_of ? nullptr : d_tok, mq_, gt, n_embd_, n_embd_, q_rows, st_);
+        if (rg > 0 && L.mixed()) Mmq::quantize(xn_, tok_of ? nullptr : d_tok, mqu_, ut, n_embd_, n_embd_, q_rows, st_);
 
         // The cached experts whose slots lie one behind the other are the matrices of one launch, as the experts of
         // a staging round are; a launch for each class that has rows among them.  The cache is filled a layer's
@@ -5418,7 +5425,7 @@ void Engine::moe_rows(Layer& L, int il, int n) {
         }
         for (const Run& r : runs_) {
             mmq_->mul(slot_of(r.j), gt, gu_rows, n_embd_, L.slot_bytes, r.m, mq_, d_cb + (size_t) r.c * cb_row + r.j,
-                      iota_, rg, r.most, gu_, ff2, st_);
+                      iota_, q_rows, r.most, gu_, ff2, st_, tok_of);
             up_mul(slot_of(r.j), L.slot_bytes, r.m, d_cb + (size_t) r.c * cb_row + r.j, r.most);
         }
         if (rc > 0) {
@@ -5469,7 +5476,7 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             };
             each_class([&](int k, int top) {
                 const int32_t* b = n_tile == 1 ? d_bounds + g0 : d_tb + (size_t) k * tile_row + (size_t) (g0 - n_cached + r);
-                mmq_->mul(stage_, gt, gu_rows, n_embd_, step, m, mq_, b, iota_, rg, top, gu_, ff2, st_);
+                mmq_->mul(stage_, gt, gu_rows, n_embd_, step, m, mq_, b, iota_, q_rows, top, gu_, ff2, st_, tok_of);
                 up_mul(stage_, step, m, b, top);
             });
             ExpertScales er = es;

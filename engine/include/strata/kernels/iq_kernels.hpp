@@ -205,11 +205,12 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
 /// STRATA_PF_I8MMA=0 turns it off).  gemm_iq_i8_quantize: row i of xq = row ids[i] of x (row i without ids), ld
 /// floats a row; xq holds rows * K * 5 / 4 bytes, 16-byte aligned.  gemm_iq_i8_grouped: matrix e (n_out rows,
 /// mat_bytes apart) times rows bounds[e]..bounds[e+1] of an xq of total_rows rows; row i's products go to row ids[i]
-/// of Y (row i without ids).  false: not launched.
+/// of Y (row i without ids).  With `from`, row i is row from[i] of xq.  false: not launched.
 bool gemm_iq_i8_takes(int ty, int K);
 void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream);
 bool gemm_iq_i8_grouped(int ty, const void* W, size_t mat_bytes, int n_out, int K, const void* xq, int64_t total_rows,
-                        const int32_t* bounds, int n_mats, int max_rows, const int32_t* ids, float* Y, int64_t ldy, void* stream);
+                        const int32_t* bounds, int n_mats, int max_rows, const int32_t* ids, float* Y, int64_t ldy, void* stream,
+                        const int32_t* from = nullptr);
 void iq_set_old_kernels(bool old);
 bool iq_old_kernels();
 

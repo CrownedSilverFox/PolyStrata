@@ -125,7 +125,8 @@ template <int T, int NJ, int WR>
 __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__ W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
                                                     const uint8_t* __restrict__ X, const float* __restrict__ XD,
                                                     const float* __restrict__ XS, const int32_t* __restrict__ bounds, int ch_per_e,
-                                                    const int32_t* __restrict__ ids, float* __restrict__ Y, long long ldy) {
+                                                    const int32_t* __restrict__ ids, const int32_t* __restrict__ from,
+                                                    float* __restrict__ Y, long long ldy) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800   // (a pass for an older card compiles this empty: the host asks i8m_arch_kernel first)
     using SM = I8mSmem<T, NJ, WR>;
     constexpr int MT = SM::MT, LDS = SM::LDS, LDB = SM::LDB;
@@ -202,6 +203,18 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
     uint32_t wraw[PER][I8M_RAW<T>];
     uint4 xr[NJ];
     float xdr[NSC], xsr[NSC];
+    // the rows of X this thread reads: the launch's row, or the one `from` gives for it
+    int xrow[NJ], srow[NSC];
+#pragma unroll
+    for (int n = 0; n < NJ; ++n) {
+        const int tok = 16 * n + (tid >> 4);
+        xrow[n] = tok < ntok ? (from ? from[c0 + tok] : c0 + tok) : 0;
+    }
+#pragma unroll
+    for (int c = 0; c < NSC; ++c) {
+        const int i = tid + c * I8M_NT, tok = i >> 3;
+        srow[c] = i < MT * 8 && tok < ntok ? (from ? from[c0 + tok] : c0 + tok) : 0;
+    }
     const auto fetch = [&](int S) {
         if (w_in) {
 #pragma unroll
@@ -215,12 +228,12 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         for (int n = 0; n < NJ; ++n) {   // 16 bytes of activation row 16 n + tid / 16
             const int tok = 16 * n + (tid >> 4);
             xr[n] = make_uint4(0, 0, 0, 0);
-            if (tok < ntok) xr[n] = *(const uint4*) (X + (size_t) (c0 + tok) * K + (size_t) S * 256 + (tid & 15) * 16);
+            if (tok < ntok) xr[n] = *(const uint4*) (X + (size_t) xrow[n] * K + (size_t) S * 256 + (tid & 15) * 16);
         }
 #pragma unroll
         for (int c = 0; c < NSC; ++c) {
             const int i = tid + c * I8M_NT, tok = i >> 3;
-            const size_t at = (size_t) (c0 + tok) * (K / 32) + (size_t) S * 8 + (i & 7);
+            const size_t at = (size_t) srow[c] * (K / 32) + (size_t) S * 8 + (i & 7);
             xdr[c] = xsr[c] = 0.0f;
             if (i < MT * 8 && tok < ntok) {
                 xdr[c] = XD[at];
@@ -422,15 +435,16 @@ I8mCard i8m_card() {
 
 template <int T, int NJ, int WR>
 bool i8m_launch(int dev, dim3 grid, cudaStream_t s, const uint8_t* W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
-                const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int ch, const int32_t* ids, float* Y,
-                long long ldy) {
+                const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int ch, const int32_t* ids,
+                const int32_t* from, float* Y, long long ldy) {
     constexpr size_t bytes = I8mSmem<T, NJ, WR>::bytes;
     static bool attr[64];   // the attribute belongs to a card (see gemm_iq_f16_grouped)
     if (!attr[dev]) {
         cudaFuncSetAttribute(i8m_kernel<T, NJ, WR>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) bytes);
         attr[dev] = true;
     }
-    i8m_kernel<T, NJ, WR><<<grid, I8M_NT, bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch, ids, Y, ldy);
+    i8m_kernel<T, NJ, WR><<<grid, I8M_NT, bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch, ids, from, Y,
+                                                     ldy);
     return cudaGetLastError() == cudaSuccess;
 }
 
@@ -450,7 +464,7 @@ size_t i8m_tile_bytes(int nj, int wr) {
 template <int T>
 bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t* W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
                      const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int n_mats, int max_rows,
-                     const int32_t* ids, float* Y, long long ldy) {
+                     const int32_t* ids, const int32_t* from, float* Y, long long ldy) {
     int nj = max_rows <= 16 ? 1 : max_rows <= 32 ? 2 : max_rows <= 64 ? 4 : 8;
     const int wr = 64;
     while (nj > 1 && i8m_tile_bytes<T>(nj, wr) > card.shared) nj /= 2;
@@ -460,7 +474,8 @@ bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t
     const dim3 grid((unsigned) ((n_out + wr - 1) / wr), (unsigned) gy);
 #define STRATA_I8M_GO(NJ_, WR_) \
     if (nj == NJ_ && wr == WR_) \
-        return i8m_launch<T, NJ_, WR_>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, (int) ch, ids, Y, ldy);
+        return i8m_launch<T, NJ_, WR_>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, (int) ch, ids, from, \
+                                       Y, ldy);
     STRATA_I8M_TILES(STRATA_I8M_GO)
 #undef STRATA_I8M_GO
     return false;

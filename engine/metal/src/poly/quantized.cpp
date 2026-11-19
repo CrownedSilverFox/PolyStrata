@@ -162,8 +162,11 @@ void Mmq::quantize(const float* x,const int32_t* ids,void* q,int,int64_t cols,in
     }
     qrun("poly_quantize",a,s,{uint32_t(cols/32),uint32_t(rows),1});
 }
+bool Mmq::reads_by_index(int,int64_t) { return false; }
 void Mmq::mul(const void* w,int type,int64_t nr,int64_t nc,size_t stride,int n,const void* x,
-              const int32_t* bounds,const int32_t* ids,int64_t total,int64_t max_rows,float* y,int64_t ld,void* s) {
+              const int32_t* bounds,const int32_t* ids,int64_t total,int64_t max_rows,float* y,int64_t ld,void* s,
+              const int32_t* from) {
+    if(from) throw std::logic_error("Metal MMQ reads no rows by index");
     if(n<=0 || total<=0 || max_rows<=0) return;
     if(!fits(type,nr,nc)) throw std::invalid_argument("Metal MMQ shape");
     const size_t half_bytes=size_t(nr)*size_t(nc)*2;
