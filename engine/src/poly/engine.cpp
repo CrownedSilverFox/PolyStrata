@@ -3613,7 +3613,13 @@ void Engine::router_scores(const Layer& L, int n) { lin(L.gate_inp, xn_, rl_, n,
 
 bool Engine::batched(const Layer& L, int n) const { return mmq_ && L.mmq && n >= kStageRows; }
 
-int Engine::card_rows() const { return block_guess_ ? std::max(kSumRows, opt_.window * n_used_) : kSumRows; }
+// The routed experts' rows a call routed on the card can have: window()'s with guesses, and step()'s, every
+// sequence's token and its guess.  Sized for kSumRows only, a step of more than four sequences was routed on the
+// host and waited for the card at every layer.
+int Engine::card_rows() const {
+    const int step_rows = (opt_.batch_mtp ? 2 : 1) * (opt_.batch + 1);
+    return std::max({kSumRows, (block_guess_ ? opt_.window : 1) * n_used_, step_rows * n_used_});
+}
 
 // The router's scores, and the copies of them and of the experts' input to the host.
 void Engine::moe_router(const Layer& L, int n) {
