@@ -269,7 +269,7 @@ void Qwen35::assign_scratch() {
 #ifdef STRATA_POLY_GDN_MMA
                                         : "unchanged (unsupported shape, architecture or shared memory)"
 #else
-                                        : "unchanged (requires a CUDA build)"
+                                        : "unchanged (needs a CUDA build)"
 #endif
         );
     }

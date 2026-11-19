@@ -57,15 +57,13 @@ if(STRATA_BUILD_TESTS)
   add_test(NAME poly_stream_stage_test COMMAND poly_stream_stage_test)
 endif()
 
-# Shared prepared-input GDN recurrence. Either engine may link this library;
-# only the Poly Qwen35 adapter is integrated initially. Keep FP32/BF16 hi+lo math
-# separate from the MMQ targets' -use_fast_math compilation options.
-if(STRATA_BUILD_POLY AND STRATA_POLY_MMQ AND STRATA_NATIVE_EXPERTS AND STRATA_ENABLE_CUDA)
-  set(_strata_gdn_ggml ${_strata_ggml_root}/ggml)
+# Shared prepared-input GDN recurrence on the tensor cores (gdn_mma_tiles.cuh has the tiles it takes from llama.cpp's
+# mma.cuh). Either engine may link this library; the Poly Qwen35 adapter is the one caller so far. Keep FP32/BF16
+# hi+lo math separate from the MMQ targets' -use_fast_math compilation options.
+if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND STRATA_ENABLE_CUDA)
   add_library(strata_gdn_mma STATIC src/kernels/cuda/gdn_mma.cu)
-  target_include_directories(strata_gdn_mma PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${_strata_gdn_ggml}/include ${_strata_gdn_ggml}/src ${_strata_gdn_ggml}/src/ggml-cuda)
-  target_link_libraries(strata_gdn_mma PRIVATE ggml-base ${_strata_gpu_runtime_target})
+  target_include_directories(strata_gdn_mma PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(strata_gdn_mma PRIVATE ${_strata_gpu_runtime_target})
   if(STRATA_BUILD_TESTS)
     add_executable(poly_gdn_mma_policy_test src/kernels/gdn_mma_policy_test.cpp)
     target_include_directories(poly_gdn_mma_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -167,7 +165,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
     endif()
   endif()
 
-  if(STRATA_ENABLE_CUDA AND STRATA_POLY_MMQ)
+  if(STRATA_ENABLE_CUDA AND TARGET strata_gdn_mma)
     target_compile_definitions(strata_poly_mmq PUBLIC STRATA_POLY_GDN_MMA=1)
     target_link_libraries(strata_poly_mmq PUBLIC strata_gdn_mma)
 
