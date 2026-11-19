@@ -920,6 +920,8 @@ protected:
     void** d_tab_ = nullptr;                      ///< a call's table: the layer's slots and its staged experts
     FarFetch* d_fetch_ = nullptr;
     int* d_nfetch_ = nullptr;
+    int32_t* d_use_ = nullptr;                    ///< per (layer, expert): picks of calls routed on the card
+    std::vector<int32_t> h_use_;
     bool card_routes() const { return all_cached() || card_far_; }
     uint8_t* stage_ = nullptr;                    ///< experts that are not cached, on their way through VRAM
     uint8_t* h_stage_[2] = {};                    ///< pinned; filled in turn

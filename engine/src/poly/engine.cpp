@@ -671,6 +671,8 @@ struct Engine::Swap {
     const uint8_t* mirror = nullptr;   // its slot in the mirror, uploaded from there; given back once it has arrived
     uint8_t* spare = nullptr;      // a spare mirror slot the expert it replaces is copied back into, or null
     int64_t out = -1;              // that expert (layer * n_expert + expert)
+    cudaEvent_t freed = nullptr;   // card_far_: the expert it replaces is in its spare already, copied on st_
+    bool wait_freed = false;
 };
 
 Engine::Engine() = default;
@@ -731,7 +733,8 @@ Engine::~Engine() {
         for (void* e : {g.up, g.read})
             if (e) cudaEventDestroy((cudaEvent_t) e);
     for (int j = 0; j < n_swap_; ++j)
-        if (swap_[(size_t) j].done) cudaEventDestroy(swap_[(size_t) j].done);
+        for (cudaEvent_t e : {swap_[(size_t) j].done, swap_[(size_t) j].freed})
+            if (e) cudaEventDestroy(e);
     for (void* g : graphs_) cudaGraphExecDestroy((cudaGraphExec_t) g);
     blas_destroy(blas_);
     if (swap_st_) cudaStreamDestroy(cs(swap_st_));
@@ -2148,8 +2151,10 @@ void Engine::start_swaps() {
     cudaStream_t up = nullptr;
     ck(cudaStreamCreateWithFlags(&up, cudaStreamNonBlocking), "cudaStreamCreate");
     swap_st_ = up;
-    for (; n_swap_ < opt_.expert_swaps; ++n_swap_)
+    for (; n_swap_ < opt_.expert_swaps; ++n_swap_) {
         ck(cudaEventCreateWithFlags(&swap_[(size_t) n_swap_].done, cudaEventDisableTiming), "cudaEventCreate");
+        ck(cudaEventCreateWithFlags(&swap_[(size_t) n_swap_].freed, cudaEventDisableTiming), "cudaEventCreate");
+    }
     for (int b = 0; b < kSwapPins; ++b) {
         swap_pin_[b] = (uint8_t*) hmalloc(slot_max_, "pinned memory");
         cudaEvent_t ev = nullptr;
@@ -2476,13 +2481,16 @@ void Engine::follow_loop() {
         const int64_t takes = s->takes;
         const uint8_t* const mirrored = s->mirror;
         uint8_t* const spare = s->spare;
+        const bool wait_freed = std::exchange(s->wait_freed, false);
         lk.unlock();
         const Layer& L = layers_[(size_t) s->il];
         const size_t e = (size_t) s->e, gu = L.gu_bytes, gu2 = L.gu2();
         uint8_t* const h = swap_pin_[b];
         cudaError_t err = cudaSuccess;
         // the expert whose slot this is, back into the mirror before the upload takes its place there
-        if (spare) err = cudaMemcpyAsync(spare, s->slot, L.slot_bytes, cudaMemcpyDeviceToHost, cs(swap_st_));
+        if (wait_freed) err = cudaStreamWaitEvent(cs(swap_st_), s->freed, 0);
+        if (err == cudaSuccess && spare)
+            err = cudaMemcpyAsync(spare, s->slot, L.slot_bytes, cudaMemcpyDeviceToHost, cs(swap_st_));
         if (err == cudaSuccess && mirrored) {
             err = cudaMemcpyAsync(s->slot, mirrored, gu2 + L.d_bytes, cudaMemcpyHostToDevice, cs(swap_st_));
         } else if (err == cudaSuccess && (err = cudaEventSynchronize((cudaEvent_t) swap_pin_ev_[b])) == cudaSuccess) {
@@ -2549,6 +2557,20 @@ void Engine::follow(int written) {
     // first token claim them.
     if (freeze_experts_) return;
     const size_t ne = (size_t) n_expert_;
+#if !defined(STRATA_GPU_METAL)
+    // card_far_: the calls routed on the card counted their picks on the card (moe_card())
+    if (card_far_ && d_use_) {
+        const size_t count = layers_.size() * ne;
+        h_use_.resize(count);
+        ck(cudaMemcpy(h_use_.data(), d_use_, count * sizeof(int32_t), cudaMemcpyDeviceToHost), "expert uses");
+        ck(cudaMemsetAsync(d_use_, 0, count * sizeof(int32_t), cs(st_)), "expert uses");
+        for (size_t i = 0; i < count; ++i) {
+            if (!h_use_[i]) continue;
+            use_[i] += h_use_[i];
+            if (n_swap_ > 0 && i < recent_.size()) recent_[i] += (float) h_use_[i];
+        }
+    }
+#endif
     int n_free = 0;
     for (int j = 0; j < n_swap_; ++j) {
         Swap& s = swap_[(size_t) j];
@@ -2621,6 +2643,10 @@ void Engine::follow(int written) {
         asked = true;
         --n_free;
     }
+    // card_far_: a trade's outgoing expert is copied on st_ (below), so a window asks kFarTrades at most.  At 12 GB,
+    // forced, 16 a window took the mirror's spares faster than arrivals gave them back, and calls fell back to the
+    // host; 1 a window kept the cache from following the answer.
+    if (card_far_) n_free = std::max(0, std::min(n_free, kFarTrades));
     if (n_free == 0) {
         if (asked) {
             { std::lock_guard<std::mutex> l(swap_m_); }
@@ -2696,6 +2722,17 @@ void Engine::follow(int written) {
         s->mirror = mirror(in.il, in.e);
         if (!mirror_of_.empty() && !mirror(out.il, out.e) && (s->spare = mirror_take(out.il)))
             s->out = (int64_t) out.il * (int64_t) ne + out.e;
+        // card_far_: the outgoing expert goes to its spare now, on st_, and is the mirror's at once, so that a call
+        // routed on the card while the swap is on its way finds it there; the upload waits for that copy
+        if (card_far_ && s->spare) {
+            ck(cudaMemcpyAsync(s->spare, s->slot, layers_[(size_t) out.il].slot_bytes, cudaMemcpyDeviceToHost, cs(st_)),
+               "expert upload");
+            ck(cudaEventRecord(s->freed, cs(st_)), "expert upload");
+            mirror_of_[(size_t) s->out] = s->spare;
+            s->spare = nullptr;
+            s->out = -1;
+            s->wait_freed = true;
+        }
         // Under the RAM budget the expert the cache gives up is the CPU's from now on.  The one that comes in leaves
         // kept_, and the one that goes out takes its place there, of the same size: the follower drops the first
         // one's pages once it has copied them and reads the other's in.  Left out of kept_ and the slots, an expert
@@ -3264,6 +3301,8 @@ void Engine::alloc() {
         d_tab_ = (void**) dmalloc((size_t) n_expert_ * sizeof(void*), "scratch");
         d_fetch_ = (FarFetch*) dmalloc((size_t) card_rows() * sizeof(FarFetch), "scratch");
         d_nfetch_ = (int*) dmalloc(sizeof(int), "scratch");
+        d_use_ = (int32_t*) dmalloc(layers_.size() * (size_t) n_expert_ * sizeof(int32_t), "scratch");
+        ck(cudaMemset(d_use_, 0, layers_.size() * (size_t) n_expert_ * sizeof(int32_t)), "expert uses");
 #endif
         tab_ = (int32_t*) dmalloc(tab, "scratch");
         h_tab_ = (int32_t*) hmalloc(tab, "pinned memory");
@@ -4618,6 +4657,7 @@ bool Engine::moe_card(Layer& L, int il, int n) {
         far_plan(table, d_far_ + (size_t) il * n_expert_, d_ids_, rr, n_expert_, stage_, ahead_stride_, d_tab_,
                  d_fetch_, d_nfetch_, st_);
         far_pull(d_fetch_, d_nfetch_, rr, (L.gu2() + L.d_bytes + 15) / 16 * 16, st_);
+        if (!block_pass_) count_picks(d_ids_, rr, n_expert_, d_use_ + (size_t) il * n_expert_, st_);   // follow()
         table = d_tab_;
     }
 #endif

@@ -230,6 +230,8 @@ struct FarFetch {
 /// many.  One block.  CUDA and HIP only.
 void far_plan(const void* const* slots, const void* const* far, const int32_t* ids, int rr, int n_expert,
               uint8_t* stage, size_t stride, void** tab, FarFetch* fetch, int* count, void* stream);
+/// uses[ids[k]] += 1 for k in [0, rr), ids below n_expert only.
+void count_picks(const int32_t* ids, int rr, int n_expert, int32_t* uses, void* stream);
 /// The first *count of fetch[0..most), `bytes` each (a multiple of 16), copied by the card's threads.
 void far_pull(const FarFetch* fetch, const int* count, int most, size_t bytes, void* stream);
 /// copy2() with a third run.  CUDA and HIP only.

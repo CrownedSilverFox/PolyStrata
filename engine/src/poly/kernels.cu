@@ -3222,6 +3222,15 @@ __global__ void far_pull_kernel(const FarFetch* __restrict__ fetch, const int* _
         dst[k] = src[k];
 }
 
+__global__ void count_picks_kernel(const int32_t* __restrict__ ids, int rr, int n_expert, int32_t* uses) {
+    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k < rr && ids[k] >= 0 && ids[k] < n_expert) atomicAdd(&uses[ids[k]], 1);
+}
+
+void count_picks(const int32_t* ids, int rr, int n_expert, int32_t* uses, void* stream) {
+    if (rr > 0) count_picks_kernel<<<(rr + 255) / 256, 256, 0, cs(stream)>>>(ids, rr, n_expert, uses);
+}
+
 void far_plan(const void* const* slots, const void* const* far, const int32_t* ids, int rr, int n_expert,
               uint8_t* stage, size_t stride, void** tab, FarFetch* fetch, int* count, void* stream) {
     far_plan_kernel<<<1, 256, 0, cs(stream)>>>(slots, far, ids, rr, n_expert, stage, stride, tab, fetch, count);

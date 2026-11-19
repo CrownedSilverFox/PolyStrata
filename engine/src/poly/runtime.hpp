@@ -51,6 +51,7 @@ constexpr int kSwapHalf = 128;
 // kWayBehind, since it has fewer and older ones.
 // card_far_ (Engine::build_mirror()): the share of the profile's picks the cached experts must have
 constexpr double kCardFarShare = 0.9;
+constexpr int kFarTrades = 4;   // card_far_: trades a window asks (Engine::follow())
 constexpr int kWayFirst = 3;
 constexpr int kWayAgain = 4, kWayAgainMost = 64;
 constexpr double kWayWeight = 0.125, kWayBehind = 0.5;
