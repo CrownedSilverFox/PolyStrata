@@ -1282,12 +1282,12 @@ __device__ __forceinline__ float scores_sum(float* v, int lane, int* which) {
 // order and the same sums, but a warp has SCORE_KEYS rows of a group, and a token's queries stay in its registers
 // while it goes through them.  The other kernel read them again for every row, and passed every score's parts from lane to
 // lane on its own: those reads and moves were what it waited for.
-template <int N, int STEPS, bool Q8 = false>
-__global__ void __launch_bounds__(SCORE_WARPS * WARP)
-attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcache, float* __restrict__ score,
-                      int n_keys, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
-                      int window, int ring, long long last, const long long* __restrict__ at,
-                      const int8_t* __restrict__ kcodes = nullptr, const uint16_t* __restrict__ kscales = nullptr) {
+template <int N, int STEPS, bool Q8>
+__device__ __forceinline__ void
+attn_score_reg_body(const float* __restrict__ q, const half* __restrict__ kcache, float* __restrict__ score,
+                    int n_keys, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
+                    int window, int ring, long long last, const long long* __restrict__ at,
+                    const int8_t* __restrict__ kcodes, const uint16_t* __restrict__ kscales) {
     static_assert(SCORE_VALUES == 4, "a step is four halves of the key in one read and a float4 of a query");
     constexpr int dim = SCORE_VALUES * WARP * STEPS;
     const int unit = blockIdx.x * SCORE_WARPS + threadIdx.x / WARP;   // a group's block of rows
@@ -1344,13 +1344,23 @@ attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcac
     }
 }
 
+template <int N, int STEPS, bool Q8 = false>
+__global__ void __launch_bounds__(SCORE_WARPS * WARP)
+attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcache, float* __restrict__ score,
+                      int n_keys, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
+                      int window, int ring, long long last, const long long* __restrict__ at,
+                      const int8_t* __restrict__ kcodes = nullptr, const uint16_t* __restrict__ kscales = nullptr) {
+    attn_score_reg_body<N, STEPS, Q8>(q, kcache, score, n_keys, n_head, kv_heads, pos, first, tokens, scale, window,
+                                      ring, last, at, kcodes, kscales);
+}
+
 // Softmax in place over a head's scores of the rows its token attends; the other rows of the launch's span get
 // zero, which adds nothing to the token's values.  One block per head and token.  With `wt` the weights go there
 // instead, in the order attn_value_t_kernel reads them: for each of the span's rows, the VALUE_QUERIES queries of
 // a block of the group's queries side by side (per: the group's heads).
-__global__ void attn_softmax_kernel(float* score, int n_keys, long long pos, int first, int tokens, int window,
-                                    long long last, const long long* __restrict__ at, float* __restrict__ wt,
-                                    int per, const float* __restrict__ sinks) {
+__device__ __forceinline__ void attn_softmax_body(float* score, int n_keys, long long pos, int first, int tokens,
+                                                  int window, long long last, const long long* __restrict__ at,
+                                                  float* __restrict__ wt, int per, const float* __restrict__ sinks) {
     __shared__ float part[8];
     const long long p = (at ? *at : pos) + first;
     last = attn_last(p, tokens, last);
@@ -1383,6 +1393,12 @@ __global__ void attn_softmax_kernel(float* score, int n_keys, long long pos, int
     for (int j = threadIdx.x; j < own; j += blockDim.x) o[size_t(j) * VALUE_QUERIES] = 0.0f;
     for (int j = threadIdx.x; j < n; j += blockDim.x) o[size_t(own + j) * VALUE_QUERIES] = row[j] * inv;
     for (int j = own + n + threadIdx.x; j < span; j += blockDim.x) o[size_t(j) * VALUE_QUERIES] = 0.0f;
+}
+
+__global__ void attn_softmax_kernel(float* score, int n_keys, long long pos, int first, int tokens, int window,
+                                    long long last, const long long* __restrict__ at, float* __restrict__ wt,
+                                    int per, const float* __restrict__ sinks) {
+    attn_softmax_body(score, n_keys, pos, first, tokens, window, last, at, wt, per, sinks);
 }
 
 // A thread's sums of attn_value_kernel for N queries: over its share of the span's rows from `row` of the cache
@@ -1649,12 +1665,12 @@ attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_
 // to lane, and so waited on the passing (Nsight Compute).  A block has TILES of the blocks of VALUE_QUERIES
 // queries, which read the cache's values once between them.  The products go in the rows' order: the sums are
 // the other kernel's to the bit.
-template <int TILES, bool Q8 = false>
-__global__ void __launch_bounds__(VALUE_DIMS * VALUE_SHARES)
-attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcache, float* __restrict__ out, int n_keys,
-                    int dim, int n_head, int kv_heads, long long pos, int first, int tokens, int window, int ring,
-                    long long last, const long long* __restrict__ at,
-                    const int8_t* __restrict__ vcodes = nullptr, const uint16_t* __restrict__ vscales = nullptr) {
+template <int TILES, bool Q8>
+__device__ __forceinline__ void
+attn_value_t_body(const float* __restrict__ wt, const half* __restrict__ vcache, float* __restrict__ out, int n_keys,
+                  int dim, int n_head, int kv_heads, long long pos, int first, int tokens, int window, int ring,
+                  long long last, const long long* __restrict__ at, const int8_t* __restrict__ vcodes,
+                  const uint16_t* __restrict__ vscales) {
     static_assert(VALUE_DIMS == WARP && VALUE_QUERIES == 8, "a warp is a share, and a row's weights are two float4");
     __shared__ float share[VALUE_QUERIES][VALUE_SHARES][VALUE_DIMS];
     const int per = n_head / kv_heads, dims = (dim + VALUE_DIMS - 1) / VALUE_DIMS;
@@ -1722,6 +1738,43 @@ attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcach
                 out[((size_t(first) + query / per) * n_head + g * per + query % per) * dim + d] = sum;
             }
     }
+}
+
+template <int TILES, bool Q8 = false>
+__global__ void __launch_bounds__(VALUE_DIMS * VALUE_SHARES)
+attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcache, float* __restrict__ out, int n_keys,
+                    int dim, int n_head, int kv_heads, long long pos, int first, int tokens, int window, int ring,
+                    long long last, const long long* __restrict__ at,
+                    const int8_t* __restrict__ vcodes = nullptr, const uint16_t* __restrict__ vscales = nullptr) {
+    attn_value_t_body<TILES, Q8>(wt, vcache, out, n_keys, dim, n_head, kv_heads, pos, first, tokens, window, ring,
+                                 last, at, vcodes, vscales);
+}
+
+// attend()'s three launches for a step's sequences, blockIdx.z the sequence: each runs the one-sequence code on
+// its own queries, cache, position, room and scores.  A block past what the sequence's own launch had returns: the
+// score kernel's own test sends it back (its rows lie past the span), the others' below.
+template <int N, int STEPS>
+__global__ void __launch_bounds__(SCORE_WARPS * WARP)
+attn_score_seqs_kernel(const AttnSeqs a, int n_head, int kv_heads, float scale) {
+    const int k = blockIdx.z;
+    attn_score_reg_body<N, STEPS, true>(a.q[k], nullptr, a.score[k], a.keys[k], n_head, kv_heads, 0, 0, a.tokens[k],
+                                        scale, 0, 0, -1, a.at[k], a.kc[k], a.ks[k]);
+}
+
+__global__ void attn_softmax_seqs_kernel(const AttnSeqs a, int per) {
+    const int k = blockIdx.z;
+    if (int(blockIdx.y) >= a.tokens[k]) return;
+    attn_softmax_body(a.score[k], a.keys[k], 0, 0, a.tokens[k], 0, -1, a.at[k], a.wt[k], per, nullptr);
+}
+
+template <int TILES>
+__global__ void __launch_bounds__(VALUE_DIMS * VALUE_SHARES)
+attn_value_seqs_kernel(const AttnSeqs a, int dim, int n_head, int kv_heads) {
+    const int k = blockIdx.z, per = n_head / kv_heads;
+    const int blocks = (a.tokens[k] * per + VALUE_QUERIES - 1) / VALUE_QUERIES;
+    if (int(blockIdx.y) * TILES >= blocks) return;
+    attn_value_t_body<TILES, true>(a.wt[k], nullptr, a.out[k], a.keys[k], dim, n_head, kv_heads, 0, 0, a.tokens[k],
+                                   0, 0, -1, a.at[k], a.vc[k], a.vs[k]);
 }
 
 // A chunk's queries and its results lie in two orders: the engine's (token, head) and the one a product per
@@ -3286,6 +3339,75 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
                                       cs(stream)>>>(score, (const half*) vcache, out, keys, dim, n_head, kv_heads,
                                                     (long long) pos, first, c, window, ring, last, at);
     }
+}
+
+// attend()'s choices for a sequence of `c` rows (q8_0, no window, ring or sinks): its score kernel by the heads'
+// shape (0: one without a kernel here), its weights behind its scores when the buffer has room, and its value
+// kernel's tiles (0: the one that reads the scores).
+namespace {
+int attend_score_kind(int dim, int per) {
+    if (per % 4 == 0 && dim == 128) return 1;
+    if (per % 8 == 0 && dim == 256) return 2;
+    if (per % 4 == 0 && dim == 256) return 3;
+    if (per % 4 == 0 && dim == 512) return 4;
+    return 0;
+}
+int attend_value_tiles(int c, int chunk, int dim, int n_head, int kv_heads) {
+    const int per = n_head / kv_heads, blocks = grid(c * per, VALUE_QUERIES), dims = grid(dim, VALUE_DIMS);
+    const bool wt = per >= 4 && size_t(kv_heads) * blocks * VALUE_QUERIES <= size_t(chunk - c) * n_head;
+    if (!wt) return 0;
+    return blocks > 1 && kv_heads * dims * grid(blocks, 2) >= 32 ? 2 : 1;
+}
+}  // namespace
+
+bool attend_seqs_plan(AttnSeqs& a, float* score, size_t score_floats, int chunk, int dim, int n_head, int kv_heads) {
+    const int per = n_head / kv_heads;
+    if (a.n < 1 || a.n > AttnSeqs::kMax || attend_score_kind(dim, per) == 0) return false;
+    if (dim % SCORE_VALUES || uintptr_t(score) % 16) return false;
+    int tiles = -1;
+    size_t at = 0;
+    for (int k = 0; k < a.n; ++k) {
+        const int c = a.tokens[k], keys = a.keys[k];
+        if (c < 1 || c > chunk || keys < 1 || !a.kc[k] || !a.vc[k] || !a.at[k]) return false;
+        const int t = attend_value_tiles(c, chunk, dim, n_head, kv_heads);
+        if (t == 0 || (tiles >= 0 && t != tiles)) return false;   // one value kernel for all of them
+        tiles = t;
+        const int blocks = grid(c * per, VALUE_QUERIES);
+        // its scores, then its weights where attend() puts them, a sequence after the other (16-byte aligned)
+        const size_t mine = (size_t(c) * n_head + size_t(kv_heads) * blocks * VALUE_QUERIES) * keys;
+        if (at + mine > score_floats) return false;
+        a.score[k] = score + at;
+        a.wt[k] = score + at + size_t(c) * n_head * keys;
+        at += (mine + 3) / 4 * 4;
+    }
+    return true;
+}
+
+void attend_seqs(const AttnSeqs& a, int dim, int n_head, int kv_heads, float scale, void* stream) {
+    const int per = n_head / kv_heads, dims = grid(dim, VALUE_DIMS);
+    int most_units = 0, most_rows = 0, most_blocks = 0;
+    for (int k = 0; k < a.n; ++k) {
+        most_units = std::max(most_units, (int) grid(size_t(a.keys[k]), SCORE_KEYS) * kv_heads);
+        most_rows = std::max(most_rows, a.tokens[k]);
+        most_blocks = std::max(most_blocks, (int) grid(a.tokens[k] * per, VALUE_QUERIES));
+    }
+    const dim3 sg(grid(most_units, SCORE_WARPS), 1, a.n);
+    switch (attend_score_kind(dim, per)) {
+    case 1: attn_score_seqs_kernel<4, 1><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale); break;
+    case 2: attn_score_seqs_kernel<8, 2><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale); break;
+    case 3: attn_score_seqs_kernel<4, 2><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale); break;
+    default: attn_score_seqs_kernel<4, 4><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+    }
+    attn_softmax_seqs_kernel<<<dim3(n_head, most_rows, a.n), 256, 0, cs(stream)>>>(a, per);
+    // the tiles every sequence's attend() would take (attend_seqs_plan() made sure they are one)
+    const int c0 = a.tokens[0], blocks0 = grid(c0 * per, VALUE_QUERIES);
+    const bool two = blocks0 > 1 && kv_heads * dims * grid(blocks0, 2) >= 32;
+    if (two)
+        attn_value_seqs_kernel<2><<<dim3(kv_heads * dims, grid(most_blocks, 2), a.n), VALUE_DIMS * VALUE_SHARES, 0,
+                                    cs(stream)>>>(a, dim, n_head, kv_heads);
+    else
+        attn_value_seqs_kernel<1><<<dim3(kv_heads * dims, most_blocks, a.n), VALUE_DIMS * VALUE_SHARES, 0,
+                                    cs(stream)>>>(a, dim, n_head, kv_heads);
 }
 
 // The rows of a q8_0 cache a batch product is about to read, dequantized into the fp16 workspace it reads

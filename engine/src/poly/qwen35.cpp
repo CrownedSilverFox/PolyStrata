@@ -641,6 +641,36 @@ void Qwen35::attn_rows(Block& B, int n) {
         }
         store_q8_rows(k_, keys, (int) kv, at, n, st_);
         store_q8_rows(v_, vals, (int) kv, at, n, st_);
+        // the attention for every sequence in one launch a kernel, where attend() would run it for each of them
+        AttnSeqs seqs;
+        bool all = true;
+        for (int i = 0, m; i < n && all; i += m) {
+            const Row& r = rows_of_[i];
+            m = i + 1 < n && rows_of_[i + 1].seq == r.seq ? 2 : 1;
+            if (fdec_ && r.pos >= fdec_from_) all = false;   // the decode kernels of fattn.cu: a sequence at a time
+            const int64_t keep = pos_;
+            pos_ = r.pos;
+            const int sized = room(m);
+            pos_ = keep;
+            const int k = seqs.n++;
+            seqs.q[k] = q_ + i * hq;
+            seqs.out[k] = att_ + i * hq;
+            seqs.kc[k] = keys.codes[i];
+            seqs.ks[k] = keys.scales[i];
+            seqs.vc[k] = vals.codes[i];
+            seqs.vs[k] = vals.scales[i];
+            seqs.at[k] = at + 2 * i;
+            seqs.keys[k] = sized;
+            seqs.tokens[k] = m;
+            all = seqs.n < AttnSeqs::kMax || i + m >= n;
+        }
+        if (all && attend_seqs_plan(seqs, score_, (size_t) chunk_ * n_head_ * opt_.max_context, chunk_, head_dim_,
+                                    n_head_, n_kv_)) {
+            attend_seqs(seqs, head_dim_, n_head_, n_kv_, scale, st_);
+            mul_sigmoid(att_, qg_ + head_dim_, head_dim_, n * n_head_, 2 * head_dim_, false, st_);
+            lin(B.wo, att_, ao_, n);
+            return;
+        }
         for (int i = 0, m; i < n; i += m) {
             const Row& r = rows_of_[i];
             const long long* ai = at + 2 * i;

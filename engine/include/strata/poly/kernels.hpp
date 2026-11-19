@@ -252,6 +252,28 @@ void add_bias(const float* b, float* acc, int n, int rows, void* stream);
 void head_norm_rope(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
                     float theta_scale, int64_t pos, int rows, float eps, void* stream, const float* freq = nullptr,
                     const int32_t* axes = nullptr, int sections = 1, const long long* at = nullptr);
+/// attend() for a step's sequences, each its own rows, cache and position: sequence k's queries q[k] (tokens[k]
+/// rows), its q8_0 caches, its position at[k] on the card and the room keys[k] its call is sized for, its output
+/// out[k].  score[k] holds its scores and wt[k] its weights, apart from every other sequence's.  Each sequence gets
+/// the bits attend() gives it alone.  CUDA only.
+struct AttnSeqs {
+    static constexpr int kMax = 32;
+    int n = 0;
+    const float* q[kMax] = {};
+    float* out[kMax] = {};
+    float* score[kMax] = {};
+    float* wt[kMax] = {};
+    const int8_t* kc[kMax] = {};
+    const uint16_t* ks[kMax] = {};
+    const int8_t* vc[kMax] = {};
+    const uint16_t* vs[kMax] = {};
+    const long long* at[kMax] = {};
+    int keys[kMax] = {}, tokens[kMax] = {};
+};
+/// Whether attend_seqs() takes these sequences: what attend() would run for each of them, a q8_0 cache with no
+/// window, no ring and no sinks, has a kernel here.  It fills in score[k] and wt[k] from `score` (score_floats).
+bool attend_seqs_plan(AttnSeqs& seqs, float* score, size_t score_floats, int chunk, int dim, int n_head, int kv_heads);
+void attend_seqs(const AttnSeqs& seqs, int dim, int n_head, int kv_heads, float scale, void* stream);
 /// head_norm_rope() for rows of different sequences: row r turns by turns[2 * r] (step()'s pairs of position and
 /// turn, from the turn of the first), the bits a call of its own gives the row.  CUDA only.
 void head_norm_rope_rows(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
