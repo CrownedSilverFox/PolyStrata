@@ -943,8 +943,6 @@ protected:
         uint8_t* slot;
     };
     std::vector<Refill> refill_;   ///< empty slots of the cache the follower is to fill (grow_cache(later))
-    /// the dense tensors' bytes in the mapped files, which leave the working set once they are on the card (load())
-    std::vector<std::pair<const uint8_t*, size_t>> uploaded_;
     /// with Options::ram_experts_mib: the CPU's experts read through the mapping, whose pages stay in the working set
     /// (ram_keep(), at the load and after a long prompt); the others come from pool_
     std::vector<uint8_t> kept_;

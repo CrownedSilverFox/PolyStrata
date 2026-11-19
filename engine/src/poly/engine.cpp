@@ -1814,7 +1814,16 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
         throw std::runtime_error(t->name + " is " + shape_of(*t) + ", expected [" + std::to_string(n_in) + ", " +
                                  std::to_string(n_out) + "]");
     const size_t bytes = home(*t).payload(*t), count = (size_t) t->elements();
-    if (dense_) uploaded_.emplace_back(home(*t).data(*t), bytes);
+    // Once the matrix is on the card the CPU does not read it again: its pages leave the working set when this
+    // returns.  Left until the end of the load, they and the experts the card took were the process's peak, 15 GB
+    // of Qwen3.6 UD-Q3_K_M's 15.9 at any VRAM.
+    struct Drop {
+        const uint8_t* p;
+        size_t n;
+        ~Drop() {
+            if (p) drop_pages(p, n);
+        }
+    } drop{dense_ ? (const uint8_t*) home(*t).data(*t) : nullptr, bytes};
     if (want == kGuessMat && !fix && n_in % type_block_values(kTypeQ4_0) == 0 && type_converts(t->type)) {
         const size_t row = strata::quant::row_bytes((int) kTypeQ4_0, n_in), out = row * (size_t) n_out;
         const Dev d{dense_ ? dense_ + dense_at_ : nullptr, kTypeQ4_0, (int) n_in, (int) n_out};
@@ -2039,8 +2048,24 @@ void Engine::fill_expert_cache() {
     }
     std::sort(taken.begin(), taken.end(),
               [](const Cand& a, const Cand& b) { return a.il != b.il ? a.il < b.il : a.e < b.e; });
+#if !defined(STRATA_GPU_METAL)
+    // A layer's experts on the card leave the working set once they are uploaded, as the dense weights do
+    // (upload_as()): the CPU does not read them, and all of them held were most of the load's peak.
+    int at_il = -1;
+    const auto uploaded = [&](int il) {
+        if (il < 0) return;
+        const Layer& L = layers_[(size_t) il];
+        expert_runs(L, n_expert_, [&](int e) { return L.slot[(size_t) e] != nullptr; }, drop_pages);
+    };
+#endif
     for (const Cand& c : taken) {
         Layer& L = layers_[(size_t) c.il];
+#if !defined(STRATA_GPU_METAL)
+        if (c.il != at_il) {
+            uploaded(at_il);
+            at_il = c.il;
+        }
+#endif
         uint8_t* s = exp_ + exp_at_;
         exp_at_ += c.bytes;
         const size_t e = (size_t) c.e;
@@ -2065,6 +2090,9 @@ void Engine::fill_expert_cache() {
         L.slot[e] = s;
         ++cached_;
     }
+#if !defined(STRATA_GPU_METAL)
+    uploaded(at_il);
+#endif
 #if defined(STRATA_GPU_METAL)
     if (opt_.metal_balanced) {
         if (arena + 256 > exp_at_) {
@@ -2877,9 +2905,6 @@ void Engine::load(const Options& o) {
     // those are done, so that everything after it - a read of what the cache holds, the first request's cover()
     // mapping the attention caches - finds what it expects.
     ck(cudaStreamSynchronize(cs(st_)), "the load");
-    // The card has the dense weights now, and the CPU does not read them again.
-    for (const auto& [p, n] : uploaded_) drop_pages(p, n);
-    uploaded_ = {};
     // A card of a split that has less free beside its layers than the reserve it keeps by default runs out of VRAM
     // in a later request, where one card alone can do nothing else.  It may be that another program held VRAM when
     // the split was made.  A larger reserve asked for (--vram-reserve-mib) only leaves the card without experts.
