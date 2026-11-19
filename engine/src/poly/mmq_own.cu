@@ -4,8 +4,10 @@
 // tensor cores.  mmq.cu is the llama.cpp form of the same class (-DSTRATA_POLY_MMQ=ON); one of the two is built.
 //
 // What differs from MMQ for the callers:
-//   - the activations are halves, not Q8_1 blocks, so every type "keeps its sums in halves" (half_sums()): a row
-//     with a value beyond a half's range goes through the engine's guard, and what is left is saturated here;
+//   - the activations are halves, not Q8_1 blocks.  A half holds 11 bits from 6e-5 to 65504, and a model's rows are
+//     not all in that range (Flint's are far above it, a hidden row behind NVFP4's scales far below), so quantize()
+//     multiplies each row by the power of two that puts its largest value near 1024, which is exact, and mul()
+//     divides the row's products by it again.  The engine's guard for MMQ's half sums has nothing to do here;
 //   - a row's product does not depend on the launch it is in (split_exact()): each output value is its own sum
 //     over the row's tiles in their order;
 //   - no kernel for the cards before Volta, for a matrix whose rows are not whole tiles of 128, for a type the
@@ -104,26 +106,52 @@ void ck(cudaError_t e, const char* what) {
     if (e != cudaSuccess) throw std::runtime_error(std::string("strata-poly prompt product: ") + what + ": " + cudaGetErrorString(e));
 }
 
-// row i of xq = row ids[i] of x (row i without ids), as halves
+// Row i of xq = row ids[i] of x (row i without ids) as halves, times a power of two f that puts the row's largest
+// value in [1024, 2048): the multiplication is exact, so what is lost is a half's own rounding and nothing to the
+// row's size.  back[i] = 1 / f, which mul() multiplies the row's products by.  A row of zeros, or one with a value
+// that is not finite, is left as it is (and a value beyond a half's range saturated).
 __global__ void to_halves(const float* __restrict__ x, const int32_t* __restrict__ ids, __half* __restrict__ xq, int cols,
-                          int64_t ld, int64_t rows) {
+                          int64_t ld, int64_t rows, float* __restrict__ back) {
     const int64_t row = (int64_t) blockIdx.y * gridDim.x + blockIdx.x;
     if (row >= rows) return;
     const float* src = x + (ids ? (int64_t) ids[row] : row) * ld;
+    __shared__ float most[256];
+    float m = 0.f;
+    for (int c = threadIdx.x; c < cols; c += blockDim.x) m = fmaxf(m, fabsf(src[c]));   // (a NaN is passed over by fmaxf)
+    most[threadIdx.x] = m;
+    __syncthreads();
+    for (int step = blockDim.x / 2; step > 0; step >>= 1) {
+        if (threadIdx.x < step) most[threadIdx.x] = fmaxf(most[threadIdx.x], most[threadIdx.x + step]);
+        __syncthreads();
+    }
+    int e = 11;
+    if (most[0] > 0.f && most[0] <= 3.0e38f) {
+        frexpf(most[0], &e);                      // most = m * 2^e, m in [0.5, 1)
+        e = max(-100, min(127, e));
+    }
+    const float f = ldexpf(1.f, 11 - e);
     __half* dst = xq + row * cols;
     for (int c = threadIdx.x; c < cols; c += blockDim.x)
-        dst[c] = __float2half(fminf(fmaxf(src[c], -kHalfMax), kHalfMax));
+        dst[c] = __float2half(fminf(fmaxf(src[c] * f, -kHalfMax), kHalfMax));
+    if (threadIdx.x == 0) back[row] = ldexpf(1.f, e - 11);
 }
 
-// row ids[i] of dst = row i of y
-__global__ void place_rows(const float* __restrict__ y, int64_t ldy, const int32_t* __restrict__ ids,
-                           float* __restrict__ dst, int64_t ld_dst, int cols, int64_t rows) {
+// Row ids[i] of dst (row i without ids) = row i of y times back[i], for the rows of this launch's matrices only:
+// [bounds[0], bounds[n]).  The other rows of y are an earlier launch's (another run of experts, or a mixed layer's
+// other half), and dst's are not this launch's to write.  y may be dst itself where no row moves.
+__global__ void finish_rows(const float* __restrict__ y, int64_t ldy, const int32_t* __restrict__ ids,
+                            const float* __restrict__ back, float* dst, int64_t ld_dst, int cols, int64_t rows,
+                            const int32_t* __restrict__ bounds, int n) {
     const int64_t row = (int64_t) blockIdx.y * gridDim.x + blockIdx.x;
-    if (row >= rows) return;
+    if (row >= rows || row < bounds[0] || row >= bounds[n]) return;
     const float* src = y + row * ldy;
-    float* out = dst + (int64_t) ids[row] * ld_dst;
-    for (int c = threadIdx.x; c < cols; c += blockDim.x) out[c] = src[c];
+    float* out = dst + (ids ? (int64_t) ids[row] : row) * ld_dst;
+    const float b = back[row];
+    for (int c = threadIdx.x; c < cols; c += blockDim.x) out[c] = src[c] * b;
 }
+
+// the rows' halves, then a float a row (back)
+size_t halves_bytes(int64_t rows, int64_t cols) { return ((size_t) rows * (size_t) cols * 2 + 3) / 4 * 4; }
 
 // One prompt path's buffers on the card: where a single matrix's two bounds lie, and the products of a launch
 // whose rows go elsewhere.
@@ -158,16 +186,19 @@ bool Mmq::fits(int ggml_type, int64_t w_rows, int64_t w_cols) {
            tile_bytes(ggml_type, w_cols) <= c.shared;
 }
 
-size_t Mmq::q8_bytes(int64_t rows, int64_t cols) { return ((size_t) rows * (size_t) cols * 2 + 255) / 256 * 256; }
+size_t Mmq::q8_bytes(int64_t rows, int64_t cols) {
+    return (halves_bytes(rows, cols) + (size_t) rows * sizeof(float) + 255) / 256 * 256;
+}
 
-bool Mmq::half_sums(int) { return true; }
+bool Mmq::half_sums(int) { return false; }
 
 bool Mmq::split_exact(int, int64_t) { return true; }
 
 void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int, int64_t cols, int64_t ld, int64_t rows,
                    void* stream) {
     if (rows <= 0) return;
-    to_halves<<<rows_grid(rows), 256, 0, (cudaStream_t) stream>>>(x, ids, (__half*) xq, (int) cols, ld, rows);
+    float* back = (float*) ((char*) xq + halves_bytes(rows, cols));
+    to_halves<<<rows_grid(rows), 256, 0, (cudaStream_t) stream>>>(x, ids, (__half*) xq, (int) cols, ld, rows, back);
     ck(cudaGetLastError(), "the rows as halves");
 }
 
@@ -184,7 +215,7 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
         ck(cudaMemcpyAsync(c.bounds, c.bounds_host, sizeof c.bounds_host, cudaMemcpyHostToDevice, s), "a matrix's bounds");
         bounds = c.bounds;
     }
-    // straight into dst where row i is row i; else by way of a buffer of this path's own
+    // straight into dst where row i is row i (finish_rows then works in place); else by way of a buffer of this path's own
     float* y = dst;
     int64_t ldy = ld_dst;
     if (ids || ld_dst % 4 != 0) {
@@ -204,15 +235,9 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
                                       (int) max_rows, y, (int) ldy, stream))
         throw std::runtime_error("strata-poly prompt product: no kernel for tensor type " + std::to_string(ggml_type) +
                                  " with [" + std::to_string(w_rows) + ", " + std::to_string(w_cols) + "]");
-    if (y == dst) return;
-    if (ids) {
-        place_rows<<<rows_grid(total_rows), 256, 0, s>>>(y, ldy, ids, dst, ld_dst, (int) w_rows, total_rows);
-        ck(cudaGetLastError(), "the products to their rows");
-    } else {
-        ck(cudaMemcpy2DAsync(dst, (size_t) ld_dst * sizeof(float), y, (size_t) ldy * sizeof(float),
-                             (size_t) w_rows * sizeof(float), (size_t) total_rows, cudaMemcpyDeviceToDevice, s),
-           "the products to their rows");
-    }
+    const float* back = (const float*) ((const char*) xq + halves_bytes(total_rows, w_cols));
+    finish_rows<<<rows_grid(total_rows), 256, 0, s>>>(y, ldy, ids, back, dst, ld_dst, (int) w_rows, total_rows, bounds, n);
+    ck(cudaGetLastError(), "the products to their rows");
 }
 
 }  // namespace strata::poly
