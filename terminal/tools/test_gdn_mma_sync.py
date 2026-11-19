@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-KERNEL = ROOT / 'src/kernels/cuda'
+KERNEL = ROOT.parent / 'engine/src/kernels/cuda'
 META = json.loads((KERNEL / 'gdn_mma_provenance.json').read_text())
 
 def sha(data):

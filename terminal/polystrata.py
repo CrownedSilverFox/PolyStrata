@@ -21,8 +21,9 @@ import time
 import urllib.error
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent               # terminal/: the run configs, serve/ and tools/
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))            # chat.py
 import chat as terminal  # noqa: E402
 from serve import models as registry  # noqa: E402
 
@@ -125,7 +126,7 @@ class Watch(threading.Thread):
 
 
 def long_prompt(tokens: int, part: float = 1.0) -> str:
-    text = "\n\n".join((ROOT / p).read_text(encoding="utf-8") for p in DOC if (ROOT / p).exists())
+    text = "\n\n".join((ROOT.parent / p).read_text(encoding="utf-8") for p in DOC if (ROOT.parent / p).exists())
     text = (text * (1 + tokens * 4 // max(len(text), 1)))[:int(tokens * 4 * part)]   # about four characters a token
     return "Here is part of a manual:\n\n" + text + "\n\nIn three sentences, what does this software do?"
 
