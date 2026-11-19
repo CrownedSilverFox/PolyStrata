@@ -138,7 +138,7 @@ FALLBACK_FAMILIES = {
     "gyro": {"title": "Qwen3.8-Flash-Next (Gyro)", "about": "Gyro-S (27.6 GB of memory) and Gyro-M (35 GB): the smallest "
                                                               "sizes, for PCs with little memory; 58 and 92 GB "
                                                               "downloads (the files include the n-gram table)",
-             "tag": "gyro-"},
+             "tag": "gyro-", "vision": True},
     "nvfp4": {"title": "Qwen3.8-Flash-Next (NVFP4)", "about": "4-bit NVFP4 experts, NVIDIA cards; a 128 GB download, "
                                                               "~80 GB of RAM to keep every expert in RAM",
               "tag": "nvfp4-"},
@@ -2509,6 +2509,8 @@ class Tools:
             # owner rule (2026-10-18): pictures are on by default wherever the model can read them and the engine has a reader; setup picks
             # the reader (strata_control/vision_reader.py: the CPU under 24 GB, the GPU from 24 GB, every make of card; a Mac reads on its GPU).
             can_read = md.get("vision", families[family].get("vision")) is not False
+            if families[family].get("engine") == "poly":
+                can_read = False                      # strata-poly's families read pictures when asked to (a download of their own)
             vision = "yes" if can_read else "no"
         target = self.check_data_dir(data_dir) if data_dir else s.data_dir()
         tag = (families[family].get("tag", "") + model)

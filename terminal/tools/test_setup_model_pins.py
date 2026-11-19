@@ -64,9 +64,22 @@ class EveryFileIsPinned(unittest.TestCase):
         self.assertGreater(pin[0], 0)
         self.assertRegex(pin[1], HEX)
 
+    def pinned_in_family(self, fam, name):
+        """A strata-poly family keeps its files' sizes and SHA-256 in its own table, by file name."""
+        pin = fam["sha256"].get(name.rsplit("/", 1)[-1])   # (a size in a folder of its own is keyed by the file's name)
+        self.assertIsNotNone(pin, name)
+        self.assertGreater(pin[0], 0)
+        self.assertRegex(pin[1], HEX)
+
     def test_every_shard_of_every_choice(self):
         for fam_name, fam in {**setup.FAMILIES, **setup.OWN_PATH_FAMILIES}.items():
             if fam.get("ready"):                       # ready-made packs: pinned file by file (ready_files)
+                continue
+            if fam.get("engine") == "poly":
+                for model in setup.family_models(fam_name):
+                    with self.subTest(family=fam_name, model=model):
+                        for i in range(1, setup.model_shards(fam, model) + 1):
+                            self.pinned_in_family(fam, setup.model_file(fam, model, i))
                 continue
             for model in (setup.MODELS if fam_name in setup.FAMILIES else fam["models"]):
                 if fam_name in setup.FAMILIES and fam_name not in setup.MODELS[model].get("families", ("qwen", "swift")):
@@ -80,8 +93,13 @@ class EveryFileIsPinned(unittest.TestCase):
 
     def test_the_picture_reader_of_every_family(self):
         for name, fam in {**setup.FAMILIES, **setup.OWN_PATH_FAMILIES}.items():
+            if "mmproj" not in fam:                    # a family that reads no pictures (GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, ...)
+                continue
             with self.subTest(family=name):
-                self.pinned(fam["mmproj_hf"] + fam["mmproj"])
+                if fam.get("engine") == "poly":
+                    self.pinned_in_family(fam, fam["mmproj"])
+                else:
+                    self.pinned(fam["mmproj_hf"] + fam["mmproj"])
 
     def test_the_nvfp4_packs_still_pin_their_files(self):
         for model in setup.MODELS:

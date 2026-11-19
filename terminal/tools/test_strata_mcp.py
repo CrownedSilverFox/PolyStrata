@@ -171,7 +171,7 @@ class FakeRoot(unittest.TestCase):
         self.strata.disk_free = lambda p: 1000.0
         self.tools = M.Tools(self.strata)
         self.extra = []
-        # the tests must never see a Strata server that happens to run on the real default port on this PC
+        # the tests must never see a PolyStrata server that happens to run on the real default port on this PC
         self._default_port = M.DEFAULT_PORT
         M.DEFAULT_PORT = free_port()
 
@@ -361,17 +361,17 @@ class Validation(FakeRoot):
     @unittest.skipIf(M.WIN, "POSIX paths")
     def test_a_drive_the_desktop_mounted_is_not_a_system_folder(self):
         """/run/media/<user>/<drive> sits inside /run, but it is where an external drive is mounted."""
-        for raw in ("/run/media/ann/Backup/Strata-data", "/run/media/ann/Backup/Strata"):
+        for raw in ("/run/media/ann/Backup/PolyStrata-data", "/run/media/ann/Backup/PolyStrata"):
             self.assertTrue(M.mounted_drive(M.norm(raw)), raw)
-        for raw in ("/run", "/run/media", "/run/user/1000/Strata-data", "/run/systemd/Strata-data", "/etc/Strata-data"):
+        for raw in ("/run", "/run/media", "/run/user/1000/PolyStrata-data", "/run/systemd/PolyStrata-data", "/etc/PolyStrata-data"):
             self.assertFalse(M.mounted_drive(M.norm(raw)), raw)
 
     def test_the_persons_own_data_folder_is_accepted_whatever_it_is_called(self):
         """The app writes the folder the person chose into the settings file (apps/host model-folder.mjs); an AI tool naming a new
-        folder still needs a Strata... name."""
+        folder still needs a PolyStrata... name."""
         chosen = self.root.parent / "my-big-disk"
         chosen.mkdir()
-        self.assertRejected("strata_install", {"data_dir": str(chosen)}, "named Strata")
+        self.assertRejected("strata_install", {"data_dir": str(chosen)}, "named PolyStrata")
         settings = self.tools.s.settings_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps({"data_dir": str(chosen)}))
@@ -698,15 +698,15 @@ class Helpers(unittest.TestCase):
         self.assertEqual(by["Q8_0"]["on_this_pc"], "may run slower")            # 133.8 GB (188.2 minus its 54.4 GB table) against 127.8 GB
 
     def test_qwen36_is_listed_with_its_three_sizes(self):
-        """QA 2026-10-18: the Qwen3.6-35B-A3B page of the first-run setup showed no versions, because setup.py keeps the family
+        """(PolyStrata: this family is qwen36-strata here; qwen36 is strata-poly's.)  QA 2026-10-18: the Qwen3.6-35B-A3B page of the first-run setup showed no versions, because setup.py keeps the family
         in OWN_PATH_FAMILIES (not FAMILIES) and the model list only walked FAMILIES."""
         s = M.Strata(HERE.parent)
-        self.assertIn("qwen36", s.tables()[1])
+        self.assertIn("qwen36-strata", s.tables()[1])
         fam = next(f for f in s.model_table({"ram_gb": 63.7, "gpus": [{"index": 0, "name": "x", "vram_gb": 12.0, "usable": True}]})
-                   if f["family"] == "qwen36")
+                   if f["family"] == "qwen36-strata")
         by = {x["model"]: x for x in fam["sizes"]}
         self.assertEqual(list(by), ["UD-Q4_K_XL", "UD-Q6_K_XL", "Q8_0"])
-        self.assertEqual(by["UD-Q4_K_XL"]["id"], "qwen36-ud-q4_k_xl")          # the tag the install writes its config under
+        self.assertEqual(by["UD-Q4_K_XL"]["id"], "qwen36s-ud-q4_k_xl")          # the tag the install writes its config under
         self.assertEqual(by["UD-Q4_K_XL"]["download_gb"], 22.9)
         self.assertTrue(all(x["images"] and x["engine_min"] == "0.1.45" and x["gpu_options"] is None for x in by.values()))
         self.assertEqual({x["on_this_pc"] for x in by.values()}, {"fits"})
@@ -714,9 +714,9 @@ class Helpers(unittest.TestCase):
         from strata_control import own_path_fit
         self.assertEqual({m: x["context_fit"] for m, x in by.items()}, {m: own_path_fit.inputs("qwen3.6-35b-a3b", m) for m in by})
         self.assertEqual(by["UD-Q4_K_XL"]["context_fit"]["bytes_per_token"], 47104)
-        others = [x for f in s.model_table({"ram_gb": 63.7, "gpus": []}) if f["family"] != "qwen36" for x in f["sizes"]]
+        others = [x for f in s.model_table({"ram_gb": 63.7, "gpus": []}) if f["family"] != "qwen36-strata" for x in f["sizes"]]
         self.assertTrue(others and not any("context_fit" in x for x in others))
-        small = next(f for f in s.model_table({"ram_gb": 16, "gpus": []}) if f["family"] == "qwen36")
+        small = next(f for f in s.model_table({"ram_gb": 16, "gpus": []}) if f["family"] == "qwen36-strata")
         self.assertEqual({x["on_this_pc"] for x in small["sizes"]}, {"may run slower"})        # 16 GB, no card: 21 to 36 GB of weights
         self.assertEqual(s.sizes_of(s.tables()[0], "unsloth")[:5], ["UD-IQ4_XS", "UD-Q4_K_XL", "UD-Q5_K_XL", "UD-Q6_K_XL", "Q8_0"])      # the Unsloth Flash-Next sizes are untouched (round 0214 adds sizes after them)
 
@@ -725,23 +725,23 @@ class Helpers(unittest.TestCase):
         s.hardware = lambda fresh=False: {"ram_gb": 64.0, "gpus": [{"index": 0, "name": "x", "vram_gb": 12.0, "usable": True, "vendor": "nvidia"}],
                                           "cpu": {"avx2": True}}
         s.disk_free = lambda p: 1000.0
-        plan, args = M.Tools(s).install_plan("qwen36", "UD-Q4_K_XL", 32768, "yes", "int8", None, None, None, "auto", None, None)
-        self.assertEqual((plan["title"], plan["download_gb"], plan["family"]), ("Qwen3.6-35B-A3B UD-Q4_K_XL", 22.9, "qwen36"))
-        self.assertEqual(args[:10], ["--yes", "--no-start", "--family", "qwen36", "--model", "UD-Q4_K_XL", "--context", "32768",
+        plan, args = M.Tools(s).install_plan("qwen36-strata", "UD-Q4_K_XL", 32768, "yes", "int8", None, None, None, "auto", None, None)
+        self.assertEqual((plan["title"], plan["download_gb"], plan["family"]), ("Qwen3.6-35B-A3B UD-Q4_K_XL", 22.9, "qwen36-strata"))
+        self.assertEqual(args[:10], ["--yes", "--no-start", "--family", "qwen36-strata", "--model", "UD-Q4_K_XL", "--context", "32768",
                                      "--vision", "yes"])
         for flag in ("--kv", "--low-ram", "--experimental-speed-projection"):      # Flash-Next settings: setup would only warn
             self.assertNotIn(flag, args)
-        plan, _a = M.Tools(s).install_plan("qwen36", None, 32768, "no", None, None, None, None, None, None, None)
+        plan, _a = M.Tools(s).install_plan("qwen36-strata", None, 32768, "no", None, None, None, None, None, None, None)
         self.assertEqual(plan["model"], "UD-Q4_K_XL")
         # #5715: no context given: the size that fits the 12 GB card (32K), not 128K; a 16 GB card keeps 128K
-        _p, args = M.Tools(s).install_plan("qwen36", "UD-Q4_K_XL", None, "no", None, None, None, None, None, None, None)
+        _p, args = M.Tools(s).install_plan("qwen36-strata", "UD-Q4_K_XL", None, "no", None, None, None, None, None, None, None)
         self.assertEqual(args[args.index("--context") + 1], "32768")
         s.hardware = lambda fresh=False: {"ram_gb": 64.0, "gpus": [{"index": 0, "name": "x", "vram_gb": 15.93, "usable": True, "vendor": "nvidia"}],
                                           "cpu": {"avx2": True}}
-        _p, args = M.Tools(s).install_plan("qwen36", "UD-Q4_K_XL", None, "no", None, None, None, None, None, None, None)
+        _p, args = M.Tools(s).install_plan("qwen36-strata", "UD-Q4_K_XL", None, "no", None, None, None, None, None, None, None)
         self.assertEqual(args[args.index("--context") + 1], "131072")
         with self.assertRaises(M.ToolError):
-            M.Tools(s).install_plan("qwen36", "IQ3_S", 32768, "no", None, None, None, None, None, None, None)
+            M.Tools(s).install_plan("qwen36-strata", "IQ3_S", 32768, "no", None, None, None, None, None, None, None)
 
     def test_the_apps_drafting_off_reaches_setup_as_mtp_off(self):
         # notes-ctrl-fix-2: the app's Off on a Mac still fetched the draft layer; the installer had no word for it (the Terminal's 1821f298d passes --mtp off)
@@ -750,9 +750,9 @@ class Helpers(unittest.TestCase):
                                           "cpu": {"avx2": True}}
         s.disk_free = lambda p: 1000.0
         tools = M.Tools(s)
-        _p, args = tools.install_plan("qwen36", "UD-Q4_K_XL", 32768, "no", None, None, None, None, None, None, None, None, None, "off")
+        _p, args = tools.install_plan("qwen36-strata", "UD-Q4_K_XL", 32768, "no", None, None, None, None, None, None, None, None, None, "off")
         self.assertEqual(args[args.index("--mtp"):args.index("--mtp") + 2], ["--mtp", "off"])
-        _p, args = tools.install_plan("qwen36", "UD-Q4_K_XL", 32768, "no", None, None, None, None, None, None, None)
+        _p, args = tools.install_plan("qwen36-strata", "UD-Q4_K_XL", 32768, "no", None, None, None, None, None, None, None)
         self.assertNotIn("--mtp", args, "no word: setup decides as before")
         models, families, contexts, _src = s.tables()
         schema = next(t for t in M.tool_defs(models, families, contexts) if t["name"] == "strata_install")["inputSchema"]["properties"]
@@ -921,7 +921,7 @@ class MacCatalog(unittest.TestCase):
             import pwd
             real_home = pwd.getpwuid(os.getuid()).pw_dir
         with tempfile.TemporaryDirectory(dir=real_home) as t:
-            target = Path(t) / "Strata-data"
+            target = Path(t) / "PolyStrata-data"
             target.mkdir()
             plan, args = M.Tools(s).install_plan("unsloth", "UD-IQ1_M", None, "no", "int8", 0, None, None, "auto", None, str(target))
             plain, _ = M.Tools(s).install_plan("qwen", "Q2_0", None, "no", "int8", 0, None, None, "auto", None, str(target))
@@ -930,7 +930,7 @@ class MacCatalog(unittest.TestCase):
         self.assertEqual(args[:6], ["--yes", "--no-start", "--family", "unsloth", "--model", "UD-IQ1_M"])
         s.disk_free = lambda p: 100.0
         with tempfile.TemporaryDirectory(dir=real_home) as t:              # (the same reason as above)
-            target = Path(t) / "Strata-data"
+            target = Path(t) / "PolyStrata-data"
             target.mkdir()
             short, _ = M.Tools(s).install_plan("unsloth", "UD-IQ1_M", None, "no", "int8", 0, None, None, "auto", None, str(target))
         self.assertIn("not enough free disk space", short["disk_short"])
@@ -1205,7 +1205,7 @@ class DraftLayerAndCancel(unittest.TestCase):
     """#3257: the draft layer's download shows real progress, and a cancel ends the whole tree."""
 
     def test_step_6_shows_the_draft_layer_download_added_to_the_finished_model_files(self):
-        lines = ["=== Step 6: preparing the model for Strata ===", "  > python mtp_fetch.py fetch",
+        lines = ["=== Step 6: preparing the model for PolyStrata ===", "  > python mtp_fetch.py fetch",
                  "  MTP draft layer:   2.00 / 5.00 GB (40%)"]
         with tempfile.TemporaryDirectory() as d:
             shard = Path(d) / "m-00001-of-00001.gguf"

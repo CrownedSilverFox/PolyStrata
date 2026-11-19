@@ -193,7 +193,8 @@ REPACK_WORK_GB = 6.0
 
 def app_sizes(family: str) -> list[str]:
     """The sizes the Mac app offers for a family: every MAC_MODELS entry of it that the Metal engine can run."""
-    return [m for m, d in MAC_MODELS.items() if d.get("family", "qwen") == family and not d.get("missing")]
+    return [m for m, d in MAC_MODELS.items() if d.get("family", "qwen") == family and not d.get("missing")
+            and not d.get("estimate")]          # (PolyStrata: sizes setup_mac.py adds from the catalog, with an estimated need)
 
 
 def repacked_gb(model: str) -> float:

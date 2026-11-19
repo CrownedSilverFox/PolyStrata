@@ -98,8 +98,8 @@ for _family in ("qwen", "swift", "coder", "unsloth", "nvfp4"):
     if _family not in S.FAMILIES:
         continue
     for _model, _spec in S.family_models(_family).items():
-        MAC_MODELS.setdefault(_model, {"shard1_gb": _spec["arena_gb"] + 5.6,
-                                      "tested": False, "family": _family})
+        MAC_MODELS.setdefault(_model, {"shard1_gb": _spec["arena_gb"] + 5.6, "tested": False, "family": _family,
+                                      "estimate": True})   # (mac_fit.app_sizes leaves these out of the app's list)
 
 
 def model_catalog() -> dict:
@@ -939,7 +939,9 @@ def main(argv=None) -> int:
     port = a.port or 8080
     cfg = mac_config(exe, engine_args(pack, shards, rt, ctx, stream, info["ram_gb"], model), pack, f"{fam['name']}-{model.lower()}", tag, port)
     if ready:
-        cfg["args"] += ["--native-dense-gguf", str(rp["dense"]), "--embd-gguf", str(rp["embd"])]
+        cfg["args"] += ["--native-dense-gguf", str(rp["dense"])]
+        if "embd" in rp:                               # a prepared pack has the token embedding in its dense GGUF
+            cfg["args"] += ["--embd-gguf", str(rp["embd"])]
     if fam.get("profile"):
         cfg["args"][cfg["args"].index("--expert-profile") + 1] = str(ROOT.parent / "terminal" / "data" / fam["profile"])
     if a.parallel is not None:
