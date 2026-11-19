@@ -6671,7 +6671,17 @@ float* Engine::draft_input(const int32_t* tokens, int64_t row, const float* h, i
     } else {
         ck(cudaEventSynchronize((cudaEvent_t) ev_hr_), "embed");
     }
-    for (int t = 0; t < n; ++t) input(tokens[t], row + t, h_r_ + (size_t) t * e);
+    // a call's rows on the CPU threads, as embed_rows() makes them: on this thread a prompt's call of 2,048 held the
+    // card up between its draft turns
+    const auto one = [&](int t) { input(tokens[t], row + t, h_r_ + (size_t) t * e); };
+    if (n >= 64 && workers_) {
+        for (int t = 0; t < n; ++t)
+            if ((tokens[t] < 0 || tokens[t] >= n_vocab_) && !image_at(row + t))
+                throw std::runtime_error("a token id is outside the vocabulary");
+        workers_->run(n, one);
+    } else {
+        for (int t = 0; t < n; ++t) one(t);
+    }
     if (n < kStageRows) copy2(h_r_, cur_, n * n_embd_, nullptr, nullptr, 0, st_);
     else ck(cudaMemcpyAsync(cur_, h_r_, rows * e * sizeof(float), cudaMemcpyHostToDevice, cs(st_)), "embed");
     ck(cudaEventRecord((cudaEvent_t) ev_hr_, cs(st_)), "embed");
