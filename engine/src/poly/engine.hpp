@@ -715,9 +715,10 @@ protected:
         static constexpr int kSlots = 16;
         int il = -1;           ///< the layer the group's experts are of; -1: none
         int n = 0;
-        bool here = false;     ///< their uploads have arrived
+        uint32_t here = 0;     ///< the uploads known to have arrived, a bit each
         int32_t e[kSlots];
         void* up = nullptr;    ///< marks their uploads, on up_
+        void* arrived[kSlots] = {};   ///< marks each one's upload, on up_
         void* read = nullptr;  ///< marks the launches of the last call that read them, on st_
     };
     static constexpr int kAheadGroups = 6, kAheadGuesses = 4;

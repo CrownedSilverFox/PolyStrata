@@ -729,9 +729,12 @@ Engine::~Engine() {
         if (e) cudaEventDestroy((cudaEvent_t) e);
     for (void* e : ev_row_)
         if (e) cudaEventDestroy((cudaEvent_t) e);
-    for (const Ahead& g : ahead_)
+    for (const Ahead& g : ahead_) {
         for (void* e : {g.up, g.read})
             if (e) cudaEventDestroy((cudaEvent_t) e);
+        for (void* e : g.arrived)
+            if (e) cudaEventDestroy((cudaEvent_t) e);
+    }
     for (int j = 0; j < n_swap_; ++j)
         for (cudaEvent_t e : {swap_[(size_t) j].done, swap_[(size_t) j].freed})
             if (e) cudaEventDestroy(e);
@@ -3928,10 +3931,12 @@ void Engine::vram_ahead(int j, int n, size_t part) {
     staged_il_ = -1;   // the staging buffer holds other experts now
     ck(cudaStreamWaitEvent(cs(up_), (cudaEvent_t) g.read, 0), "upload ahead");
     uint8_t* at = stage_ + (size_t) me * ahead_slots_ * ahead_stride_;
-    for (int i = 0; i < g.n; ++i, at += ahead_stride_)
+    for (int i = 0; i < g.n; ++i, at += ahead_stride_) {
         ck(cudaMemcpyAsync(at, mirror(j, g.e[i]), L.gu2() + L.d_bytes, cudaMemcpyHostToDevice, cs(up_)), "upload ahead");
+        ck(cudaEventRecord((cudaEvent_t) g.arrived[i], cs(up_)), "upload ahead");   // usable on its own
+    }
     ck(cudaEventRecord((cudaEvent_t) g.up, cs(up_)), "upload ahead");
-    g.here = false;
+    g.here = 0;
     g.il = j;
     stats_.ahead_sent += g.n;
 }
@@ -3944,11 +3949,12 @@ const uint8_t* Engine::ahead_of(int il, int e, unsigned& read) {
         if (g.il != il) continue;
         const int32_t* p = std::find(g.e, g.e + g.n, e);
         if (p == g.e + g.n) continue;
-        if (!g.here) {
-            const cudaError_t q = cudaEventQuery((cudaEvent_t) g.up);
+        const int i = (int) (p - g.e);
+        if (!(g.here >> i & 1u)) {
+            const cudaError_t q = cudaEventQuery((cudaEvent_t) g.arrived[i]);
             if (q == cudaErrorNotReady) return nullptr;
             ck(q, "upload ahead");
-            g.here = true;
+            g.here |= 1u << i;
         }
         read |= 1u << h;
         return stage_ + ((size_t) h * ahead_slots_ + (size_t) (p - g.e)) * ahead_stride_;
@@ -4987,12 +4993,18 @@ void Engine::build_mirror() {
         ahead_slots_ = 0;
         return;
     }
-    for (Ahead& g : ahead_)
+    for (Ahead& g : ahead_) {
         for (void** e : {&g.up, &g.read}) {
             cudaEvent_t ev = nullptr;
             ck(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming), "cudaEventCreate");
             *e = ev;
         }
+        for (void*& e : g.arrived) {
+            cudaEvent_t ev = nullptr;
+            ck(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming), "cudaEventCreate");
+            e = ev;
+        }
+    }
     prefetch_k_ = kAheadGuesses;   // moe_router() scores the next layer's router
 #endif
 }
