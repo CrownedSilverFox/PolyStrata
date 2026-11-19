@@ -410,6 +410,33 @@ void Qwen35::gdn(Block& B, int n) {
     lin(B.wz, xn_, z_, n, xq_);
     lin(B.alpha, xn_, alpha_, n, xq_);
     lin(B.beta, xn_, beta_, n, xq_);
+#if !defined(STRATA_GPU_METAL)
+    if (rows_of_) {   // step(): each sequence's rows with its own convolution and state, all sequences a launch
+        // a token and its guess (step() with guesses) are a sequence's two rows, leaving the state after the first
+        // at its snap for keep_step()
+        SeqStates conv, delta;
+        for (int i = 0, m; i < n && conv.n < SeqStates::kMax; i += m) {
+            const int s = rows_of_[i].seq;
+            m = i + 1 < n && rows_of_[i + 1].seq == s ? 2 : 1;
+            float* snap = rows_of_[i].snap;
+            for (SeqStates* q : {&conv, &delta}) {
+                q->first[q->n] = i;
+                q->rows[q->n] = m;
+            }
+            conv.state[conv.n] = seq_state(s, B.past);
+            conv.snap[conv.n++] = snap ? snap + (B.past - state_) : nullptr;
+            delta.state[delta.n] = seq_state(s, B.s);
+            delta.snap[delta.n++] = snap ? snap + (B.s - state_) : nullptr;
+        }
+        if (n <= SeqStates::kMax) {
+            conv4_silu_seqs(proj_, conv, fp(B.conv), qkv_, conv_dim_, st_);
+            gdn_step_seqs(qkv_, alpha_, beta_, fp(B.dt), fp(B.a), delta, z_, fp(B.o_norm), gated_, s_dim_, v_heads_,
+                          k_heads_, n, rms_eps_, st_);
+            lin(B.wo, gated_, ao_, n);
+            return;
+        }
+    }
+#endif
     if (rows_of_) {   // step(): each sequence's rows with its own convolution and state
         for (int i = 0, m; i < n; i += m) {
             // a token and its guess (step() with guesses) go in one call, a window of two, leaving the state after

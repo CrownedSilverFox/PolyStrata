@@ -355,6 +355,22 @@ void shortconv(const float* bcx, float* state, const float* w, float* out, int c
 void gdn_step(float* qkv, float* alpha, float* beta, const float* dt, const float* a, float* s,
               const float* z, const float* o_norm, float* out, int dim, int n_head, int k_heads, int rows,
               float norm_eps, void* stream, float* snap = nullptr, size_t stride = 0, unsigned snaps = 0);
+/// The rows of several sequences in one call, each with a recurrent state of its own: sequence k has rows
+/// [first[k], first[k] + rows[k]) of the call, its state in state[k], and snap[k], when not null, takes the state as
+/// it is after its first row (a token and its guess).  CUDA only.
+struct SeqStates {
+    static constexpr int kMax = 32;
+    int n = 0;
+    int first[kMax] = {}, rows[kMax] = {};
+    float* state[kMax] = {};
+    float* snap[kMax] = {};
+};
+/// conv4_silu() and gdn_step() for each sequence of `seqs`, in one launch a kernel where they launched one a
+/// sequence: each sequence's values are the bits a call of its own gives.  rows: all of the call's.
+void conv4_silu_seqs(const float* x, const SeqStates& seqs, const float* w, float* out, int channels, void* stream);
+void gdn_step_seqs(float* qkv, float* alpha, float* beta, const float* dt, const float* a, const SeqStates& seqs,
+                   const float* z, const float* o_norm, float* out, int dim, int n_head, int k_heads, int rows,
+                   float norm_eps, void* stream);
 /// conv4_silu() for a block of `rows` tokens that see each other (Clover's block guesses): a token's sum adds
 /// input t + d of the block times right[d - 1] for d = 1 to 3, right (3, channels).  The state is only read.
 void conv4_block_silu(const float* x, const float* state, const float* w, const float* right, float* out,

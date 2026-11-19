@@ -2220,9 +2220,9 @@ __device__ __forceinline__ float* snap_of(float* snap, size_t stride, unsigned s
 
 // Three past inputs per channel, then the new one.  A thread is a channel and walks the tokens.  The state as it
 // is after a token of `snaps` goes to snap (snap_of()).
-__global__ void conv4_silu_kernel(const float* __restrict__ x, float* __restrict__ state,
-                                  const float* __restrict__ w, float* __restrict__ out, int channels, int rows,
-                                  float* __restrict__ snap, size_t stride, unsigned snaps) {
+__device__ __forceinline__ void conv4_silu_body(const float* __restrict__ x, float* __restrict__ state,
+                                                const float* __restrict__ w, float* __restrict__ out, int channels,
+                                                int rows, float* __restrict__ snap, size_t stride, unsigned snaps) {
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (c >= channels) return;
     const float* wc = w + 4 * size_t(c);
@@ -2246,6 +2246,21 @@ __global__ void conv4_silu_kernel(const float* __restrict__ x, float* __restrict
     st[0] = s0;
     st[1] = s1;
     st[2] = s2;
+}
+
+__global__ void conv4_silu_kernel(const float* __restrict__ x, float* __restrict__ state,
+                                  const float* __restrict__ w, float* __restrict__ out, int channels, int rows,
+                                  float* __restrict__ snap, size_t stride, unsigned snaps) {
+    conv4_silu_body(x, state, w, out, channels, rows, snap, stride, snaps);
+}
+
+// conv4_silu_kernel for each sequence of a step, blockIdx.y the sequence: the same code on its rows and state.
+__global__ void conv4_silu_seqs_kernel(const float* __restrict__ x, const SeqStates seqs, const float* __restrict__ w,
+                                       float* __restrict__ out, int channels) {
+    const int k = blockIdx.y;
+    const size_t at = size_t(seqs.first[k]) * channels;
+    conv4_silu_body(x + at, seqs.state[k], w, out + at, channels, seqs.rows[k], seqs.snap[k], 0,
+                    seqs.snap[k] ? 1u : 0u);
 }
 
 // From this many tokens a causal convolution takes them all at once: a walk is one launch, and the two launches of
@@ -2386,10 +2401,10 @@ __global__ void gdn_log_gates_kernel(float* __restrict__ alpha, float* __restric
 // few terms a lane and a sum over the warp.  The block walks the tokens, and no warp waits for another.
 // s[i + dim * j] holds key dimension i of column j.  out gets the output before its norm.  decay and share are
 // what gdn_gates_kernel left.  dim is a multiple of 32.
-__global__ void gdn_state_kernel(const float* __restrict__ qkv, const float* __restrict__ decay,
-                                 const float* __restrict__ share, float* __restrict__ s, float* __restrict__ out,
-                                 int dim, int n_head, int k_heads, int rows, float* __restrict__ snap, size_t stride,
-                                 unsigned snaps) {
+__device__ __forceinline__ void gdn_state_body(const float* __restrict__ qkv, const float* __restrict__ decay,
+                                               const float* __restrict__ share, float* __restrict__ s,
+                                               float* __restrict__ out, int dim, int n_head, int k_heads, int rows,
+                                               float* __restrict__ snap, size_t stride, unsigned snaps) {
     const int per_head = dim / int(blockDim.x / WARP);   // blocks a head
     const int h = blockIdx.x / per_head, hk = h % k_heads;
     const int j = (blockIdx.x % per_head) * int(blockDim.x / WARP) + int(threadIdx.x / WARP);
@@ -2422,16 +2437,23 @@ __global__ void gdn_state_kernel(const float* __restrict__ qkv, const float* __r
     }
 }
 
+__global__ void gdn_state_kernel(const float* __restrict__ qkv, const float* __restrict__ decay,
+                                 const float* __restrict__ share, float* __restrict__ s, float* __restrict__ out,
+                                 int dim, int n_head, int k_heads, int rows, float* __restrict__ snap, size_t stride,
+                                 unsigned snaps) {
+    gdn_state_body(qkv, decay, share, s, out, dim, n_head, k_heads, rows, snap, stride, snaps);
+}
+
 // gdn_state_kernel with the warp's column in registers, PER values a lane, for the whole walk over the tokens:
 // a token reads and writes no state.  The sums go in the same order, so the result is the same to the bit.  A
 // token's inputs are read while the token before is computed: a walk that waited for each token's reads took
 // about a microsecond a token, the latency of those reads.  A block is 32 warps, so the bound: without it PER 8
 // took 79 registers a thread on sm_70 and 71 on sm_75, more than a 1024-thread launch can have.
 template <int PER>
-__global__ void __launch_bounds__(1024)
-gdn_state_reg_kernel(const float* __restrict__ qkv, const float* __restrict__ decay, const float* __restrict__ share,
-                     float* __restrict__ s, float* __restrict__ out, int dim, int n_head, int k_heads, int rows,
-                     float* __restrict__ snap, size_t stride, unsigned snaps) {
+__device__ __forceinline__ void gdn_state_reg_body(const float* __restrict__ qkv, const float* __restrict__ decay,
+                                                   const float* __restrict__ share, float* __restrict__ s,
+                                                   float* __restrict__ out, int dim, int n_head, int k_heads, int rows,
+                                                   float* __restrict__ snap, size_t stride, unsigned snaps) {
     const int per_head = dim / int(blockDim.x / WARP);
     const int h = blockIdx.x / per_head, hk = h % k_heads;
     const int j = (blockIdx.x % per_head) * int(blockDim.x / WARP) + int(threadIdx.x / WARP);
@@ -2485,6 +2507,34 @@ gdn_state_reg_kernel(const float* __restrict__ qkv, const float* __restrict__ de
     }
 #pragma unroll
     for (int k = 0; k < PER; ++k) col[lane + k * WARP] = c[k];
+}
+
+template <int PER>
+__global__ void __launch_bounds__(1024)
+gdn_state_reg_kernel(const float* __restrict__ qkv, const float* __restrict__ decay, const float* __restrict__ share,
+                     float* __restrict__ s, float* __restrict__ out, int dim, int n_head, int k_heads, int rows,
+                     float* __restrict__ snap, size_t stride, unsigned snaps) {
+    gdn_state_reg_body<PER>(qkv, decay, share, s, out, dim, n_head, k_heads, rows, snap, stride, snaps);
+}
+
+// The state's update for each sequence of a step, blockIdx.y the sequence: gdn_state_reg_kernel's code (PER > 0) or
+// gdn_state_kernel's on its rows and state.
+template <int PER>
+__global__ void __launch_bounds__(1024)
+gdn_state_seqs_kernel(const float* __restrict__ qkv, const float* __restrict__ decay, const float* __restrict__ share,
+                      const SeqStates seqs, float* __restrict__ out, int dim, int n_head, int k_heads) {
+    const int k = blockIdx.y;
+    const size_t row0 = size_t(seqs.first[k]);
+    const size_t row_n = (2 * size_t(k_heads) + n_head) * dim, d_inner = size_t(dim) * n_head;
+    const float* q = qkv + row0 * row_n;
+    const float* dc = decay + row0 * n_head;
+    const float* sh = share + row0 * n_head;
+    float* o = out + row0 * d_inner;
+    const unsigned sn = seqs.snap[k] ? 1u : 0u;
+    if constexpr (PER > 0)
+        gdn_state_reg_body<PER>(q, dc, sh, seqs.state[k], o, dim, n_head, k_heads, seqs.rows[k], seqs.snap[k], 0, sn);
+    else
+        gdn_state_body(q, dc, sh, seqs.state[k], o, dim, n_head, k_heads, seqs.rows[k], seqs.snap[k], 0, sn);
 }
 
 // One block a token and value head: the output's norm, its weights and the gate.
@@ -4132,6 +4182,35 @@ void gdn_step(float* qkv, float* alpha, float* beta, const float* dt, const floa
                                                                           rows, snap, stride, sn); break;
     default: gdn_state_kernel<<<blocks, threads, 0, cs(stream)>>>(qkv, alpha, beta, s, out, dim, n_head, k_heads, rows,
                                                                   snap, stride, sn);
+    }
+    gdn_out_kernel<<<rows * n_head, dim, 0, cs(stream)>>>(out, z, o_norm, dim, norm_eps);
+}
+
+// A step's sequences one launch a kernel.  Of gdn_step()'s four kernels only the state's update reads a sequence's
+// own state: the norm, the gates and the output's norm are a row's alone and go over every row at once.  With a
+// launch a sequence, 16 sequences of Qwen3.6 on lab-pro6000 spent 4.3 ms a step in 470 GDN launches of 1-4 us.
+void conv4_silu_seqs(const float* x, const SeqStates& seqs, const float* w, float* out, int channels, void* stream) {
+    if (seqs.n < 1 || seqs.n > SeqStates::kMax) throw std::invalid_argument("conv4_silu_seqs: 1 to 32 sequences");
+    conv4_silu_seqs_kernel<<<dim3(grid(channels, 256), seqs.n), 256, 0, cs(stream)>>>(x, seqs, w, out, channels);
+}
+
+void gdn_step_seqs(float* qkv, float* alpha, float* beta, const float* dt, const float* a, const SeqStates& seqs,
+                   const float* z, const float* o_norm, float* out, int dim, int n_head, int k_heads, int rows,
+                   float norm_eps, void* stream) {
+    if (dim % WARP != 0 || dim > 256) throw std::invalid_argument("gdn_step_seqs: a head of 32 to 256 values, in 32s");
+    if (seqs.n < 1 || seqs.n > SeqStates::kMax) throw std::invalid_argument("gdn_step_seqs: 1 to 32 sequences");
+    const size_t row_n = (2 * size_t(k_heads) + n_head) * dim;
+    const int gates = rows * n_head, columns = std::min(dim, 1024 / WARP);
+    gdn_norm_kernel<<<rows * k_heads, dim, 0, cs(stream)>>>(qkv, dim, k_heads, row_n, norm_eps);
+    gdn_gates_kernel<<<grid(gates, 256), 256, 0, cs(stream)>>>(alpha, beta, dt, a, n_head, gates);
+    const dim3 blocks(unsigned(n_head * ((dim + columns - 1) / columns)), unsigned(seqs.n));
+    const int threads = columns * WARP;
+    switch (dim / WARP) {
+    case 1: gdn_state_seqs_kernel<1><<<blocks, threads, 0, cs(stream)>>>(qkv, alpha, beta, seqs, out, dim, n_head, k_heads); break;
+    case 2: gdn_state_seqs_kernel<2><<<blocks, threads, 0, cs(stream)>>>(qkv, alpha, beta, seqs, out, dim, n_head, k_heads); break;
+    case 4: gdn_state_seqs_kernel<4><<<blocks, threads, 0, cs(stream)>>>(qkv, alpha, beta, seqs, out, dim, n_head, k_heads); break;
+    case 8: gdn_state_seqs_kernel<8><<<blocks, threads, 0, cs(stream)>>>(qkv, alpha, beta, seqs, out, dim, n_head, k_heads); break;
+    default: gdn_state_seqs_kernel<0><<<blocks, threads, 0, cs(stream)>>>(qkv, alpha, beta, seqs, out, dim, n_head, k_heads);
     }
     gdn_out_kernel<<<rows * n_head, dim, 0, cs(stream)>>>(out, z, o_norm, dim, norm_eps);
 }
