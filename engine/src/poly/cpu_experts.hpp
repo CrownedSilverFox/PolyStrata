@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -45,6 +46,30 @@ private:
     std::mutex one_;                             ///< one batch at a time: on several cards, each card's thread posts
     std::atomic<uint32_t> posted_{0};            ///< counts the batches: what a sleeping worker waits on
     std::atomic<bool> quit_{false};
+};
+
+/// A thread of its own that runs one function at a time beside the caller: start() hands it over, finish() returns
+/// once it has run and throws what it threw.  Workers::run() returns when every task of a batch is done, so work
+/// handed to one of its tasks held the whole batch up while it ran.
+class Aside {
+public:
+    Aside();
+    ~Aside();
+    Aside(const Aside&) = delete;
+    Aside& operator=(const Aside&) = delete;
+
+    void start(const std::function<void()>& fn);
+    void finish();
+
+private:
+    void loop();
+
+    std::thread th_;
+    const std::function<void()>* fn_ = nullptr;
+    std::exception_ptr failed_;
+    alignas(64) std::atomic<uint32_t> posted_{0};
+    alignas(64) std::atomic<uint32_t> done_{0};
+    std::atomic<bool> sleeping_{false}, quit_{false};
 };
 
 /// One routed expert of a token: its three matrices in the GGUF, its router weight, and which of the call's tokens

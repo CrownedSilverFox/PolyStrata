@@ -685,6 +685,7 @@ protected:
     std::unique_ptr<Shards> dg_;      ///< Options::draft_model, while the draft block is read from it
     const Shards* block_ = nullptr;   ///< the file the draft block is in: gg_ or dg_
     std::shared_ptr<Workers> workers_;   ///< on several cards, one for all of them: they take turns
+    std::unique_ptr<Aside> aside_;       ///< hands the card a call's cached experts while the workers do the CPU's
     int node_ = -1;
     // A layer split (open()).  The layers of the model are [lo_, hi_) here, and the engine of the next card has
     // the ones after.  A later card's engine reads its first layer's input from pass_, which the one before wrote:

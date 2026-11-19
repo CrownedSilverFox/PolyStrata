@@ -12,6 +12,7 @@
 #include <immintrin.h>
 #include <mutex>
 #include <numeric>
+#include <utility>
 
 namespace strata::poly {
 namespace {
@@ -183,6 +184,58 @@ void Workers::run(int n, const std::function<void(int)>& fn) {
     cur_.store(nullptr);   // every task is taken: a worker that comes now has nothing to find
     while (b.left.load(std::memory_order_acquire) != 0) _mm_pause();
     while (users_.load() != 0) _mm_pause();
+}
+
+Aside::Aside() : th_([this] { loop(); }) {}
+
+Aside::~Aside() {
+    quit_.store(true);
+    posted_.fetch_add(1);
+    posted_.notify_all();
+    th_.join();
+}
+
+// It pauses between functions, as an idle worker does, and sleeps once that has gone on for long: the next comes a
+// few hundred microseconds after the last while a model answers.
+void Aside::loop() {
+    uint32_t seen = 0;
+    int idle = 0;
+    while (true) {
+        const uint32_t now = posted_.load(std::memory_order_acquire);
+        if (quit_.load(std::memory_order_relaxed)) return;
+        if (now != seen) {
+            seen = now;
+            try {
+                (*fn_)();
+            } catch (...) {
+                failed_ = std::current_exception();
+            }
+            done_.store(now, std::memory_order_release);
+            idle = 0;
+            continue;
+        }
+        if (++idle < kSpinsBeforeSleep) {
+            _mm_pause();
+            continue;
+        }
+        // start() counts posted_ up before it reads sleeping_, and wait() returns at once when posted_ has moved
+        sleeping_.store(true);
+        posted_.wait(seen);
+        sleeping_.store(false);
+        idle = 0;
+    }
+}
+
+void Aside::start(const std::function<void()>& fn) {
+    fn_ = &fn;
+    posted_.fetch_add(1);
+    if (sleeping_.load()) posted_.notify_one();
+}
+
+void Aside::finish() {
+    const uint32_t want = posted_.load(std::memory_order_relaxed);
+    while (done_.load(std::memory_order_acquire) != want) _mm_pause();
+    if (failed_) std::rethrow_exception(std::exchange(failed_, nullptr));
 }
 
 bool cpu_expert_types_ok(int gu_type, int d_type, int n_embd, int n_ff, std::string& err) {

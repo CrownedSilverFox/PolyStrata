@@ -700,6 +700,7 @@ Engine::~Engine() {
     if (up_) cudaStreamSynchronize(cs(up_));
     if (rs_) cudaStreamSynchronize(cs(rs_));
     if (st_) cudaStreamSynchronize(cs(st_));
+    aside_.reset();
     workers_.reset();
     mmq_.reset();
 #if defined(STRATA_GPU_METAL)
@@ -3088,6 +3089,7 @@ void Engine::load(const Options& o) {
         }
         workers_ = std::make_shared<Workers>(threads);
     }
+    if (!aside_) aside_ = std::make_unique<Aside>();
     route_tmp_.assign((size_t) workers_->threads() * 2 * n_expert_, 0.f);
     if (opt_.cache_bias > 0.f) bias_rl_.assign((size_t) n_expert_, 0.f);
     start_swaps();
@@ -4588,8 +4590,22 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                 if (!pool_help()) std::this_thread::yield();
             }
         };
-        cpu_experts(*workers_, host, n_host, m, (int) L.gu_type, (int) L.u_type, (int) L.d_type, n_embd_, n_ff_exp_,
-                    h_x_ + (size_t) at * e_row, limit, gelu_, cpu, meanwhile, any_late ? late : nullptr, &wait);
+        // The launches go on a thread of their own: as a task of the CPU's first products, every one of those waited
+        // for them.  `first` moves the buffers to the other half's rows while it runs, so this call's are taken now.
+        const float* x = h_x_ + (size_t) at * e_row;
+        const bool aside = meanwhile && aside_;
+        if (aside) aside_->start(*meanwhile);
+        try {
+            cpu_experts(*workers_, host, n_host, m, (int) L.gu_type, (int) L.u_type, (int) L.d_type, n_embd_, n_ff_exp_,
+                        x, limit, gelu_, cpu, aside ? nullptr : meanwhile, any_late ? late : nullptr, &wait);
+        } catch (...) {
+            if (aside) try {
+                    aside_->finish();
+                } catch (...) {
+                }
+            throw;
+        }
+        if (aside) aside_->finish();
         pool_reads_.clear();
         stats_.cpu_ms += ms_since(t0);
     }
