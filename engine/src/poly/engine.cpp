@@ -5796,6 +5796,27 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
         ~Clear() { p = nullptr; }
     } clear{rows_of_};
     std::vector<int> key;
+    // The output of rows [r0, r0 + m), whose rows of the buffers are at xn_ (shift_rows()), into their logits
+    const auto logits_rows = [&](int r0, int m) {
+        float* lg = wlogits_ + (size_t) r0 * n_vocab_;
+        output_rows(0, m, xn_);
+        lin(output_, xn_, lg, m);
+        finish_logits(lg, m);
+        ck(cudaMemcpyAsync(h_wlogits_ + (size_t) r0 * n_vocab_, lg, (size_t) m * n_vocab_ * sizeof(float),
+                           cudaMemcpyDeviceToHost, cs(st_)),
+           "logits");
+        // with guesses: each row's output for its sequence's draft block, in its rows after the first, as window()
+        // leaves them (draft_rows())
+        if (guesses)
+            for (int i = r0, j = 0; i < r0 + m; ++i, ++j) {
+                if (i > r0 && rseq[(size_t) i] != rseq[(size_t) i - 1]) j = 0;
+                ck(cudaMemcpyAsync(seq_state(rseq[(size_t) i], hn_) + (size_t) (1 + j) * e_row,
+                                   xn_ + (size_t) (i - r0) * e_row, e_row * sizeof(float), cudaMemcpyDeviceToDevice,
+                                   cs(st_)),
+                   "step");
+            }
+    };
+    bool out_done[2] = {false, false};   // the halves whose logits are on their way
     // With experts on the CPU, the rows go through the layers in two halves, a sequence's rows in one, as a window's
     // tokens do (run()): this thread routes a half and computes its CPU experts, and meanwhile the thread that hands
     // the card its cached experts hands it first the other half's sum, the rest of its layer and the next layer up to
@@ -5841,7 +5862,8 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
             }
             rows_of_ = nullptr;
         };
-        // half k on from layer il, whose experts it has (-1: from the start), to the next router's copy
+        // half k on from layer il, whose experts it has (-1: from the start), to the next router's copy, or through
+        // its logits: the first half's are made while the CPU computes the other's last experts
         const auto go_on = [&](int k, int il, bool add) {
             const int m = half(k);
             const size_t rk = rec_of(k);
@@ -5851,7 +5873,8 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
                 if (replay && L.fixed) replayed(L.tail, rk, [&] { layer_tail(L, il, m); });
                 else layer_tail(L, il, m);
             }
-            for (int j = il < 0 ? lo_ : il + 1; j < hi_; ++j) {
+            int j = il < 0 ? lo_ : il + 1;
+            for (; j < hi_; ++j) {
                 Layer& J = layers_[(size_t) j];
                 head_half(J, j, k);
                 if (!J.moe) continue;
@@ -5859,6 +5882,10 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
                 if (replay) replayed(J.shared, rk, [&] { moe_shared(J, j, m); });
                 else moe_shared(J, j, m);
                 break;
+            }
+            if (j == hi_ && !next_) {
+                logits_rows(first[k], m);
+                out_done[k] = true;
             }
         };
         const auto back = [&] {
@@ -5961,21 +5988,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
         next_->pass_ = h;
         next_->step(seqs, tokens, n);
     } else {
-        output_rows(0, R, xn_);
-        lin(output_, xn_, wlogits_, R);
-        finish_logits(wlogits_, R);
-        ck(cudaMemcpyAsync(h_wlogits_, wlogits_, (size_t) R * n_vocab_ * sizeof(float), cudaMemcpyDeviceToHost,
-                           cs(st_)),
-           "logits");
-        // with guesses: each row's output for its sequence's draft block, in its rows after the first, as window()
-        // leaves them (draft_rows())
-        if (guesses)
-            for (int i = 0, j = 0; i < R; ++i, ++j) {
-                if (i > 0 && rseq[(size_t) i] != rseq[(size_t) i - 1]) j = 0;
-                ck(cudaMemcpyAsync(seq_state(rseq[(size_t) i], hn_) + (size_t) (1 + j) * e_row, xn_ + (size_t) i * e_row,
-                                   e_row * sizeof(float), cudaMemcpyDeviceToDevice, cs(st_)),
-                   "step");
-            }
+        if (!(out_done[0] && out_done[1])) logits_rows(0, R);
         ck(cudaStreamSynchronize(cs(st_)), "step");
     }
     if (guesses) {   // keep_step() settles the positions
