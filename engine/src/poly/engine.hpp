@@ -891,6 +891,8 @@ protected:
     int way_backoff_[9] = {};    ///< the way behind waits kWayAgain << this many windows of the size
     bool halves_ = false;        ///< the way of the window under way
     float *wlogits_ = nullptr, *h_wlogits_ = nullptr;   ///< a window's logits, token after token: VRAM and pinned
+    uint8_t* h_state_ = nullptr;   ///< pinned: save_state()'s way to its caller's memory
+    size_t h_state_bytes_ = 0;
     int cached_ = 0;
 
     // device scratch: a layer's input streams, one stream, the normed input, the attention's and the FFN's output

@@ -3423,13 +3423,32 @@ void Engine::refreeze_experts() {
     if (next_) next_->refreeze_experts();
 }
 
+// The layers copy their state to pinned memory, which the card writes at its own speed, and the CPU's threads copy
+// that to dst.  Straight into dst, which is pageable, Qwen3.6's 66 MB took 44 ms with the card idle, three times in
+// a 4,833-token prompt (a conversation's checkpoints).
 void Engine::save_state(uint8_t* dst) {
     OnCard here(device_, split_);
     ck(cudaStreamSynchronize(cs(st_)), "save state");
+    const size_t bytes = card_state_bytes();
+    if (h_state_bytes_ < bytes) {
+        hfree(h_state_);
+        h_state_ = nullptr;
+        h_state_ = (uint8_t*) hmalloc(bytes, "pinned memory");
+        h_state_bytes_ = bytes;
+    }
     for (int il = 0; il < (int) layers_.size(); ++il)
-        if (runs(il)) save_layer(il, pos_, dst);
-    save_last(dst);
-    if (next_) next_->save_state(dst + card_state_bytes());
+        if (runs(il)) save_layer(il, pos_, h_state_);
+    save_last(h_state_);
+    constexpr size_t kPiece = size_t(1) << 20;
+    const int pieces = (int) ((bytes + kPiece - 1) / kPiece);
+    const auto piece = [&](int i) {
+        const size_t at = (size_t) i * kPiece;
+        std::memcpy(dst + at, h_state_ + at, std::min(kPiece, bytes - at));
+    };
+    if (workers_) workers_->run(pieces, piece);
+    else
+        for (int i = 0; i < pieces; ++i) piece(i);
+    if (next_) next_->save_state(dst + bytes);
 }
 
 // What the state has that is no layer's: the model's output for the last token, which the draft block pairs the
