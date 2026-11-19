@@ -1,9 +1,14 @@
-// src/poly/mmq_own.cu - mmq.hpp's prompt products without llama.cpp: Strata's own grouped kernel
-// (strata::kernels::gemm_iq_f16_grouped, src/kernels/cuda/iq_kernels.cu).  The weights stay in their GGUF blocks and
-// are dequantized into shared memory a tile at a time, the activations are FP16 rows, the sums FP32, on the FP16
-// tensor cores.  mmq.cu is the llama.cpp form of the same class (-DSTRATA_POLY_MMQ=ON); one of the two is built.
+// src/poly/mmq_own.cu - mmq.hpp's prompt products without llama.cpp, on the kernel library's two grouped kernels
+// (src/kernels/cuda).  The weights stay in their GGUF blocks and are decoded into shared memory a tile at a time.
+// mmq.cu is the llama.cpp form of the same class (-DSTRATA_POLY_MMQ=ON); one of the two is built.
 //
-// What differs from MMQ for the callers:
+// On Ampere and newer, a type the int8 decoders have and rows of whole stages of 256 values go to the int8 tensor
+// cores (gemm_iq_i8_grouped, i8_mma.cuh): the activations are int8 with a scale per 32 values, MMQ's numbers, and a
+// matrix may have any number of rows.  quantize() and mul() choose by the type and the row length alone, so the rows
+// one wrote are the rows the other reads.
+//
+// Everything else goes to the FP16 kernel (gemm_iq_f16_grouped): the activations FP16 rows, the sums FP32.  What
+// differs there from MMQ for the callers:
 //   - the activations are halves, not Q8_1 blocks.  A half holds 11 bits from 6e-5 to 65504, and a model's rows are
 //     not all in that range (Flint's are far above it, a hidden row behind NVFP4's scales far below), so quantize()
 //     multiplies each row by the power of two that puts its largest value near 1024, which is exact, and mul()
@@ -150,6 +155,9 @@ __global__ void finish_rows(const float* __restrict__ y, int64_t ldy, const int3
     for (int c = threadIdx.x; c < cols; c += blockDim.x) out[c] = src[c] * b;
 }
 
+// the int8 kernel takes a matrix of this type with rows this long, whatever their number
+bool int8_rows(int t, int64_t cols) { return cols <= 0x7fffffff && kernels::gemm_iq_i8_takes(t, (int) cols); }
+
 // the rows' halves, then a float a row (back)
 size_t halves_bytes(int64_t rows, int64_t cols) { return ((size_t) rows * (size_t) cols * 2 + 3) / 4 * 4; }
 
@@ -181,6 +189,7 @@ Mmq::~Mmq() {
 }
 
 bool Mmq::fits(int ggml_type, int64_t w_rows, int64_t w_cols) {
+    if (int8_rows(ggml_type, w_cols)) return true;
     const Card c = card();
     return c.major >= 7 && dequantized(ggml_type) && w_rows % kTileRows == 0 && whole_tiles(ggml_type, w_cols) &&
            tile_bytes(ggml_type, w_cols) <= c.shared;
@@ -194,9 +203,10 @@ bool Mmq::half_sums(int) { return false; }
 
 bool Mmq::split_exact(int, int64_t) { return true; }
 
-void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int, int64_t cols, int64_t ld, int64_t rows,
+void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int ggml_type, int64_t cols, int64_t ld, int64_t rows,
                    void* stream) {
     if (rows <= 0) return;
+    if (int8_rows(ggml_type, cols)) return kernels::gemm_iq_i8_quantize(x, ids, ld, rows, (int) cols, xq, stream);
     float* back = (float*) ((char*) xq + halves_bytes(rows, cols));
     to_halves<<<rows_grid(rows), 256, 0, (cudaStream_t) stream>>>(x, ids, (__half*) xq, (int) cols, ld, rows, back);
     ck(cudaGetLastError(), "the rows as halves");
@@ -214,6 +224,14 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
         c.bounds_host[1] = (int32_t) total_rows;
         ck(cudaMemcpyAsync(c.bounds, c.bounds_host, sizeof c.bounds_host, cudaMemcpyHostToDevice, s), "a matrix's bounds");
         bounds = c.bounds;
+    }
+    if (int8_rows(ggml_type, w_cols)) {   // straight to dst's rows
+        if (!kernels::gemm_iq_i8_grouped(ggml_type, w, stride, (int) w_rows, (int) w_cols, xq, total_rows, bounds, n,
+                                         (int) max_rows, ids, dst, ld_dst, stream))
+            throw std::runtime_error("strata-poly prompt product: the int8 kernel did not start for tensor type " +
+                                     std::to_string(ggml_type) + " with [" + std::to_string(w_rows) + ", " +
+                                     std::to_string(w_cols) + "]");
+        return;
     }
     // straight into dst where row i is row i (finish_rows then works in place); else by way of a buffer of this path's own
     float* y = dst;

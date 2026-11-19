@@ -6277,6 +6277,9 @@ void native_expert_set_mode(int mode, int phase) {
 namespace {
 bool g_grouped_v1 = env_on("STRATA_GROUPED_V1");
 #include "i8_expert.cuh"   // OWN-I8: our own int8 dot-product kernels (native_expert_i8 below)
+#if !defined(__HIPCC__)
+#include "i8_mma.cuh"      // int8 tensor-core products of a group of matrices of any size (gemm_iq_i8_grouped at the end)
+#endif
 // OWN-I8: STRATA_EXPERT_I8, read once: 1 = on, 0 = off, -1 = not set (then the card class decides: i8_expert_rule.hpp)
 std::atomic<bool> g_i8_mmq_free{false};   // set before main by a build without MMQ (native_expert_i8_set_mmq_free)
 int i8_switch_raw() {
@@ -7357,10 +7360,50 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
                                                                                   (const __half*) X, ldx, bounds, mt, Y, ldy);
     return cudaGetLastError() == cudaSuccess;
 }
+
+// ---- the int8 tensor-core products (i8_mma.cuh)
+bool gemm_iq_i8_takes(int ty, int K) { return i8m_type(ty) && K > 0 && K % 256 == 0 && i8m_card().on; }
+
+void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream) {
+    if (rows <= 0) return;
+    float* d = (float*) ((char*) xq + (size_t) rows * (size_t) K);
+    const unsigned gx = (unsigned) (rows < 32768 ? rows : 32768);   // a block a row, over the grid's two sides
+    i8m_quantize_kernel<<<dim3(gx, (unsigned) ((rows + gx - 1) / gx)), I8M_NT, 0, (cudaStream_t) stream>>>(
+        x, ids, (long long) ld, K, (long long) rows, (uint32_t*) xq, d, d + (size_t) rows * (size_t) (K / 32));
+    check("gemm_iq_i8_quantize");
+}
+
+bool gemm_iq_i8_grouped(int ty, const void* W, size_t mat_bytes, int n_out, int K, const void* xq, int64_t total_rows,
+                        const int32_t* bounds, int n_mats, int max_rows, const int32_t* ids, float* Y, int64_t ldy, void* stream) {
+    if (!gemm_iq_i8_takes(ty, K) || n_out <= 0 || n_mats <= 0 || max_rows <= 0 || total_rows <= 0) return false;
+    const I8mCard card = i8m_card();
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) return false;
+    const size_t row_bytes = iq_row_bytes(ty, K);
+    const uint8_t* X = (const uint8_t*) xq;
+    const float* XD = (const float*) (X + (size_t) total_rows * (size_t) K);
+    const float* XS = XD + (size_t) total_rows * (size_t) (K / 32);
+    cudaStream_t s = (cudaStream_t) stream;
+    switch (ty) {
+#define STRATA_I8M_CASE(T) \
+        case T: \
+            return i8m_launch_type<T>(card, dev, s, (const uint8_t*) W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, n_mats, max_rows, \
+                                      ids, Y, (long long) ldy);
+        STRATA_I8M_TYPES(STRATA_I8M_CASE)
+#undef STRATA_I8M_CASE
+        default: return false;
+    }
+}
 }  // namespace strata::kernels
 #else
 namespace strata::kernels {
 bool gemm_iq_f16_grouped(int, const void*, size_t, int, int, const void*, int, const int32_t*, int, int, float*, int, void*) {
+    return false;
+}
+bool gemm_iq_i8_takes(int, int) { return false; }
+void gemm_iq_i8_quantize(const float*, const int32_t*, int64_t, int64_t, int, void*, void*) {}
+bool gemm_iq_i8_grouped(int, const void*, size_t, int, int, const void*, int64_t, const int32_t*, int, int, const int32_t*, float*,
+                        int64_t, void*) {
     return false;
 }
 }  // namespace strata::kernels
