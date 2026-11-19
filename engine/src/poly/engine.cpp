@@ -3090,6 +3090,11 @@ void Engine::load(const Options& o) {
         workers_ = std::make_shared<Workers>(threads);
     }
     if (!aside_) aside_ = std::make_unique<Aside>();
+    // save_state()'s pinned memory, with the load: made at the first checkpoint, it held a request up 32 ms
+    if (!h_state_) {
+        h_state_bytes_ = card_state_bytes();
+        h_state_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
+    }
     route_tmp_.assign((size_t) workers_->threads() * 2 * n_expert_, 0.f);
     if (opt_.cache_bias > 0.f) bias_rl_.assign((size_t) n_expert_, 0.f);
     start_swaps();
