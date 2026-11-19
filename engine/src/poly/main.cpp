@@ -1529,6 +1529,18 @@ void no_power_throttling() {
 
 int main(int argc, char** argv) {
     no_power_throttling();
+#if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+    // The cached experts' warp kernel and 32 of them a launch (native_mmvq_slots_wide()), the HIP build's default,
+    // here too unless STRATA_SLOTS_WARP says otherwise: the same bits, and on lab-pro6000 (RTX PRO 6000) Qwen3.6
+    // UD-Q3_K_M wrote 380-391 tokens/s where 353-360 with every expert in VRAM, 267-269 where 232-238 held to 12 GB.
+    if (!std::getenv("STRATA_SLOTS_WARP")) {
+#ifdef _WIN32
+        _putenv_s("STRATA_SLOTS_WARP", "1");
+#else
+        setenv("STRATA_SLOTS_WARP", "1", 0);
+#endif
+    }
+#endif
     Options o;
     CacheFlags cache;
     Sampling s;
