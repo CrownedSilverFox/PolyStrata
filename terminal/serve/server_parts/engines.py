@@ -762,6 +762,7 @@ def own_path_context_warning(cfg: dict, args: list, vram_mib: float | None) -> s
 
 
 PARALLEL_MAX = 8      # without a layer split the engine's batch window holds at most 8 rows (kVerifyNarrowT); --batch-mtp waves more through it
+POLY_PARALLEL_MAX = 16   # strata-poly writes up to 16 answers together (--batch 0..16)
 
 
 SPLIT_MAX_LANES = 8   # the all-cards split engine runs 1..8 lanes (strata_control/split_engine.py MAX_LANES)
@@ -797,6 +798,12 @@ def parallel_args(cfg: dict, args: list[str]) -> list[str]:
         return []
     # (on a layer split the pipelined groups each hold up to 8 slots - 16 in a HIP engine with wide windows - so more than 8 is
     # not a limit there: the engine says how many slots it runs, INFO batch_slots)
+    if Path(str(cfg.get("exe") or "")).stem.lower() in ("strata-poly", "strata-glm"):   # serve.server.poly_engine()
+        if n > POLY_PARALLEL_MAX:
+            print(f'[strata] "parallel": {n} - strata-poly writes at most {POLY_PARALLEL_MAX} answers together; it will '
+                  f"use {POLY_PARALLEL_MAX}", flush=True)
+            n = POLY_PARALLEL_MAX
+        return ["--batch", str(n)]
     if (n > PARALLEL_MAX and "--batch-mtp" not in args and os.environ.get("STRATA_BATCH_MTP", "0") in ("", "0")
             and not layer_split_of(cfg)):
         print(f'[strata] "parallel": {n} - the engine runs at most {PARALLEL_MAX} requests together; it will use '

@@ -263,6 +263,16 @@ class ParallelArgs(unittest.TestCase):
         args = engine_args({"args": ["--pack", "p"], "parallel": 2})
         self.assertEqual(args[-2:], ["--batch", "2"])
 
+    def test_strata_poly_takes_sixteen(self):
+        import contextlib, io
+        poly = {"exe": "/e/build/strata-poly"}
+        for n, want, note in ((12, "12", False), (16, "16", False), (20, "16", True)):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                r = parallel_args({**poly, "parallel": n}, [])
+            self.assertEqual(r, ["--batch", want], n)
+            self.assertEqual("at most 16" in buf.getvalue(), note, n)
+
 
 class DFlash2ChosenWithRequests(unittest.TestCase):
     """Owner 2026-11-03: the person's own choice wins. DFlash2 chosen by name + a number of requests = `--draft dflash2 --draft-fallback none --batch N` (the engine runs a
