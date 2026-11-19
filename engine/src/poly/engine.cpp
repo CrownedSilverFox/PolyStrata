@@ -4264,6 +4264,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
     }
     int ahead_j = -1;   // vram_ahead()'s layer: launch() sends its guesses
     size_t ahead_part = 0;
+    const bool aheads = ahead_slots_ > 0 && !freeze_experts_;   // a frozen answer's experts go where its first's did
     if (prefetch_k_ > 0 && !block_pass_ && n <= 16) {   // as moe_router() asked for it
         size_t part = 0;
         for (size_t q = 0; q < 8; ++q)
@@ -4271,7 +4272,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         int j = il + 1;
         while (j < n_layer_ && !layers_[(size_t) j].moe) ++j;
         if (j < n_layer_ && pool_) pool_ahead(j, n, part, prefetch_k_);
-        else if (j < n_layer_ && ahead_slots_ > 0) ahead_j = j, ahead_part = part;
+        else if (j < n_layer_ && aheads) ahead_j = j, ahead_part = part;
     }
     unsigned read = 0;   // the groups of vram_ahead() this call reads
 
@@ -4324,7 +4325,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                     cached[n_cached++] = {s, we, at + t, (int) e};
                     continue;
                 }
-                if (const uint8_t* s = ahead_slots_ > 0 ? ahead_of(il, (int) e, read) : nullptr) {
+                if (const uint8_t* s = aheads ? ahead_of(il, (int) e, read) : nullptr) {
                     cached[n_cached++] = {s, we, at + t, (int) e};
                     ++stats_.ahead_used;
                     continue;
@@ -4372,7 +4373,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         // went to the card in place of 81%, 182-189 tokens/s in place of 175-187; two or three a call left the card
         // waiting for their uploads, and were slower than none.
         int own = -1;   // that expert, which launch() uploads; -1: none
-        if (ahead_slots_ > 0 && n_host > 0 && at == 0) {
+        if (aheads && n_host > 0 && at == 0) {
             int best = 0, most = 0;
             for (int i = 0; i < n_host; ++i) {
                 if (host[i].gate != mirror(il, host_e[i])) continue;
@@ -4867,11 +4868,14 @@ void Engine::build_mirror() {
                  (double) total / (1 << 30), ms_since(t0) / 1000.0);
 
     // vram_ahead(): one sequence's answer (step() mixes the staging buffer with other sequences' prompt reads).
-    // STRATA_POLY_AHEAD=0 turns it off.
+    // Whether an upload has arrived decides where an expert is computed, so a cache asked to stay as it is
+    // (--expert-swaps 0, the regression tests' way to get the same answer twice) gets none.  STRATA_POLY_AHEAD=0
+    // turns it off.
     const char* ahead = std::getenv("STRATA_POLY_AHEAD");
     ahead_stride_ = (slot_max_ + 4095) / 4096 * 4096;
     ahead_slots_ = std::min<int>(Ahead::kSlots, (int) (stage_narrow_ / ahead_stride_ / (kAheadGroups + 1)));
-    if ((ahead && ahead[0] == '0') || opt_.batch > 0 || !up_ || !ahead_dev_ || ahead_slots_ < 4) {
+    if ((ahead && ahead[0] == '0') || opt_.batch > 0 || opt_.expert_swaps == 0 || !up_ || !ahead_dev_ ||
+        ahead_slots_ < 4) {
         ahead_slots_ = 0;
         return;
     }
