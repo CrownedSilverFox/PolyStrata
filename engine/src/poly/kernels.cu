@@ -2981,6 +2981,21 @@ void axpy(const float* x, float a, float* acc, int n, bool add, void* stream) {
     axpy_kernel<<<grid(n, 256), 256, 0, cs(stream)>>>(x, a, acc, n, add);
 }
 
+__global__ void gather_pieces_kernel(const GatherPiece* __restrict__ p, int n) {
+    for (int i = blockIdx.y; i < n; i += gridDim.y) {
+        const uint4* src = (const uint4*) p[i].src;
+        uint4* dst = (uint4*) p[i].dst;
+        const unsigned long long n16 = p[i].bytes / 16, step = (unsigned long long) gridDim.x * blockDim.x;
+        for (unsigned long long k = (unsigned long long) blockIdx.x * blockDim.x + threadIdx.x; k < n16; k += step) dst[k] = src[k];
+    }
+}
+
+void gather_pieces(const GatherPiece* pieces, int n, void* stream) {
+    if (n <= 0) return;
+    // four blocks a piece: a few hundred blocks in flight keep the bus busy, and leave the card's other work room
+    gather_pieces_kernel<<<dim3(4, (unsigned) (n < 1024 ? n : 1024)), 256, 0, (cudaStream_t) stream>>>(pieces, n);
+}
+
 void copy2(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, void* stream) {
     copy2_kernel<<<grid(n0 + n1, 256), 256, 0, cs(stream)>>>((const uint32_t*) x0, (uint32_t*) y0, n0,
                                                              (const uint32_t*) x1, (uint32_t*) y1, n1);

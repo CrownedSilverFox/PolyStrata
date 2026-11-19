@@ -208,6 +208,17 @@ void axpy(const float* x, float a, float* acc, int n, bool add, void* stream);
 /// and write too, and a kernel's copy to or from it has none of the wait that a copy engine's has on Windows,
 /// some 25 microseconds between it and the launches beside it.
 void copy2(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, void* stream);
+/// A piece of a gather: `bytes` from src to dst, each 16-byte aligned, as is bytes.  32 bytes, so that the kernel
+/// reads a piece in whole 16-byte loads.
+struct GatherPiece {
+    const void* src;
+    void* dst;
+    unsigned long long bytes, pad;
+};
+/// pieces[0..n) copied, by the card's threads: src may be pinned host memory, which the card then reads over the
+/// bus, and so may the piece list itself.  One launch for many pieces, where a copy call each cost the host more
+/// than the card took for them.
+void gather_pieces(const GatherPiece* pieces, int n, void* stream);
 /// Up to 32 vectors of n values, each times its weight into its own sum, one after the other: acc[k] += x[k] * w[k]
 /// for k = 0, 1, ...  Two of them may have the same sum.
 struct ScaledRows {

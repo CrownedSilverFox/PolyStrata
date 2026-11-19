@@ -197,6 +197,14 @@ int most_likely(const float* logits, int n);
 
 class Mmq;
 
+/// A piece of Engine's pinned mirror of the experts outside VRAM: the process's own memory pinned by
+/// cudaHostRegister(), or cudaMallocHost()'s.
+struct MirrorPiece {
+    uint8_t* base = nullptr;
+    size_t bytes = 0;
+    bool registered = false;
+};
+
 /// A picture in a sequence: n rows that stand where n tokens would, each the vision encoder's output for a patch,
 /// as wide as a token's embedding.  The patches come line after line, nx to a line.
 struct Image {
@@ -578,6 +586,18 @@ protected:
     void* record(F&& work);
     void moe_rows(Layer& L, int il, int n);
     void stage(const Layer& L, const int32_t* experts, int m, void* stream, bool alone = false);
+    void stage_rest(const Layer& L, const int32_t* experts, const std::vector<int>& which, int m, void* stream,
+                    bool alone);
+    // The pinned mirror (build_mirror()): the routed experts the card does not hold, in pinned host memory in a
+    // card slot's layout.
+    void build_mirror();
+    const uint8_t* mirror(int il, int e) const {
+        return mirror_of_.empty() ? nullptr : mirror_of_[(size_t) il * (size_t) n_expert_ + (size_t) e];
+    }
+    uint8_t* mirror_take(int il);             ///< a spare slot of the layer's size, or null
+    void mirror_give(int il, int e);          ///< the expert is on the card: its slot is a spare again
+    void mirror_keep(int il, int e, const uint8_t* vram);   ///< the expert leaves the card: its slot copied back
+    GatherPiece* gather_slot();
     void mind_memory();
     void follow(int written);
     void follow_loop();
@@ -671,6 +691,13 @@ protected:
     mutable Stats all_stats_;             ///< stats() of every card's engine together
     double node_share_ = 0;
     std::thread mapper_;                  ///< reads the experts' pages once after load, so they are mapped
+    std::vector<MirrorPiece> mirror_blocks_;        ///< the mirror's pinned memory
+    std::vector<uint8_t*> mirror_of_;               ///< per (layer, expert): its slot in the mirror, or null
+    std::vector<std::vector<uint8_t*>> mirror_spare_;   ///< per trade class: free slots
+    GatherPiece* gather_ring_ = nullptr;            ///< pinned piece lists of the gathers, taking turns
+    void* gather_ev_[8] = {};                       ///< per list: marks the card's read of it
+    int gather_at_ = 0;
+    std::vector<int> stage_rest_;                   ///< stage()'s experts the mirror lacks: their places
     std::atomic<bool> map_quit_{false};
     /// Options::lock_experts: the experts whose pages are locked (layer * n_expert + expert), first by mapper_, then
     /// by relock() between requests once mapper_ is done (locks_ready_)
