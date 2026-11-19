@@ -3719,6 +3719,26 @@ bool Engine::input(int32_t token, int64_t row, float* dst) const {
     return false;
 }
 
+// What the model reads at rows [pos, pos + n): input()'s, scaled as the model scales token embeddings, and copied to
+// every residual stream.  A row is a dequantized row of the embeddings: on one thread a 2,048-token call's rows
+// took 5-9 ms of Qwen3.6's, which the card waited out, so the CPU threads take a row each (0.4-0.7 ms).
+void Engine::embed_rows(const int32_t* tokens, int64_t pos, int n, float* rows) const {
+    for (int t = 0; t < n; ++t)
+        if ((tokens[t] < 0 || tokens[t] >= n_vocab_) && !image_at(pos + t))
+            throw std::runtime_error("a token id is outside the vocabulary");
+    const size_t e_row = (size_t) n_embd_, r_row = (size_t) streams() * e_row;
+    const float scale = embed_scale();
+    const auto one = [&](int t) {
+        float* r = rows + (size_t) t * r_row;
+        if (!input(tokens[t], pos + t, r) && scale != 1.f)
+            for (size_t i = 0; i < e_row; ++i) r[i] *= scale;
+        for (int h = 1; h < streams(); ++h) std::memcpy(r + (size_t) h * e_row, r, e_row * sizeof(float));
+    };
+    if (n >= 64 && workers_) workers_->run(n, one);
+    else
+        for (int t = 0; t < n; ++t) one(t);
+}
+
 void Engine::dbg(const char* name, int il, const float* dev, int n) {
     if (!opt_.dump) return;
     std::vector<float> h((size_t) n);
@@ -5541,17 +5561,10 @@ void Engine::run(const int32_t* tokens, int n) {
     }
     tok_ = tokens;
     const size_t e_row = (size_t) n_embd_, r_row = (size_t) streams() * e_row;
-    const float scale = embed_scale();
-    if (pass_) {   // a later card: the card before it left the rows
+    if (pass_)   // a later card: the card before it left the rows
         std::memcpy(h_r_, pass_ + (size_t) (pos_ - pass_at_) * r_row, (size_t) n * r_row * sizeof(float));
-    } else {
-        for (int t = 0; t < n; ++t) {
-            float* r = h_r_ + (size_t) t * r_row;
-            if (!input(tokens[t], pos_ + t, r) && scale != 1.f)
-                for (size_t i = 0; i < e_row; ++i) r[i] *= scale;
-            for (int h = 1; h < streams(); ++h) std::memcpy(r + (size_t) h * e_row, r, e_row * sizeof(float));
-        }
-    }
+    else
+        embed_rows(tokens, pos_, n, h_r_);
     if (n < kStageRows) copy2(h_r_, r_, n * (int) r_row, nullptr, nullptr, 0, st_);
     else ck(cudaMemcpyAsync(r_, h_r_, (size_t) n * r_row * sizeof(float), cudaMemcpyHostToDevice, cs(st_)), "embed");
 
@@ -6342,7 +6355,6 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     if (n_swap_ > 0) follow(0);
     const size_t e_row = (size_t) n_embd_, r_row = (size_t) streams() * e_row, r_bytes = r_row * sizeof(float);
     const size_t part = (size_t) std::max(streams(), draft_ ? 3 : 1) * rows_ * e_row;   // a call's rows of r_
-    const float scale = embed_scale();
     float* const r0 = r_;
     const int64_t pos0 = pos_;
     const bool host = n_calls > 2;
@@ -6366,12 +6378,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         float* rows = host ? home(c) : h_r_;
         if (pass_)
             std::memcpy(rows, pass_ + (size_t) (pos0 + call.at - pass_at_) * r_row, (size_t) call.m * r_bytes);
-        for (int t = 0; t < call.m && !pass_; ++t) {
-            float* r = rows + (size_t) t * r_row;
-            if (!input(tokens[call.at + t], pos0 + call.at + t, r) && scale != 1.f)
-                for (size_t i = 0; i < e_row; ++i) r[i] *= scale;
-            for (int h = 1; h < streams(); ++h) std::memcpy(r + (size_t) h * e_row, r, e_row * sizeof(float));
-        }
+        if (!pass_) embed_rows(tokens + call.at, pos0 + call.at, call.m, rows);
         if (host) continue;
         ck(cudaMemcpyAsync(half(c), h_r_, (size_t) call.m * r_bytes, cudaMemcpyHostToDevice, cs(st_)), "embed");
         ck(cudaStreamSynchronize(cs(st_)), "embed");   // h_r_ is filled again
