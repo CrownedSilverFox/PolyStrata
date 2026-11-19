@@ -3676,6 +3676,13 @@ void Engine::lin(const Dev& w, const float* x, float* y, int n, const void* xq, 
 // matrix alone (a recurrent layer's alpha and beta, 32 outputs) leaves most of the card idle for its launch.
 void Engine::lin_pair(const Dev& w1, const Dev& w2, const float* x, float* y1, float* y2, int n, const void* xq) {
 #if !defined(STRATA_GPU_METAL)
+    // F32 or BF16, the few tokens' products of gemv_f32() or gemv_bf16(): a recurrent layer's alpha and beta, a
+    // router and the next layer's (moe_router())
+    if (w1.type == w2.type && (w1.type == kTypeF32 || w1.type == kTypeBF16) && w1.n_in == w2.n_in && n < kStageRows &&
+        w1.scale == 1.0f && w2.scale == 1.0f) {
+        gemv_pair(w1.type == kTypeBF16 ? 1 : 0, w1.p, w2.p, x, y1, y2, w1.n_in, w1.n_out, w2.n_out, n, st_);
+        return;
+    }
     const bool pair = xq && n >= 2 && n <= 8 && w1.type == w2.type && w1.n_in == w2.n_in && w1.n_out == w2.n_out &&
                       w1.scale == 1.0f && w2.scale == 1.0f && !(mmq_ && n >= kStageRows);
     if (pair && kernels::native_mmvq_pair((int) w1.type, w1.p, w2.p, xq, y1, y2, w1.n_in, w1.n_out, n, st_)) return;
@@ -3749,7 +3756,6 @@ int Engine::card_rows() const {
 
 // The router's scores, and the copies of them and of the experts' input to the host.
 void Engine::moe_router(const Layer& L, int n) {
-    router_scores(L, n);
     const size_t ne = (size_t) n_expert_;
     int j = (int) (&L - layers_.data()) + 1;   // the next MoE layer, whose router on this layer's input guesses ahead
     while (j < n_layer_ && !layers_[(size_t) j].moe) ++j;
@@ -3758,15 +3764,21 @@ void Engine::moe_router(const Layer& L, int n) {
         if (ev_ == ev_row_[q]) part = q;
     const bool ahead = prefetch_k_ > 0 && !block_pass_ && n <= 16 && j < n_layer_;
 #if !defined(STRATA_GPU_METAL)
-    // vram_ahead(): its scores go to the host in the router's copy, a kernel's as the router's own: a copy engine's
-    // copy on st_ waits for the launches around it
+    // vram_ahead(): both routers in one launch where the router reads xn_, and the guesses' scores go to the host in
+    // the router's copy, a kernel's as the router's own: a copy engine's copy on st_ waits for the launches around it
     if (ahead && ahead_slots_ > 0) {
         float* d = ahead_dev_ + part * 16 * ne;
-        lin(layers_[(size_t) j].gate_inp, xn_, d, n, xq_);
+        if (plain_router()) {
+            lin_pair(L.gate_inp, layers_[(size_t) j].gate_inp, xn_, rl_, d, n, xq_);
+        } else {
+            router_scores(L, n);
+            lin(layers_[(size_t) j].gate_inp, xn_, d, n, xq_);
+        }
         copy3(rl_, h_rl_, n * n_expert_, xn_, h_x_, n * n_embd_, d, h_ahead_ + part * 16 * ne, n * n_expert_, st_);
         return;
     }
 #endif
+    router_scores(L, n);
     copy2(rl_, h_rl_, n * n_expert_, xn_, h_x_, n * n_embd_, st_);
     if (!ahead) return;
     float* d = ahead_dev_ + part * 16 * ne;   // pool_ahead()

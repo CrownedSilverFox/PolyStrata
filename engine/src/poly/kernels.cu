@@ -96,6 +96,23 @@ __global__ void gemv_kernel(const W* __restrict__ w, const float* __restrict__ x
     if (threadIdx.x == 0) y[tok * n_out + o] = acc;
 }
 
+// Two matrices on one input in one launch: an output's block is gemv_kernel's for it, so are its bits.
+template<typename W>
+__global__ void gemv_pair_kernel(const W* __restrict__ w1, const W* __restrict__ w2, const float* __restrict__ x,
+                                 float* __restrict__ y1, float* __restrict__ y2, int n_in, int n_out1, int n_out2) {
+    __shared__ float part[32];
+    const bool second = int(blockIdx.x) >= n_out1;
+    const int o = second ? int(blockIdx.x) - n_out1 : int(blockIdx.x);
+    const int n_out = second ? n_out2 : n_out1;
+    const size_t tok = blockIdx.y;
+    const W* wr = (second ? w2 : w1) + size_t(o) * n_in;
+    const float* xr = x + tok * n_in;
+    float acc = 0.0f;
+    for (int i = threadIdx.x; i < n_in; i += blockDim.x) acc += ldw(wr, i) * xr[i];
+    acc = block_sum(acc, part);
+    if (threadIdx.x == 0) (second ? y2 : y1)[tok * n_out + o] = acc;
+}
+
 }  // namespace
 
 // The threads of a block that sums over n values.  A thread reads its values one after the other, and a kernel
@@ -2809,6 +2826,20 @@ void gemv_f32(const float* w, const float* x, float* y, int n_in, int n_out, int
 void gemv_bf16(const uint16_t* w, const float* x, float* y, int n_in, int n_out, int rows_per_x, int rows,
                void* stream) {
     gemv(w, x, y, n_in, n_out, rows_per_x, rows, stream);
+}
+
+void gemv_pair(int type, const void* w1, const void* w2, const float* x, float* y1, float* y2, int n_in, int n_out1,
+               int n_out2, int rows, void* stream) {
+    const int threads = n_in >= 128 ? sum_threads(n_in) : 32;
+    const dim3 grid(n_out1 + n_out2, rows);
+    if (type == 1)
+        gemv_pair_kernel<uint16_t><<<grid, threads, 0, cs(stream)>>>((const uint16_t*) w1, (const uint16_t*) w2, x, y1,
+                                                                      y2, n_in, n_out1, n_out2);
+    else
+        gemv_pair_kernel<float><<<grid, threads, 0, cs(stream)>>>((const float*) w1, (const float*) w2, x, y1, y2, n_in,
+                                                                   n_out1, n_out2);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("gemv_pair: ") + cudaGetErrorString(e));
 }
 
 // A buffer of rows is its transpose to cuBLAS, so y[row] = w x[row] is Y = W^T X.  A group's rows of w, its part

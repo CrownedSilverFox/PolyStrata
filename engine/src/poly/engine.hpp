@@ -476,6 +476,8 @@ protected:
     /// The scores of a layer's router for n tokens, into rl_.  The engine's own: the router's matrix times the
     /// experts' input (xn_).
     virtual void router_scores(const Layer& L, int n);
+    /// router_scores() is lin(gate_inp) on xn_ with xq_: moe_router() may run it beside the next layer's
+    virtual bool plain_router() const { return true; }
     /// What is done to `rows` rows of logits on the card before they are copied out.
     virtual void finish_logits(float* logits, int rows) { (void) logits, (void) rows; }
     /// What a token's embedding is multiplied by on its way in.
