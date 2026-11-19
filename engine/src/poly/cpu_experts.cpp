@@ -1,8 +1,10 @@
 // src/poly/cpu_experts.cpp - see the header.
 #include "cpu_experts.hpp"
 
-#include "ggml.h"
-#include "ggml-cpu.h"
+#include "strata/quant/act.hpp"
+#include "strata/quant/dot.hpp"
+#include "strata/quant/fp16.hpp"
+#include "strata/quant/types.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,11 +22,73 @@ constexpr int kRowsPerTask = 32;
 constexpr int kRowsPerDownTask = 16;
 constexpr int kSpinsBeforeSleep = 20000;   // about a millisecond of pause instructions
 
-const ggml_type_traits_cpu* traits(int type) { return ggml_get_type_traits_cpu((ggml_type) type); }
+namespace Q = strata::quant;
 
-void init_once() {
-    static std::once_flag once;
-    std::call_once(once, [] { ggml_cpu_init(); });
+// A weight type's rows: its dot product and the quantizer of the activations that product reads, from Strata's quant
+// layer (src/quant) in the arithmetic this CPU's ggml-cpu build runs, so the products are the ones ggml-cpu gave.
+// The layer has no rows for the float types (F32, F16, BF16): those are multiplied here, a value at a time, with the
+// activations left as floats and the sum kept in a double.  That is not ggml-cpu's order of additions.
+using ActFn = void (*)(const float* x, void* y, int64_t n);
+using DotFn = void (*)(int n, float* s, const void* w, const void* a);
+
+void act_floats(const float* x, void* y, int64_t n) { std::memcpy(y, x, (size_t) n * sizeof(float)); }
+
+void dot_f32(int n, float* s, const void* w, const void* a) {
+    const float* wf = (const float*) w;
+    const float* af = (const float*) a;
+    double acc = 0.0;
+    for (int i = 0; i < n; ++i) acc += (double) wf[i] * af[i];
+    *s = (float) acc;
+}
+
+void dot_f16(int n, float* s, const void* w, const void* a) {
+    const uint16_t* wh = (const uint16_t*) w;
+    const float* af = (const float*) a;
+    double acc = 0.0;
+    for (int i = 0; i < n; ++i) acc += (double) Q::fp16_to_fp32(wh[i]) * af[i];
+    *s = (float) acc;
+}
+
+void dot_bf16(int n, float* s, const void* w, const void* a) {
+    const uint16_t* wb = (const uint16_t*) w;
+    const float* af = (const float*) a;
+    double acc = 0.0;
+    for (int i = 0; i < n; ++i) acc += (double) Q::f32_from_bits((uint32_t) wb[i] << 16) * af[i];
+    *s = (float) acc;
+}
+
+struct Rows {
+    DotFn dot = nullptr;
+    ActFn act = nullptr;
+    int blck = 1;          // values a block of the weights
+    int act_blck = 1;      // values a block of the activations
+    size_t act_block = 4;  // bytes a block of the activations
+    int act_type = 0;      // which activations: two types with the same one share a row of them
+    size_t row(int64_t n) const { return (size_t) (n / act_blck) * act_block; }
+};
+
+Rows rows_of(int type) {
+    Rows r;
+    const Q::TypeInfo* t = Q::type_info(type);
+    if (t == nullptr) return r;
+    if (t->type == Q::Type::F32 || t->type == Q::Type::F16 || t->type == Q::Type::BF16) {
+        r.dot = t->type == Q::Type::F32 ? dot_f32 : t->type == Q::Type::F16 ? dot_f16 : dot_bf16;
+        r.act = act_floats;
+        return r;
+    }
+    const Q::TypeInfo* a = t->has_dot ? Q::type_info(t->act) : nullptr;
+    if (a == nullptr) return r;
+    const Q::Arith arith = Q::default_arith();
+    const Q::DotKernel* dot = Q::dot_kernel(t->type, arith);
+    const Q::ActKernel* act = Q::act_kernel(t->act, arith);
+    if (dot == nullptr || act == nullptr) return r;
+    r.dot = dot->fn;
+    r.act = act->fn;
+    r.blck = t->blck;
+    r.act_blck = a->blck;
+    r.act_block = a->bytes;
+    r.act_type = (int) t->act;
+    return r;
 }
 
 thread_local bool in_task = false;   // this thread is running a task of a batch
@@ -122,16 +186,14 @@ void Workers::run(int n, const std::function<void(int)>& fn) {
 }
 
 bool cpu_expert_types_ok(int gu_type, int d_type, int n_embd, int n_ff, std::string& err) {
-    init_once();
     for (const int type : {gu_type, d_type}) {
-        const ggml_type_traits_cpu* t = traits(type);
-        const ggml_type_traits_cpu* a = t && t->vec_dot ? traits(t->vec_dot_type) : nullptr;
-        if (a == nullptr || a->from_float == nullptr) {
-            err = "ggml-cpu has no dot product for tensor type " + std::to_string(type);
+        const Rows t = rows_of(type);
+        if (t.dot == nullptr) {
+            err = "the CPU has no dot product for tensor type " + std::to_string(type);
             return false;
         }
         const int n = type == gu_type ? n_embd : n_ff;
-        if (n % ggml_blck_size((ggml_type) type) || n % ggml_blck_size(t->vec_dot_type)) {
+        if (n % t.blck || n % t.act_blck) {
             err = "a row of " + std::to_string(n) + " values is not whole blocks of tensor type " + std::to_string(type);
             return false;
         }
@@ -142,17 +204,14 @@ bool cpu_expert_types_ok(int gu_type, int d_type, int n_embd, int n_ff, std::str
 void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, int gu_type, int u_type, int d_type,
                  int n_embd, int n_ff, const float* x, float limit, bool gelu, float* out,
                  const std::function<void()>* meanwhile, const uint8_t* late, const std::function<void(int)>* wait) {
-    init_once();
-    const ggml_type_traits_cpu* tg = traits(gu_type);
-    const ggml_type_traits_cpu* tu = traits(u_type);
-    const ggml_type_traits_cpu* td = traits(d_type);
-    const size_t gu_row = ggml_row_size((ggml_type) gu_type, n_embd);
-    const size_t u_row = ggml_row_size((ggml_type) u_type, n_embd);
-    const size_t d_row = ggml_row_size((ggml_type) d_type, n_ff);
-    const size_t a_bytes = ggml_row_size(tg->vec_dot_type, n_embd);
-    const size_t au_bytes = ggml_row_size(tu->vec_dot_type, n_embd);
-    const size_t h_bytes = ggml_row_size(td->vec_dot_type, n_ff);
-    const bool own_act = tu->vec_dot_type != tg->vec_dot_type;   // up's dot product takes another quantization
+    const Rows tg = rows_of(gu_type), tu = rows_of(u_type), td = rows_of(d_type);
+    const size_t gu_row = Q::row_bytes(gu_type, n_embd);
+    const size_t u_row = Q::row_bytes(u_type, n_embd);
+    const size_t d_row = Q::row_bytes(d_type, n_ff);
+    const size_t a_bytes = tg.row(n_embd);
+    const size_t au_bytes = tu.row(n_embd);
+    const size_t h_bytes = td.row(n_ff);
+    const bool own_act = tu.act_type != tg.act_type;   // up's dot product takes another quantization
 
     // The workers get these through the pointers below: a thread_local named in their code would be their own.
     static thread_local std::vector<uint8_t> act, act_u, hq;
@@ -162,15 +221,15 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
     if (own_act) act_u.resize((size_t) rows * au_bytes);
     hq.resize((size_t) n * h_bytes);
     h.resize((size_t) n * n_ff);
-    // ggml's quantizers for the activations are scalar: microseconds a row, which on one thread kept the others
-    // waiting, here and before the down products
+    // quantizing the activations takes microseconds a row, which on one thread kept the others waiting, here and
+    // before the down products
     uint8_t* actp = act.data();
-    const auto act_from = traits(tg->vec_dot_type)->from_float;
+    const ActFn act_from = tg.act;
     workers.run(rows, [&](int t) { act_from(x + (size_t) t * n_embd, actp + (size_t) t * a_bytes, n_embd); });
     uint8_t* actup = actp;
     if (own_act) {
         actup = act_u.data();
-        const auto au_from = traits(tu->vec_dot_type)->from_float;
+        const ActFn au_from = tu.act;
         workers.run(rows, [&](int t) { au_from(x + (size_t) t * n_embd, actup + (size_t) t * au_bytes, n_embd); });
     }
     const size_t au_step = own_act ? au_bytes : a_bytes;
@@ -212,8 +271,8 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
                 const uint8_t* a = actp + (size_t) experts[j].row * a_bytes;
                 const uint8_t* au = actup + (size_t) experts[j].row * au_step;
                 float g = 0.f, u = 0.f;
-                tg->vec_dot(n_embd, &g, 0, gate, 0, a, 0, 1);
-                tu->vec_dot(n_embd, &u, 0, up, 0, au, 0, 1);
+                tg.dot(n_embd, &g, gate, a);
+                tu.dot(n_embd, &u, up, au);
                 g *= e.gate_scale;
                 u *= e.up_scale;
                 if (gelu) {
@@ -228,7 +287,7 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
         }
     });
     uint8_t* hqp = hq.data();
-    const auto hq_from = traits(td->vec_dot_type)->from_float;
+    const ActFn hq_from = td.act;
     workers.run(n, [&](int j) { hq_from(hp + (size_t) j * n_ff, hqp + (size_t) j * h_bytes, n_ff); });
 
     const int d_tasks = (n_embd + kRowsPerDownTask - 1) / kRowsPerDownTask;
@@ -241,7 +300,7 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
             for (int u = 0; u < n_run; ++u) {
                 const uint8_t* down = experts[byp[runp[u]]].down + (size_t) r * d_row;
                 for (int i = runp[u]; i < runp[u + 1]; ++i)
-                    td->vec_dot(n_ff, s + byp[i], 0, down, 0, hqp + (size_t) byp[i] * h_bytes, 0, 1);
+                    td.dot(n_ff, s + byp[i], down, hqp + (size_t) byp[i] * h_bytes);
             }
             // a token's sum in the order its experts were given: the order it has in a call of its own
             int j = 0;

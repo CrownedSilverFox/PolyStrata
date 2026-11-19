@@ -1,7 +1,8 @@
 // src/poly/cpu_experts.hpp - routed experts computed on the CPU from their GGUF bytes.
 //
-// The dot products and the activation quantizers are ggml-cpu's (ggml_get_type_traits_cpu), so an expert here
-// computes what llama.cpp's CPU backend computes for the same tensor.  The workers are this file's own: the pool
+// The dot products and the activation quantizers are Strata's quant layer's (strata/quant), which gives the bits of
+// ggml-cpu's for the same rows, so an expert here still computes what llama.cpp's CPU backend computes for the same
+// tensor.  (Float tensors are the exception: cpu_experts.cpp.)  The workers are this file's own: the pool
 // in strata/kernels/cpu/pool.hpp is built around the other model's expert blob.
 #pragma once
 
