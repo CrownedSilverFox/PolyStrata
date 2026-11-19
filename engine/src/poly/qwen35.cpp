@@ -408,8 +408,7 @@ void Qwen35::load_card_rows(const uint8_t* src, int64_t from, int64_t count, int
 void Qwen35::gdn(Block& B, int n) {
     lin(B.wqkv, xn_, proj_, n, xq_);
     lin(B.wz, xn_, z_, n, xq_);
-    lin(B.alpha, xn_, alpha_, n, xq_);
-    lin(B.beta, xn_, beta_, n, xq_);
+    lin_pair(B.alpha, B.beta, xn_, alpha_, beta_, n, xq_);
 #if !defined(STRATA_GPU_METAL)
     if (rows_of_) {   // step(): each sequence's rows with its own convolution and state, all sequences a launch
         // a token and its guess (step() with guesses) are a sequence's two rows, leaving the state after the first
@@ -525,10 +524,9 @@ void Qwen35::attn_store(Block& B, int64_t pos, int n) {
     int64_t first;
     const int32_t* axes = turns(pos, n, &first);
     const long long* at = recording_ ? at_ : nullptr;   // a recorded launch: the tokens from what at_ holds
-    lin(B.wk, xn_, kraw_, n, xq_);
+    lin_pair(B.wk, B.wv, xn_, kraw_, v_, n, xq_);
     head_norm_rope(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, first, n, rms_eps_, st_,
                    nullptr, axes, sections_, at ? at + 1 : nullptr);
-    lin(B.wv, xn_, v_, n, xq_);
     if (opt_.kv_format == KvFmt::kQ8_0) {
         if (at) {
             store_q8_at(k_, B.k_codes, B.k_scales, n_kv_ * head_dim_, at, n, 0, st_);
@@ -619,8 +617,7 @@ void Qwen35::attn_block_pass(Block& B, int64_t pos, int n) {
 void Qwen35::attn_rows(Block& B, int n) {
     const long long* at = at_;
     lin(B.wq, xn_, qg_, n, xq_);
-    lin(B.wk, xn_, kraw_, n, xq_);
-    lin(B.wv, xn_, v_, n, xq_);
+    lin_pair(B.wk, B.wv, xn_, kraw_, v_, n, xq_);
     const float scale = 1.f / std::sqrt((float) head_dim_);
     const bool q8 = opt_.kv_format == KvFmt::kQ8_0;
     const size_t kv = (size_t) n_kv_ * head_dim_, hq = (size_t) n_head_ * head_dim_;
@@ -826,8 +823,7 @@ bool Qwen35::route_card(int, int n, int32_t* ids, float* w) {
 
 // The shared expert, times the sigmoid of its own gate.  It runs on the GPU while the host routes.
 void Qwen35::moe_shared(const Layer& L, int il, int n) {
-    lin(L.sh_gate, xn_, g_, n, xq_);
-    lin(L.sh_up, xn_, u_, n, xq_);
+    lin_pair(L.sh_gate, L.sh_up, xn_, g_, u_, n, xq_);
     swiglu_clamp(g_, u_, h_, n * n_ff_shexp_, clamp_shexp_[(size_t) il], st_);
     lin(L.sh_down, h_, fo_, n);
     lin(blocks_[(size_t) il].sh_gate_inp, xn_, sg_, n);

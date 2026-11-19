@@ -561,6 +561,8 @@ protected:
     const Image* image_at(int64_t row) const;
     bool input(int32_t token, int64_t row, float* dst) const;
     void lin(const Dev& w, const float* x, float* y, int n, const void* xq = nullptr, int rows_per_x = 0);
+    /// lin(w1 -> y1) and lin(w2 -> y2) of one input, in one launch where the two are Q8_0 of one shape.
+    void lin_pair(const Dev& w1, const Dev& w2, const float* x, float* y1, float* y2, int n, const void* xq);
     void lin_raw(const Dev& w, const float* x, float* y, int n, const void* xq, int rows_per_x);
     /// The layer's ExpertScales for rows of the experts ids[r] (on the card), or none.
     ExpertScales expert_scales(const Layer& L, const int32_t* ids = nullptr) const;
