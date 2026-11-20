@@ -18,7 +18,7 @@ from unittest import mock
 from strata_cli.launch import modelstate, settings as S
 from strata_cli.launch.catalog import Catalog
 from strata_cli.launch.runner import Runner
-from strata_control import discovery, models
+from strata_control import discovery, models, paths
 from tests.terminal.launch_support import HW_12
 
 GYRO_S = "Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf"
@@ -65,7 +65,7 @@ class GuiLayout(unittest.TestCase):
         self.env = {"LOCALAPPDATA": str(base / "local"), "XDG_DATA_HOME": str(base / "local"), "APPDATA": str(base / "roaming"),
                     "XDG_CONFIG_HOME": str(base / "config"), "USERPROFILE": str(base / "home"), "HOME": str(base / "home"),
                     "XDG_STATE_HOME": str(base / "state"), "XDG_DOCUMENTS_DIR": ""}
-        settings = Path(self.env["APPDATA"]) / "Strata" if os.name == "nt" else Path(self.env["XDG_CONFIG_HOME"]) / "strata"
+        settings = Path(self.env["APPDATA"]) / paths.APP_NAME if os.name == "nt" else Path(self.env["XDG_CONFIG_HOME"]) / paths.XDG_NAME
         self.settings_path = settings / "settings.json"
         patch = mock.patch.dict(os.environ, self.env)
         patch.start()
@@ -91,7 +91,7 @@ class GuiLayout(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
         self.install = discovery.app_install_dir()
-        self.docs = base / "home" / "Documents" / "Strata"
+        self.docs = base / "home" / "Documents" / paths.APP_NAME
         gyro = self.docs / "Models" / "gyro-Gyro-S"
         gyro.mkdir(parents=True)
         self.gguf = gyro / GYRO_S

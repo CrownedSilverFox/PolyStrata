@@ -19,6 +19,14 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent / "engine" / "metal"))
 import setup  # noqa: E402
 import setup_mac as M  # noqa: E402
+from strata_control import drafting_fetch  # noqa: E402
+
+
+def no_feed(case):
+    """The signed feed's model list is not read (STRATA_FEED_MODELS=0): a setup run here would fetch it."""
+    p = mock.patch.dict(os.environ, {"STRATA_FEED_MODELS": "0"})
+    p.start()
+    case.addCleanup(p.stop)
 
 
 def fake_run(values: dict, clt_rc=0):
@@ -723,6 +731,9 @@ class Source(unittest.TestCase):
 
 
 class SmallerModelCatalog(unittest.TestCase):
+    def setUp(self):
+        no_feed(self)
+
     def test_uses_shared_family_sizes_and_filenames(self):
         catalog = M.smaller_model_catalog()
         self.assertEqual(set(catalog), {f for f,d in setup.FAMILIES.items() if d.get("engine")=="poly"})
@@ -746,6 +757,9 @@ class SmallerModelCatalog(unittest.TestCase):
 
 
 class SmallerModelSetup(unittest.TestCase):
+    def setUp(self):
+        no_feed(self)
+
     def test_existing_files_keep_shared_server_features(self):
         from contextlib import ExitStack
         for family, model in [(f,m) for f in M.MAC_POLY_FAMILIES for m in setup.family_models(f)]:
@@ -771,7 +785,7 @@ class SmallerModelSetup(unittest.TestCase):
                 patch(setup, "data_folder", return_value=(root, []))
                 patch(setup, "free_gb", return_value=1000)
                 patch(setup, "pip_install")
-                patch(setup, "get_llama_cpp", return_value=root / "llama")
+                patch(setup, "llama_override", return_value=root / "llama")
                 build = patch(M, "build_engine", return_value=root / "strata-poly")
                 patch(setup, "download", side_effect=AssertionError("model download"))
                 patch(setup, "done", return_value=True)
@@ -837,6 +851,9 @@ class SmallerModelSetup(unittest.TestCase):
 
 
 class FullCatalog(unittest.TestCase):
+    def setUp(self):
+        no_feed(self)
+
     def test_every_family_and_quant_uses_the_shared_catalog(self):
         catalog = M.model_catalog()
         families = {**setup.FAMILIES, **setup.OWN_PATH_FAMILIES}
@@ -875,6 +892,7 @@ class FullCatalog(unittest.TestCase):
                     patch(setup,"data_folder",return_value=(root,[]));patch(setup,"free_gb",return_value=1000)
                     patch(setup,"get_llama_cpp",return_value=root/"llama");patch(setup,"find_in",return_value=None)
                     patch(M,"build_engine",return_value=root/"strata");patch(M,"engine_pids",return_value=[])
+                    patch(drafting_fetch,"ensure_for",return_value=None)     # the DFlash2 drafter of the sets whose Mac default it is: not here
                     patch(M,"ple_shard",side_effect=lambda files: files[0] if family=="swift" else files[-1])
                     patch(setup,"download",side_effect=AssertionError("download"));patch(setup,"ready_fetch",side_effect=AssertionError("ready download"))
                     for name in ("pip_install","check_shards","run","refresh_draft_vocab","say","ok","warn","step"):
@@ -918,7 +936,7 @@ class FullCatalog(unittest.TestCase):
                 patch(M,"ROOT",new=root)
                 for name in ("pip_install", "run", "say", "ok", "warn"):
                     patch(setup,name)
-                patch(setup,"get_llama_cpp",return_value=root / "llama")
+                patch(setup,"llama_override",return_value=root / "llama")
                 patch(setup,"find_in",return_value=None)
                 patch(setup,"download",side_effect=AssertionError("download"))
                 verify=patch(setup,"verify_sha256")

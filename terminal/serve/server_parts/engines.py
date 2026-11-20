@@ -340,7 +340,7 @@ def start_exit_note(rc: int | None, exe=None) -> str:
             note += f" ({', '.join(m.upper() for m in missing)} missing; {isa})"
         elif isa:
             note += f"; the CPU reports AVX, AVX2, FMA and F16C ({isa}), so this is a bug in the engine"
-        note += ".  Please report it with the CPU model (github.com/Niko1221/Strata/issues)."
+        note += ".  Please report it with the CPU model (github.com/simplexai-labs/PolyStrata/issues)."
     return note
 
 
@@ -946,7 +946,7 @@ def engine_has_text(exe: str, needle: bytes) -> bool | None:
 
 def draft_costs_dir() -> Path:
     """Where the learned draft cost tables live: beside the saved tunings (strata_control/presets.py), in the user's PolyStrata settings folder
-    (%APPDATA%\\PolyStrata\\draft-costs, ~/.config/strata/draft-costs), which the Windows uninstaller's "remove my data" deletes with them.
+    (%APPDATA%\\PolyStrata\\draft-costs, ~/.config/polystrata/draft-costs), which the Windows uninstaller's "remove my data" deletes with them.
     STRATA_DRAFT_COSTS_DIR: another folder (tests and test jobs, which never write into a real settings folder)."""
     explicit = os.environ.get("STRATA_DRAFT_COSTS_DIR")
     if explicit:

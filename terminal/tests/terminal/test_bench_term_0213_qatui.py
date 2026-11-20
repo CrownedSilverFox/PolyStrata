@@ -25,9 +25,12 @@ from strata_cli import bench_standard  # noqa: E402
 POSIX = os.name != "nt"
 
 DRIVER = r'''
-import os, subprocess, sys, time
+import os, signal, subprocess, sys, time
 from pathlib import Path
 from unittest import mock
+# Ctrl+C as a command typed in a terminal gets it: a test run started as a background job of a script inherits SIGINT ignored, and Python
+# then installs no KeyboardInterrupt for it
+signal.signal(signal.SIGINT, signal.default_int_handler)
 sys.path.insert(0, sys.argv[1])
 from strata_cli import bench_standard as bs, cli
 mode, pidfile, ready = sys.argv[2], sys.argv[3], sys.argv[4]

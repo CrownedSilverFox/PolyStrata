@@ -35,6 +35,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from strata_cli import APP_NAME, XDG_NAME
 from strata_cli.client import server_url, url_prefix
 
 
@@ -77,9 +78,9 @@ def connection_dir(*, create: bool = False) -> Path:
             raise ConnectionError("STRATA_CONNECTION_DIR must be absolute")
     elif os.name == "nt":
         base = os.environ.get("APPDATA")
-        directory = (Path(base) if base else Path.home() / "AppData" / "Roaming") / "Strata" / "connections"
+        directory = (Path(base) if base else Path.home() / "AppData" / "Roaming") / APP_NAME / "connections"
     else:
-        directory = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "strata" / "connections"
+        directory = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / XDG_NAME / "connections"
     if create:
         _private_mkdir(directory, parents=True, exist_ok=True)
     if directory.exists() or directory.is_symlink():

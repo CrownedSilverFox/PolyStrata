@@ -20,6 +20,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import setup  # noqa: E402
+from strata_control import driver_floor  # noqa: E402
 
 M = "3.0BIT"
 FILE = "GLM-5.3-Flash-GSQ-RCO-3.0bit-q4kattn.gguf"
@@ -272,6 +273,10 @@ class Main(unittest.TestCase):
             return eng
 
         patches = [
+            mock.patch.dict(os.environ, {"STRATA_FEED_MODELS": "0"}),     # the signed feed's model list is not read
+            mock.patch.object(setup, "POLY_PREBUILT_URL", ""),           # no ready-made strata-poly to ask the release for (Windows)
+            mock.patch.dict(setup._CUDA12_FLOORS, clear=True),         # the CUDA 12 driver floor: not from the signed feed either
+            mock.patch.object(driver_floor, "from_feed", return_value=None),
             mock.patch.object(setup, "ROOT", self.t),
             mock.patch.object(setup, "WIN", win),
             mock.patch.object(setup, "GPU_PICK", None),
@@ -285,7 +290,7 @@ class Main(unittest.TestCase):
             mock.patch.object(setup, "page_file_gb", lambda: 16.0),
             mock.patch.object(setup, "free_gb", lambda p: 500.0),
             mock.patch.object(setup, "pip_install", lambda *a, **k: None),
-            mock.patch.object(setup, "get_llama_cpp", lambda: self.t / "llama.cpp"),
+            mock.patch.object(setup, "get_llama_cpp", lambda: None),       # no llama.cpp tree, as setup has it without STRATA_GGML_DIR
             mock.patch.object(setup, "get_prebuilt", mock.Mock(side_effect=AssertionError("the Qwen engine"))),
             mock.patch.object(setup, "build_engine_poly", fake_build),
             mock.patch.object(setup, "download", fake_download),

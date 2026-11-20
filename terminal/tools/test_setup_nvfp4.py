@@ -314,6 +314,8 @@ class MockedInstall(unittest.TestCase):
             eng.mkdir()
             (eng / "BUILD.json").write_text(json.dumps(meta_in))
             (eng / setup.EXE).write_bytes(b"engine")
+            # the ready-made engine's image encoder: without it engine_step() compiles before the NVFP4 check is reached
+            (eng / setup.VEXE).write_bytes(b"encoder")
 
             def fake_build(gpu, vision, yes, llama, toolkit=None, portable=False):
                 built.append({"gpu": gpu, "portable": portable, "toolkit": toolkit})

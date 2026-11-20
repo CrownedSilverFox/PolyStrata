@@ -683,6 +683,19 @@ class Start(unittest.TestCase):
                                          "before_load": "echo hi"})
         self.assertEqual(svc.cfg_overrides, {"gpu": 1})
 
+    def test_fit_max_tokens_is_on_unless_turned_off(self):
+        """0.2.17: a max_tokens that does not fit the context is shortened by default.  model_settings() set it off at every
+        start and switch unless the config said true, whatever Service, --fit-max-tokens's help and the Settings view said."""
+        self.assertTrue(S.model_settings({})["fit_max_tokens"])
+        self.assertFalse(S.model_settings({"fit_max_tokens": False})["fit_max_tokens"])
+        self.assertFalse(S.model_settings({"fit_max_tokens": True}, {"fit_max_tokens": False})["fit_max_tokens"])
+        self.assertTrue(S.model_settings({"fit_max_tokens": False}, {"fit_max_tokens": True})["fit_max_tokens"])
+        self.assertTrue(self.start()[1].fit_max_tokens)
+        self.assertFalse(self.start({"fit_max_tokens": False})[1].fit_max_tokens)
+        _, svc = self.start(argv=["--no-fit-max-tokens"])
+        self.assertFalse(svc.fit_max_tokens)
+        self.assertEqual(svc.overrides["fit_max_tokens"], False)          # and a switch to another model keeps it off
+
     def test_parallel_reaches_the_engine_and_a_switch(self):
         """--parallel N is in the run config the engine starts from, and kept for a switch.  main() read the file again
         after setting it, and a server started with --parallel 16 answered one request at a time."""

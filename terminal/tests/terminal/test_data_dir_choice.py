@@ -126,10 +126,10 @@ class DataFolderChoice(unittest.TestCase):
         self.write_settings({})
         for d in ("models", "packs", "mtp"):
             shutil.rmtree(self.old / d)
-        mine = put(self.root / "Strata-data" / "models" / "Q2_0" / "w-00001-of-00001.gguf")
+        mine = put(self.root / "PolyStrata-data" / "models" / "Q2_0" / "w-00001-of-00001.gguf")
         (dest, elsewhere), _ = self.call(str(self.new), yes=True)
         self.assertTrue(mine.is_file())
-        self.assertEqual([Path(e).resolve() for e in elsewhere], [(self.root / "Strata-data").resolve()])
+        self.assertEqual([Path(e).resolve() for e in elsewhere], [(self.root / "PolyStrata-data").resolve()])
         self.assertNotIn("data_dir", self.saved())
 
     def test_no_data_dir_still_gathers_into_the_remembered_folder(self):

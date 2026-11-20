@@ -18,6 +18,7 @@ import stat
 import subprocess
 import tempfile
 from strata_control import atomic as _atomic_mod
+from strata_control import paths
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -41,8 +42,8 @@ def profile_dir() -> Path:
         return Path(explicit).expanduser()
     if os.name == "nt":
         base = os.environ.get("APPDATA")
-        return (Path(base) if base else Path.home() / "AppData" / "Roaming") / "Strata" / "profiles"
-    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "strata" / "profiles"
+        return (Path(base) if base else Path.home() / "AppData" / "Roaming") / paths.APP_NAME / "profiles"
+    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / paths.XDG_NAME / "profiles"
 
 
 def _name(name: str) -> str:

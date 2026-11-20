@@ -10,6 +10,13 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 
+#: (PolyStrata) the name of this project's per-user folders, set here once: %APPDATA%, %LOCALAPPDATA% and Documents use APP_NAME, the XDG
+#: folders (~/.config, ~/.local/share, ~/.local/state) XDG_NAME.  Not the Strata project's "Strata" / "strata": both can be installed on one
+#: computer and must not read or write each other's settings, models or components.  Here, not in strata_control/paths.py (which takes them
+#: from here), because the monitor bundle (tools/packaging/monitor_bundle.py) carries strata_cli alone and finds the connections with them.
+APP_NAME = "PolyStrata"
+XDG_NAME = "polystrata"
+
 #: The version people are told: the Strata app's own (apps/desktop/src-tauri/Cargo.toml `version`; tests/terminal/test_tuiqa_version.py keeps the
 #: two equal, except for a Terminal-only release such as 0.2.3.1 or 0.2.4, whose app stays 0.2.3). `version()` below is the files' build number, which the engine-compatibility checks compare, so it stays numeric.
 PRODUCT_VERSION = "0.2.17"

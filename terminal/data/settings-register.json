@@ -2880,6 +2880,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_BLOCK_GUESS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 3034,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/BACKENDS.md:1266"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] off unless =1: a model that guesses its own draft blocks (Clover) runs a block call a round; slower in the measurement there, 157 against 204 tokens/s after a 30K prompt on an RTX PRO 6000 (engine/src/poly/engine.cpp:3030, docs/BACKENDS.md:1266)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_CACHE_DIR",
    "backends": [
     "sycl"
@@ -7814,6 +7849,90 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_FATTN",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/qwen35.cpp",
+     "line": 321,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/COMMUNITY_BENCHMARKS.md:47",
+    "docs/DETAILS.md:1580",
+    "docs/DETAILS.md:1587",
+    "docs/DETAILS.md:1588",
+    "docs/DETAILS.md:1614",
+    "docs/bench-results/2026-10-28-community-rtx4060-laptop-128k/README.md:60"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "rollback",
+   "owner": "poly",
+   "note": "[reviewed] a prompt batch's attention through the flash-attention kernel wherever it fits (Ampere or later, heads of 256), on unless =0; =1 says so where it does not fit (engine/src/poly/qwen35.cpp:317, docs/DETAILS.md:1580)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_FDEC",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/qwen35.cpp",
+     "line": 332,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "4096",
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:967",
+    "docs/AMD_HIP.md:970",
+    "docs/AMD_HIP.md:1049",
+    "docs/COMMUNITY_BENCHMARKS.md:47",
+    "docs/DETAILS.md:1600",
+    "docs/DETAILS.md:1609",
+    "docs/DETAILS.md:1610",
+    "docs/DETAILS.md:1611",
+    "docs/Q8_KV.md:207",
+    "docs/bench-results/2026-10-28-community-rtx4060-laptop-128k/README.md:61"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "rollback",
+   "owner": "poly",
+   "note": "[reviewed] a few tokens' attention through the tensor-core decode kernel from 4,096 positions of context, on unless =0; =1 from the first position, as the old opt-in was (engine/src/poly/qwen35.cpp:329)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_FETCH_PVM",
    "backends": [
     "cuda-hip",
@@ -8385,6 +8504,45 @@
    "status": "research",
    "owner": "kernels/cpu",
    "note": "[auto] not documented for users; code default not readable from the call",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_FREEZE_EXPERTS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 2947,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "off",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:529",
+    "docs/DETAILS.md:1052",
+    "docs/GLM.md:283",
+    "docs/Q8_KV.md:195",
+    "docs/Q8_KV.md:389"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] set: the split of experts between card and CPU is frozen for the whole run, so greedy answers repeat bit for bit (tests, quality comparisons) (engine/src/poly/engine.cpp:2943, docs/DETAILS.md:1052)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -9366,6 +9524,43 @@
    "status": "research",
    "owner": "prefill",
    "note": "[reviewed] \"8% slower prompt: off\" but stays opt-in; listed in PR table, not a user feature. [docs/INTEL.md:477]",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_GDN_MMA",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/gdn_mma_control.hpp",
+     "line": 10,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/BACKENDS.md:34",
+    "docs/DETAILS.md:1949",
+    "docs/bench-results/2026-10-24-community-rtx3060-polystrata-poly2-poly3/README.md:39"
+   ],
+   "first_commit": "7e9fb268a0",
+   "first_date": "2026-11-19",
+   "since": null,
+   "last_commit": "7e9fb268a0",
+   "last_date": "2026-11-19",
+   "status": "rollback",
+   "owner": "poly",
+   "note": "[reviewed] the chunked DeltaNet recurrence on the tensor cores for a prompt read, on where the card and shape allow it since 7e9fb268a; =0 keeps the old recurrence (engine/src/poly/gdn_mma_control.hpp:10). docs/BACKENDS.md:34 and docs/DETAILS.md:1949 still call it off by default",
    "retire_after": "",
    "retired_in": ""
   },
@@ -12730,6 +12925,44 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_HIP_PREFILL_FP32",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 4302,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:1029",
+    "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/README.md:41",
+    "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/main-kv-whole/README.md:23",
+    "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/pr176-vram-pool/README.md:23"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] HIP: =1 a prompt batch's attention products on FP32 inputs from a q8 cache, =2 the project's own kernels read the q8 cache as it lies; unset keeps the default path (engine/src/poly/kernels.cu:4298, docs/AMD_HIP.md:1029)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_HIP_PROMPT_F16",
    "backends": [
     "hip",
@@ -12914,6 +13147,51 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_HIP_SPLIT_ATTEND",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 3410,
+     "backend": "hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 3419,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:975",
+    "docs/RADEON_PRO_5500M.md:53",
+    "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/README.md:41",
+    "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/main-kv-whole/README.md:23",
+    "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/pr176-vram-pool/README.md:23"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] HIP: =1 up to 4 tokens over a long q8_0 cache (heads of 256) in one flash-decoding pass from 4,096 keys; off by default (engine/src/poly/kernels.cu:3408, docs/AMD_HIP.md:975)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_HIP_SWIGLU_FUSED",
    "backends": [
     "hip",
@@ -12950,6 +13228,52 @@
    "status": "research",
    "owner": "kernels/cuda",
    "note": "[auto] off unless set, not documented for users",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_HIP_VALUE_SPLIT",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 3494,
+     "backend": "hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/qwen35.cpp",
+     "line": 345,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:934",
+    "docs/AMD_HIP.md:979",
+    "docs/AMD_HIP.md:1006",
+    "docs/bench-results/2026-10-24-rx9070-hip-value-split/README.md:9",
+    "docs/bench-results/2026-10-24-rx9070-hip-value-split/README.md:58",
+    "docs/bench-results/2026-10-27-community-rx5700xt-windows-qwen36-q3/README.md:100"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] HIP: =1 splits the long-context weighted-value reduction of attend(); off by default (engine/src/poly/kernels.cu:3490, docs/AMD_HIP.md:934)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -15132,6 +15456,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_KERNEL_VRAM_FREE",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/include/strata/hip_compat/cuda_runtime.h",
+     "line": 120,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "hip_compat",
+   "note": "[reviewed] HIP on Linux: the free VRAM of a discrete card is read from sysfs (mem_info_vram_total - mem_info_vram_used) in place of hipMemGetInfo's figure; =0 keeps hipMemGetInfo's (engine/include/strata/hip_compat/cuda_runtime.h:117)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_KFD_QUIET",
    "backends": [
     "cuda-hip",
@@ -16369,6 +16726,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_KV_INT8",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kolibri1.cpp",
+     "line": 200,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/Q8_KV.md:18"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] Kolibri 1: =1 reads the q8_0 cache with the int8 dp4a kernel (the queries quantized too), for decode and the prompt; changes the arithmetic, off by default (engine/src/poly/kolibri1.cpp:197, docs/Q8_KV.md:18)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_KV_MAIN_OFF",
    "backends": [
     "cuda-hip",
@@ -16405,6 +16797,45 @@
    "status": "research",
    "owner": "core",
    "note": "[auto] off unless set, not documented for users",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_KV_MMA",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 4011,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 4093,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "-1",
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] the int8 tensor-core score kernel over a q8 cache: unset picks it by size, =1 forces it, =0 never; no effect on a card without int8 mma (engine/src/poly/kernels.cu:4008)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -16459,6 +16890,45 @@
    "status": "opt-in",
    "owner": "prefill",
    "note": "[reviewed] Listed as opt-in speed switch, \"4-5% slower on our 5070, so off\"; documented to users. [release-v0.1.40.md:64]",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_KV_REG",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 4023,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 4105,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "default",
+   "owner": "poly",
+   "note": "[reviewed] the register-blocked int8 score kernel for heads of 256, on unless =0 (engine/src/poly/kernels.cu:4023)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -18793,6 +19263,45 @@
    "status": "research",
    "owner": "metal/mtl_rt",
    "note": "[auto] not documented for users; code default not readable from the call",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_METAL_MM",
+   "backends": [
+    "metal"
+   ],
+   "reads": [
+    {
+     "file": "engine/metal/src/poly/quantized.cpp",
+     "line": 54,
+     "backend": "metal",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/metal/src/poly/quantized.cpp",
+     "line": 54,
+     "backend": "metal",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "default",
+   "owner": "metal/poly",
+   "note": "[reviewed] Metal strata-poly: quantized products through the mm row tiles, on unless =0 (engine/metal/src/poly/quantized.cpp:54)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -23312,6 +23821,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_NO_SPILL",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/spill.cpp",
+     "line": 206,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/GLM.md:284"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] non-zero: parked conversations' blobs stay on the heap instead of temporary files; parking still works, RAM use grows (engine/src/poly/spill.cpp:204, docs/GLM.md:284)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_NO_SUB16_GU",
    "backends": [
     "cuda-hip",
@@ -26886,6 +27430,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_PF_I8MMA",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/kernels/cuda/i8_mma.cuh",
+     "line": 415,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "1eb8d35853",
+   "first_date": "2026-11-18",
+   "since": null,
+   "last_commit": "1eb8d35853",
+   "last_date": "2026-11-18",
+   "status": "default",
+   "owner": "kernels/cuda",
+   "note": "[reviewed] a prompt's int8 tensor-core products where the card has them, on unless the value starts with 0 (engine/src/kernels/cuda/i8_mma.cuh:415)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_PF_KQ_OCC",
    "backends": [
     "hip"
@@ -29952,6 +30529,281 @@
    "status": "research",
    "owner": "sycl/ngram",
    "note": "[auto] diagnostic / trace / measurement switch by name or by code, not documented for users",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_AHEAD",
+   "backends": [
+    "cuda"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 5254,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "6a7275aa1b",
+   "first_date": "2026-11-19",
+   "since": null,
+   "last_commit": "43528ee44f",
+   "last_date": "2026-11-19",
+   "status": "default",
+   "owner": "poly",
+   "note": "[reviewed] one sequence's answer uploads the expert most tokens chose ahead of the card's experts, on unless =0; off by itself with --batch, --expert-swaps 0 or the card-far copies (engine/src/poly/engine.cpp:5250)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_CARDS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 1794,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] with --layer-split: =N puts a split's N parts on the cards there are in turn, so that a split can be tried on one card (engine/src/poly/engine.cpp:1793)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_CARD_FAR",
+   "backends": [
+    "cuda"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 5241,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "6e06e475e5",
+   "first_date": "2026-11-19",
+   "since": null,
+   "last_commit": "6e06e475e5",
+   "last_date": "2026-11-19",
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] experts the card lacks copied by the card from the host mirror: unset decides by the share of the profile's picks cached, =1 forces it, anything else turns it off (engine/src/poly/engine.cpp:5241)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_MIRROR",
+   "backends": [
+    "cuda"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 5100,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "7317a5fbd7",
+   "first_date": "2026-11-19",
+   "since": null,
+   "last_commit": "7317a5fbd7",
+   "last_date": "2026-11-19",
+   "status": "default",
+   "owner": "poly",
+   "note": "[reviewed] the host mirror of the experts outside VRAM that the card reads (CUDA, unified addressing), on where it applies unless =0 (engine/src/poly/engine.cpp:5100)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_PROMPT_BLAS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/mmq_own.cu",
+     "line": 113,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/mmq_paths_test.cu",
+     "line": 62,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "off",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "042122859b",
+   "first_date": "2026-11-20",
+   "since": null,
+   "last_commit": "042122859b",
+   "last_date": "2026-11-20",
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] =1: every prompt product by the BLAS path, as on Turing and in a HIP build, to check that path on a card that has the tiles (engine/src/poly/mmq_own.cu:109)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_STAGED_TILES",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 2921,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/DETAILS.md:1986",
+    "docs/DETAILS.md:2005"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] ascending row counts (at most 7): the staged experts of a prompt round in size classes, one launch each; unset keeps one launch; measured on an RX 5700 XT (engine/src/poly/engine.cpp:2917, docs/DETAILS.md:1986)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_STEP_HALVES",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 6066,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "d52294e6d3",
+   "first_date": "2026-11-19",
+   "since": null,
+   "last_commit": "d52294e6d3",
+   "last_date": "2026-11-19",
+   "status": "default",
+   "owner": "poly",
+   "note": "[reviewed] a step's rows in two halves so the card's layer and the CPU's experts overlap, on unless =0 (engine/src/poly/engine.cpp:6062)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_STREAM_STAGE",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 2886,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "1",
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/DETAILS.md:1971"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] =1: SSE2 streaming stores when experts are packed into the upload buffers during a prompt read; unset or 0 keeps the stock copies (engine/src/poly/engine.cpp:2886, docs/DETAILS.md:1971)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -38319,6 +39171,57 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_SLOTS_WARP",
+   "backends": [
+    "cuda",
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/kernels/cuda/native_mmvq.cu",
+     "line": 4000,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/main.cpp",
+     "line": 1691,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [
+    {
+     "file": "engine/src/poly/main.cpp",
+     "line": 1693
+    },
+    {
+     "file": "engine/src/poly/main.cpp",
+     "line": 1695
+    }
+   ],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/bench-results/2026-10-27-community-rx5700xt-windows-qwen36-q3/README.md:99"
+   ],
+   "first_commit": "09df494fa7",
+   "first_date": "2026-11-19",
+   "since": null,
+   "last_commit": "09df494fa7",
+   "last_date": "2026-11-19",
+   "status": "default",
+   "owner": "kernels/cuda",
+   "note": "[reviewed] the cached experts' warp kernel, 32 a launch: on by default in HIP builds unless =0; strata-poly sets =1 at start on CUDA unless the environment names it, any other CUDA program only with =1 (engine/src/kernels/cuda/native_mmvq.cu:3998, engine/src/poly/main.cpp:1687)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_SLOT_CKPT_KV_DIRECT",
    "backends": [
     "cuda-hip"
@@ -45608,6 +46511,41 @@
    "status": "research",
    "owner": "core",
    "note": "[reviewed] Verify window dump used to diagnose stalls. [round0216/RESULTS-RDNA4.md:42]",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_VMM_SETTLE",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 969,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:513"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] HIP on Linux (STRATA_VMM_MAP_SETTLES builds): a VRAM mapping waits for the kernel's page-table job before use; =0 leaves the wait out, to see the fault (engine/src/poly/engine.cpp:960, docs/AMD_HIP.md:513)",
    "retire_after": "",
    "retired_in": ""
   },

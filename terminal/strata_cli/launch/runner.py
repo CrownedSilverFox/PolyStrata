@@ -515,7 +515,8 @@ def own_log_path(base: dict) -> str | None:
 #: launcher decides those with --mtp and --drafting), "open_browser" (strata launch sets it itself), and
 #: "vram_reserve_mib" (an engine option that already survives as a flag in "args" with its "user_args" copy).
 WEB_SETTINGS_KEYS = ("reasoning_budget_tokens", "fit_max_tokens", "anthropic_thinking", "effort_position",
-                     "aliases", "idle_unload_s", "lazy_load", "engine_silence_s", "api_monitor")
+                     "aliases", "idle_unload_s", "lazy_load", "engine_silence_s", "api_monitor",
+                     "drop_oldest", "truncate_middle", "preserve_thinking", "switch_on_request")     # (the last four: PolyStrata's)
 WEB_SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p")     # the editable keys of the "sampling" block
 
 #: Advanced-table options (--set, a preset's extra table) that the server reads from the run config, not from the
@@ -545,7 +546,7 @@ def take_server_options(a_changes: dict) -> dict:
     return out
 
 
-#: #5858: run-defaults.json, user-wide server settings for every `strata launch` (beside launch-presets/: ~/.config/strata or %APPDATA%\\Strata).
+#: #5858: run-defaults.json, user-wide server settings for every `strata launch` (beside launch-presets/: ~/.config/polystrata or %APPDATA%\\PolyStrata).
 #: The Settings view's server keys (serve/runconfig.EDITABLE, checked with its rules) and undeclared_tool_calls; not "mtp", "open_browser" or
 #: engine options. Lowest precedence: the model's installed config, the Settings view's saved values and this launch's own choices come first.
 USER_DEFAULTS_FILE = "run-defaults.json"
@@ -1420,7 +1421,7 @@ class Runner:
                     src = Path(source).resolve()
                 except (OSError, TypeError):
                     continue
-                if here == src or here == src / "Strata-data":
+                if here == src or here == src / "PolyStrata-data":
                     return None                              # setup reuses it: the plan's installed answer is the start's
             return found
         except Exception:                                    # noqa: BLE001 - a plan line, never a reason to stop

@@ -132,7 +132,7 @@ class ControlModeTests(unittest.TestCase):
             self.assertEqual([p.name for p in S.installed_configs()], ["strata-q2_0.json"])
         with mock.patch.dict(os.environ, {"APPDATA": self.tmp.name, "XDG_CONFIG_HOME": self.tmp.name}):
             data, _ = S.data_folder_in_place()
-        self.assertEqual(data, self.home.resolve().parent / "Strata-data")
+        self.assertEqual(data, self.home.resolve().parent / "PolyStrata-data")
 
     @unittest.skipIf(os.name == "nt", "a launcher is a shell script: Linux and macOS bundles")
     def test_the_bundle_keeps_one_real_python_and_launchers_for_the_other_names(self):
@@ -457,7 +457,7 @@ class DeleteModelTests(unittest.TestCase):
         base = Path(self.tmp.name)
         self.root = base / "install"
         self.root.mkdir()
-        self.data = base / "Strata-data"
+        self.data = base / "PolyStrata-data"
         # The data folder Control may delete from is the one the settings file names (strata_mcp.Strata.data_dir): without this a PC that has its own settings
         # file (Windows: %APPDATA%\Strata\settings.json, the person's data_dir) made every folder of this test's fake data "outside Strata's folders".
         isolated = mock.patch.dict(os.environ, {"STRATA_SETTINGS_FILE": str(base / "no-settings.json")})

@@ -49,7 +49,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from strata_control import acquisition, longpath
+from strata_control import acquisition, longpath, paths
 from strata_control.targets import BACKEND_MATRIX, backend_supported, host_platform
 
 SCHEMA_VERSION = 2
@@ -185,8 +185,8 @@ def components_dir(environ=None, *, windows: bool | None = None, home: Path | No
     windows = os.name == "nt" if windows is None else windows
     home = Path.home() if home is None else home
     if windows:
-        return Path(environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) / "Strata" / "components"
-    return Path(environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")) / "strata" / "components"
+        return Path(environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) / paths.APP_NAME / "components"
+    return Path(environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")) / paths.XDG_NAME / "components"
 
 
 def engine_dir(root: Path | None = None) -> Path:
@@ -699,7 +699,7 @@ def _drm_vendor_backend(root: str = "/sys/class/drm") -> str | None:
 WIN_AMD_DEVICE_ARCH = {0x744C: "gfx1100", 0x7448: "gfx1100", 0x745E: "gfx1100", 0x747E: "gfx1101", 0x7480: "gfx1102",
                        0x7590: "gfx1200", 0x7550: "gfx1201", 0x7551: "gfx1201",
                        0x73BF: "gfx1030", 0x73AF: "gfx1030", 0x73A5: "gfx1030", 0x73A1: "gfx1030", 0x73DF: "gfx1031",
-                       0x73FF: "gfx1032", 0x73EF: "gfx1032", 0x73E3: "gfx1032"}
+                       0x73FF: "gfx1032", 0x73EF: "gfx1032", 0x73E3: "gfx1032", 0x731F: "gfx1010"}
 WIN_AMD_UMA_IDS = {0x1586: "gfx1151"}                                   # Strix Halo: unified memory, supported
 WIN_AMD_IGPU_IDS = {0x150E, 0x1114, 0x1902, 0x15BF, 0x15C8, 0x164F, 0x1900, 0x1901, 0x1681, 0x1638, 0x1636, 0x15D8, 0x15E7}
 _WIN_DISPLAY_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"

@@ -1,4 +1,5 @@
-"""Per-user state locations: %LOCALAPPDATA%\\Strata on Windows, $XDG_STATE_HOME/strata elsewhere."""
+"""Per-user state locations: %LOCALAPPDATA%\\PolyStrata on Windows, $XDG_STATE_HOME/polystrata elsewhere (PolyStrata's own, apart from
+the Strata project's Strata / strata)."""
 
 import os
 import tempfile
@@ -14,16 +15,16 @@ class StatePaths(unittest.TestCase):
     def test_windows_uses_localappdata(self):
         env = {"LOCALAPPDATA": "C:\\Users\\me\\AppData\\Local", "XDG_STATE_HOME": "/ignored"}
         self.assertEqual(paths.state_base(env, windows=True, home=Path("C:\\Users\\other")),
-                         Path("C:\\Users\\me\\AppData\\Local") / "Strata")
+                         Path("C:\\Users\\me\\AppData\\Local") / "PolyStrata")
 
     def test_windows_without_localappdata_falls_back_to_the_profile(self):
         self.assertEqual(paths.state_base({}, windows=True, home=Path("C:\\Users\\me")),
-                         Path("C:\\Users\\me") / "AppData" / "Local" / "Strata")
+                         Path("C:\\Users\\me") / "AppData" / "Local" / "PolyStrata")
 
     def test_posix_is_unchanged(self):
-        self.assertEqual(paths.state_base({"XDG_STATE_HOME": "/x"}, windows=False), Path("/x") / "strata")
+        self.assertEqual(paths.state_base({"XDG_STATE_HOME": "/x"}, windows=False), Path("/x") / "polystrata")
         self.assertEqual(paths.state_base({}, windows=False, home=Path("/home/me")),
-                         Path("/home/me") / ".local" / "state" / "strata")
+                         Path("/home/me") / ".local" / "state" / "polystrata")
 
     def test_runtime_dir_default_lives_under_the_state_base(self):
         with tempfile.TemporaryDirectory() as d:

@@ -226,7 +226,7 @@ class StartNeverAcquiresTests(unittest.TestCase):
         self.assertEqual(len(started), 1, text)                        # the server was started
         self.assertIn("server.py", " ".join(started[0]))
         self.assertEqual(self.env_of_start, "1")                         # the server is told, too
-        self.assertIn("is older than this Strata expects", text)
+        self.assertIn("is older than this PolyStrata expects", text)
         self.assertIn("--update", text)                                 # START-HERE.bat --update on Windows, ./setup.sh --update elsewhere
 
     def test_a_start_moves_copies_and_creates_nothing(self):

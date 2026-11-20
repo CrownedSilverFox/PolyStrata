@@ -7923,12 +7923,9 @@ def app_settings_file() -> Path | None:
 
 
 def settings_path() -> Path:
-    own = app_settings_file()
-    if own is not None:
-        return own
-    if WIN:
-        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "PolyStrata" / "settings.json"
-    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "polystrata" / "settings.json"
+    """The app's STRATA_SETTINGS_FILE, else PolyStrata's own settings file: the Terminal reads the same one (one definition)."""
+    from strata_control import discovery
+    return discovery.own_settings_file(windows=WIN)
 
 
 def load_settings() -> dict:
@@ -9046,7 +9043,7 @@ def update_pull(argv: list) -> int | None:
     if repo is None:
         if source_download():
             say("  This copy of PolyStrata was not made with git, so it cannot fetch new files itself. Download the newest one:")
-            say("    https://github.com/Niko1221/Strata/archive/refs/heads/main.zip")
+            say("    https://github.com/simplexai-labs/PolyStrata/archive/refs/heads/main.zip")
             say(f"  unzip it anywhere and run {'START-HERE.bat' if WIN else './setup.sh'} in it: it finds the model files in PolyStrata-data")
             say("  and sets itself up the same way - nothing big is downloaded again.")
             say("  Checking this copy's engine and settings meanwhile ...")
@@ -10247,7 +10244,7 @@ def build_engine_poly_hip(gpu, llama, portable=False) -> Path:
                  "-DCMAKE_HIP_ARCHITECTURES=" + ";".join(archs),
                  f"-DCMAKE_HIP_COMPILER={rocm_clang(root)}", f"-DCMAKE_HIP_COMPILER_ROCM_ROOT={root}",
                  "-DCMAKE_PREFIX_PATH=" + ";".join([str(root), *libs]),
-                 f"-DCMAKE_HIP_FLAGS=--rocm-path={root} --rocm-device-lib-path={bitcode}",
+                 f"-DCMAKE_HIP_FLAGS=-isystem {root}/include --rocm-path={root} --rocm-device-lib-path={bitcode}",
                  *ggml_defs(llama)], None, "")
     shutil.copy2(ROOT / "build-poly-hip" / POLY_EXE, eng / POLY_EXE)
     stamp.write_text(json.dumps({"source": "local-hip", "backend": "hip", "version": source_version(),
@@ -10680,7 +10677,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
     pack = find_in([data, *elsewhere], f"packs/{pack_tag.lower()}") or data / "packs" / pack_tag.lower()
     if not (pack / "tokenizer" / "vocab.json").exists():
         run([sys.executable, str(ROOT / "tools" / "strata_tokenizer.py"), "--gguf", str(gguf), "--out", str(pack)],
-            env=dict(os.environ, STRATA_GGUF_PY=str(llama / "gguf-py")))   # writes <pack>/tokenizer/
+            env=dict(os.environ, **gguf_py_env()))   # writes <pack>/tokenizer/
     # a file without a chat template gets the model's own from the model's repository, pinned like the files
     tpl = pack / "tokenizer" / "chat_template.jinja"
     if fam.get("template") and not tpl.exists():
@@ -11559,8 +11556,8 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
 
     if kind in ("known", "layout"):
         # parse family/model from the matching key(s) in the table
-        table = load_fingerprints()
-        known = {k: v for k, v in table.items() if not k.startswith("_")}
+        # the strata-poly sizes (strata_inspect.header_rows()) carry names only, no header to match
+        known = {k: v for k, v in load_fingerprints().items() if not k.startswith("_") and v.get("engine") != "strata-poly"}
         if kind == "known":
             matches = [k for k, v in known.items()
                        if v["expert_bytes"] == fp["expert_bytes"] and v["bytes"] == fp["bytes"]
@@ -11657,7 +11654,6 @@ def prepare_pack_only(a) -> int:
         fail(*problem)
     pack = Path(a.prepare_pack)
     step(1, "preparing the model for this graphics card")
-    llama = llama_override()
     ok("model file reader ready")
     env = dict(os.environ, **gguf_py_env())
     if not (pack / "native_experts.txt").exists() or not (pack / "tokenizer" / "vocab.json").exists():
@@ -11807,8 +11803,6 @@ def mac_control_setup(a) -> int:
 
     step(4, "the PolyStrata engine (Metal)")
     from strata_control import engine_component as EC
-    llama = llama_cpp_if_here()                        # gguf-py for the preparation tools only (fetched when one runs): no git, no compiler
-    ok(f"llama.cpp {LLAMA_CPP_COMMIT[:7]} (gguf-py for the preparation tools)")
     reader = None
     try:
         if SHAPE_ENGINE.get("shape"):
@@ -12259,7 +12253,8 @@ def main() -> int:
             a.gpus = ",".join(str(i) for i in order)
         else:
             a.gpu = order[0]
-    say("PolyStrata - " + (OWN_PATH_FAMILIES[a.family]["title"] if a.family in OWN_PATH_FAMILIES else "Qwen3.8-Flash-Next")
+    say("PolyStrata - " + ({**FAMILIES, **OWN_PATH_FAMILIES}.get(a.family) or {}).get("title",
+                                                                                  "Qwen3.8-Flash-Next, GLM 5.3 Flash and smaller MoE models")
         + " on a normal PC (a GPU + system RAM + CPU)")
     have = installed_configs()
     if a.update or not (a.setup or a.model or a.family or a.check or a.no_start or a.calibrate or a.rollback_engine):

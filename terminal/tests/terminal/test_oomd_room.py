@@ -269,7 +269,7 @@ class RealDrop(unittest.TestCase):
     def test_the_server_calls_it_before_it_starts_the_engine(self):
         text = (ROOT / "serve" / "server.py").read_text(encoding="utf-8")
         room = text.index("oomd_pacer.make_room(args)")
-        self.assertLess(room, text.index("self.proc = popen(\"the Strata engine\""))
+        self.assertLess(room, text.index("self.proc = popen(\"the PolyStrata engine\""))
         self.assertGreater(room, text.index("end_leftover_engines(exe)"))
 
 

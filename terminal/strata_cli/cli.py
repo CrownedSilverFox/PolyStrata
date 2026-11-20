@@ -393,7 +393,7 @@ def parser() -> argparse.ArgumentParser:
                              "a fabricated improvement.")
     ts_run.add_argument("--state-dir", default=None,
                         help="where runs are recorded (default: $STRATA_TIMESKIP_DIR or "
-                             "$XDG_STATE_HOME/strata/time-skip, %%LOCALAPPDATA%%\\Strata\\time-skip on Windows)")
+                             "$XDG_STATE_HOME/polystrata/time-skip, %%LOCALAPPDATA%%\\PolyStrata\\time-skip on Windows)")
     ts_run.add_argument("--output", choices=("human", "json"), default="human")
 
     ts_status = timeskip_sp.add_parser("status", help="read a run's durable state and evidence")
@@ -653,9 +653,9 @@ def _import_problem(plan: dict) -> str:
 
 
 def _models_move(a: argparse.Namespace) -> int:
-    from strata_control import discovery, models, models_move as mm
+    from strata_control import discovery, models, models_move as mm, paths
     machine = a.output in ("json", "jsonl")
-    old = Path(a.source) if a.source else discovery.data_dir(Path.home() / "Strata")[0]
+    old = Path(a.source) if a.source else discovery.data_dir(Path.home() / paths.APP_NAME)[0]
     if a.status or a.resume or a.leave:
         return _models_move_unfinished(a, old)
     if not a.to:

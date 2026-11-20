@@ -18,7 +18,7 @@ Q6 = F.inputs("qwen3.6-35b-a3b", "UD-Q6_K_XL")
 
 class PerToken(unittest.TestCase):
     def test_one_session_takes_its_fp32_cache_and_the_shared_fp16_copy(self):
-        fam = setup.OWN_PATH_FAMILIES["qwen36"]
+        fam = setup.OWN_PATH_FAMILIES["qwen36-strata"]
         self.assertEqual(fam["kv_bytes_per_token"], 45056)                 # a session's (a parallel slot's) K / V: unchanged
         self.assertEqual(F.BYTES_PER_TOKEN, fam["kv_bytes_per_token"] + 2048)
         self.assertEqual(F.BYTES_PER_TOKEN, 47104)
@@ -40,7 +40,7 @@ class PerToken(unittest.TestCase):
         self.assertEqual(F.from_model_name("qwen3.6-35b-a3b-q8_0"), Q6)
         self.assertIsNone(F.from_model_name("qwen3.8-flash-next-iq3_s"))
         self.assertIsNone(F.from_model_name(None))
-        for name in ("qwen36",):
+        for name in ("qwen36-strata",):
             self.assertEqual(setup.OWN_PATH_FAMILIES[name]["name"], F.FAMILY_NAME)
             self.assertEqual(sorted(setup.OWN_PATH_FAMILIES[name]["models"]), sorted(F.HYBRID_MIN_GIB))
 

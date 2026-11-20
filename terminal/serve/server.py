@@ -1123,10 +1123,10 @@ class StrataEngine:
         for line in reversed(wide.splitlines()):
             if "issue #29" in line:
                 return ("The engine stopped itself because it had stopped making progress - a hang it caught. Its log "
-                        "line: " + line.strip() + " - please report it at github.com/Niko1221/Strata/issues.")
+                        "line: " + line.strip() + " - please report it at github.com/simplexai-labs/PolyStrata/issues.")
         if (self.last_err or "").startswith("fatal GPU error"):    # #4350: the engine ended itself; the next request starts it again
             return ("The graphics card reported a fatal error (" + self.last_err[len("fatal GPU error:"):].strip()[:160] + "), so the engine "
-                    "ended. The next request starts it again. If this repeats, please report it at github.com/Niko1221/Strata/issues "
+                    "ended. The next request starts it again. If this repeats, please report it at github.com/simplexai-labs/PolyStrata/issues "
                     "with the log.")
         proc = self.proc                                 # None while a restart has not started the next one yet
         rc = proc.poll() if proc is not None else None
@@ -1146,14 +1146,14 @@ class StrataEngine:
                 sig = f"signal {-rc}"
             line = next((x.strip() for x in reversed(tail.splitlines()) if x.strip()), "(none)")
             return (f"The engine was ended by {sig}: a crash, or a signal from another program. Its last log line: "
-                    f"{line} - please report it at github.com/VecSzn/PolyStrata/issues with the log.")
+                    f"{line} - please report it at github.com/simplexai-labs/PolyStrata/issues with the log.")
         if rc is not None and rc >= 0 and self.last_err:  # its own last words on stdout: they say why
             return (f"The engine exited (code {rc}) after it reported: {self.last_err} - please report it at "
-                    "github.com/VecSzn/PolyStrata/issues with the log.")
+                    "github.com/simplexai-labs/PolyStrata/issues with the log.")
         last = next((x.strip() for x in reversed(tail.splitlines()) if x.strip().startswith(("strata", "ERR"))), "")
         if rc is not None and rc >= 0 and last:          # it ended by itself: its own last words say why (#215)
             return (f"The engine exited (code {rc}). Its last log line: {last} - if that does not explain it, please "
-                    "report it at github.com/Niko1221/Strata/issues with the log.")
+                    "report it at github.com/simplexai-labs/PolyStrata/issues with the log.")
         rt_note = rttime_limit_note() if rc == -9 else ""
         if rt_note:                                       # #3238: the kernel killed it, but not for RAM
             return ("The engine was ended by signal 9. " + rt_note + " If dmesg (sudo dmesg | grep -i -E 'killed "
@@ -2747,9 +2747,9 @@ class StrataEngine:
     def _silent(self, what: str) -> EngineSilent:
         """#481: end an engine that lost step with the server (its main thread waits for a command the server never
         sends), so the next request starts it again: killed now, its GPU and RAM go back with the process."""
-        self.silent_note = ("The engine and the server lost step (issue #481; a very slow PC can raise "
-                            "\"engine_silence_s\" in the config, 0 = wait forever). If it happens again, please add "
-                            "the end of the engine log to github.com/Niko1221/Strata/issues/481.")
+        self.silent_note = ("The engine and the server lost step (the Strata project's issue #481; a very slow PC can raise "
+                            "\"engine_silence_s\" in the config, 0 = wait forever). If it happens again, please report it with "
+                            "the end of the engine log at github.com/simplexai-labs/PolyStrata/issues.")
         self.ended = True                               # not alive from now: the next request restarts it
         proc = self.proc
         try:
@@ -3890,7 +3890,10 @@ def child_env(cfg: dict, *, offline: bool = False) -> dict:
         env[str(k)] = str(v)
     # 0.2.17 (owner 11-19): the route tail skip is Off unless the person turned it on (STRATA_ROUTE_TAIL_SKIP=7 in the config or in their own environment).
     # The engine's own rule for an unset value is rank 7, so an unset one is set to 0 here, for a config made before 0.2.17 too.
-    speed_switches.engine_env_defaults(env)
+    # Not for strata-poly: it reads the variable over its --tail-skip, so a 0 here would undo the family's default in the config (Qwen3.6's
+    # --tail-skip 6, as in poly.10).  Unset, the config's --tail-skip decides; --tail-skip 0 or the variable still turn it off.
+    if not poly_engine(cfg):
+        speed_switches.engine_env_defaults(env)
     # Strict offline reaches children through the environment, because a tool subprocess or a model
     # loader is code this server does not own. Applied last so a profile's own `env` cannot remove
     # the policy by naming the same variable.
@@ -6114,7 +6117,8 @@ class Service:
         raw_ids = []                                    # every generated id (STRATA_DEBUG: dump raw model text)
         admission_rejected = False                      # #3040: the engine's batch slots refused it before it read anything
         emb, self.embeddings.path = getattr(self.embeddings, "path", None), None   # this run's to delete now
-        if emb:                                         # strata-poly finds the images' rows by their token
+        # strata-poly finds the images' rows by their token; the split engine knows its own (its parser refuses the key: tests/split/test_split_gen_keys.py)
+        if emb and getattr(self.engine, "split_engine", False) is not True:
             sampling = {**(sampling or {}), "image_pad": self.embeddings.pad}
         self.warm_stop.set()                            # a warm read (start_warm()) gives way
         if self.warm_start and tools and not emb:
@@ -6470,7 +6474,8 @@ class Service:
                                     parser = self.parser_cls(thinking=False, tools=with_history_tools(tools, sampling),
                                                              stream_tools=True, recover=self.tool_call_recovery,
                                                              declared_only=declared_only,
-                                                             deferred=deferred or self.undeclared_tool_calls == "call")
+                                                             deferred=deferred or self.undeclared_tool_calls == "call",
+                                                             call_format=self.call_format)
                                     detok, tail, parser_done, force, budget = Detokenizer(self.tok), "", False, None, None
                                     if forced_text:     # a forced call (tool_choice): its opening again, read as
                                         for ev in cut(parser.feed(forced_text)):     # if the model had written it
@@ -8997,7 +9002,7 @@ def run_config(path, overrides: dict | None = None) -> dict:
 
 def model_settings(cfg: dict, overrides: dict | None = None) -> dict:
     """#37: what a model's own run config sets on the Service ({attribute: value}), read at the start and again at every
-    switch to that model (Service.apply_settings).  `overrides` are the command line's --fit-max-tokens, --idle-unload,
+    switch to that model (Service.apply_settings).  `overrides` are the command line's --(no-)fit-max-tokens, --idle-unload,
     --min-free-vram-mib and --before-load, which win for every model.  ValueError names a bad value; nothing is set
     then, so a switch to a model with a bad config leaves the loaded one alone.  The keys of the server itself (host,
     api_key, allowed_hosts, cors_origins, ...) are main()'s: they come from the config the server started with."""
@@ -9041,7 +9046,8 @@ def model_settings(cfg: dict, overrides: dict | None = None) -> dict:
         timeout = BEFORE_LOAD_TIMEOUT_S
         print(f"[strata] \"before_load_timeout_s\" in the config is not a number; using {timeout:g} s", flush=True)
     return {
-        "fit_max_tokens": bool(over.get("fit_max_tokens")) or cfg.get("fit_max_tokens") is True,
+        # on unless the command line or the config turns it off (0.2.17: a max_tokens that does not fit is shortened, not a 400)
+        "fit_max_tokens": over["fit_max_tokens"] if "fit_max_tokens" in over else cfg.get("fit_max_tokens") is not False,
         "reasoning_close_retry": cfg.get("reasoning_close_retry") is True,   # #1053: opt-in, off by default
         "drop_oldest": cfg.get("drop_oldest") is True,                       # #17: opt-in, off by default
         "truncate_middle": cfg.get("truncate_middle") is True,               # opt-in, off by default
@@ -9457,7 +9463,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
         if blocked:
             ap.error("--offline cannot be strict for this profile: " + "; ".join(blocked))
     lazy = False
-    overrides = {"fit_max_tokens": a.fit_max_tokens or None, "idle_unload_s": a.idle_unload,
+    overrides = {"fit_max_tokens": True if a.fit_max_tokens else False if a.no_fit_max_tokens else None, "idle_unload_s": a.idle_unload,
                  "min_free_vram_mib": a.min_free_vram_mib, "before_load": a.before_load}
     try:
         settings = model_settings(cfg, overrides)       # #37: the model's own settings, read again at every switch

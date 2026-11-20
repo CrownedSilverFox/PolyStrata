@@ -24,7 +24,7 @@ class Verdict(unittest.TestCase):
         return copy.deepcopy({k: v for k, v in self.table[key].items() if k not in ("files", "repo")})
 
     def test_every_installed_file_is_known(self):
-        for key in (k for k in self.table if not k.startswith("_")):
+        for key in SI.header_rows(self.table):          # the strata-poly sizes are known by name (tests/terminal/test_own_files_poly.py)
             kind, sentence = SI.verdict(self.fp(key), self.table)
             fam, model = key.split("/")
             self.assertEqual(kind, "known", key)

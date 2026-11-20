@@ -11,6 +11,8 @@ import os
 import re
 from pathlib import Path
 
+from strata_control import paths
+
 WINDOWS = os.name == "nt"
 
 if WINDOWS:
@@ -507,9 +509,9 @@ _SKIP_SUFFIXES = (".gguf", ".part", ".bin", ".safetensors", ".zip", ".exe", ".dl
 
 
 def known_roots() -> list[Path]:
-    """Strata's per-user data folders: APPDATA/Strata, LOCALAPPDATA/Strata and ~/.strata (plus the STRATA_* overrides)."""
+    """PolyStrata's per-user data folders: APPDATA/PolyStrata, LOCALAPPDATA/PolyStrata and ~/.strata (plus the STRATA_* overrides)."""
     roots: list[Path] = []
-    for key, sub in (("APPDATA", "Strata"), ("LOCALAPPDATA", "Strata")):
+    for key, sub in (("APPDATA", paths.APP_NAME), ("LOCALAPPDATA", paths.APP_NAME)):
         value = os.environ.get(key)
         if value:
             roots.append(Path(value) / sub)

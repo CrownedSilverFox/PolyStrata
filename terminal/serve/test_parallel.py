@@ -651,7 +651,9 @@ class BatchLegAccounting(FakeEngineCase):
             self.assertFalse(worker.is_alive())
         self.assertEqual(errors, [])
         self.assertEqual(len(replies), 2)
-        self.assertEqual([line.split()[0] for line in self.log.read_text().splitlines()][:2], ["BGEN", "BGEN"])
+        # (the fake engine logs every BSTOP too; a stop at the admission token sends one before the second BGEN)
+        sent = [line.split()[0] for line in self.log.read_text().splitlines()]
+        self.assertEqual([word for word in sent if word != "BSTOP"][:2], ["BGEN", "BGEN"], sent)
         return replies
 
     def test_eos_adds_admission_time_without_counting_its_token_twice(self):
