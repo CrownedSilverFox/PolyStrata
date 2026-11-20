@@ -65,6 +65,10 @@ constexpr int kSnapPlaces = 3;
 // gives them VRAM for rows kKvGrow at a time, kKvAhead past the call, and the expert cache gives that up in pieces
 // of kArenaPiece.
 constexpr int64_t kKvGrow = 4096, kKvAhead = 1024;
+// The same with batch slots (Options::batch): a sequence of a 512-token chat held 4,096 rows of Qwen3.6's q8 KV, 48 MB,
+// and 16 of them most of a GiB the expert cache did without.  One answer at a time keeps the larger steps: a long
+// prompt asks the expert cache for VRAM fewer times.
+constexpr int64_t kKvGrowBatch = 1024, kKvAheadBatch = 256;
 constexpr size_t kArenaPiece = size_t(64) << 20;
 
 using Clock = std::chrono::steady_clock;

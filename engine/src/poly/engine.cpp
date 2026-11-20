@@ -943,11 +943,11 @@ bool Engine::vpool_claim_to_budget(size_t margin, size_t limit, size_t& claimed)
     return true;
 }
 
-// What the attention caches take for one step of their growth (cover() maps kKvGrow rows at a time, in handles of the
+// What the attention caches take for one step of their growth (cover() maps kv_grow() rows at a time, in handles of the
 // pool's size): the room the pool keeps for the next one.
 size_t Engine::kv_step_bytes() const {
     size_t b = 0;
-    for (const Kv& k : kv_) b += up_to((size_t) ((kKvGrow + k.per - 1) / k.per) * k.bytes, pg_);
+    for (const Kv& k : kv_) b += up_to((size_t) ((kv_grow() + k.per - 1) / k.per) * k.bytes, pg_);
     return b;
 }
 
@@ -1424,7 +1424,7 @@ void Engine::copy_seq(int from, int to) {
     if (next_) next_->copy_seq(from, to);
 }
 
-// The attention caches' VRAM for the rows below `end`: rows kKvGrow at a time, kKvAhead more for the answer to go
+// The attention caches' VRAM for the rows below `end`: rows kv_grow() at a time, kv_ahead() more for the answer to go
 // on.  The expert cache gives it up (shrink_cache()), as if the rows had been there when it was filled: the
 // reserve stays for what is recorded later.  A quarter of the reserve stays free whatever else took VRAM since
 // (mind_vram()).
@@ -1458,15 +1458,18 @@ void Engine::cover(int64_t end) {
         if (free_b < more + quarter) cut = std::max(cut, more + quarter - free_b);
         if (cut) shrink_cache(cut);
     }
-    // in pieces of kKvGrow rows, so that trim_card_kv() can give back what a long read mapped in one go
+    // in pieces of kv_grow() rows, so that trim_card_kv() can give back what a long read mapped in one go
     for (Kv& k : kv_)
-        vmm_map(k, size(k), (size_t) ((kKvGrow + k.per - 1) / k.per) * k.bytes, "the attention cache");
+        vmm_map(k, size(k), (size_t) ((kv_grow() + k.per - 1) / k.per) * k.bytes, "the attention cache");
     kv_rows_ = rows;
 }
 
 int64_t Engine::kv_rows_for(int64_t end) const {
-    return std::min<int64_t>(opt_.max_context, (end + kKvAhead + kKvGrow - 1) / kKvGrow * kKvGrow);
+    return std::min<int64_t>(opt_.max_context, (end + kv_ahead() + kv_grow() - 1) / kv_grow() * kv_grow());
 }
+
+int64_t Engine::kv_grow() const { return opt_.batch > 0 ? kKvGrowBatch : kKvGrow; }
+int64_t Engine::kv_ahead() const { return opt_.batch > 0 ? kKvAheadBatch : kKvAhead; }
 
 size_t Engine::trim_kv(int64_t end) {
     size_t freed = 0;
