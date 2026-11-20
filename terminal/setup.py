@@ -12207,7 +12207,8 @@ def main() -> int:
             a.gpus = ",".join(str(i) for i in order)
         else:
             a.gpu = order[0]
-    say("PolyStrata - " + (OWN_PATH_FAMILIES[a.family]["title"] if a.family in OWN_PATH_FAMILIES else "Qwen3.8-Flash-Next")
+    say("PolyStrata - " + ({**FAMILIES, **OWN_PATH_FAMILIES}.get(a.family) or {}).get("title",
+                                                                                  "Qwen3.8-Flash-Next, GLM 5.3 Flash and smaller MoE models")
         + " on a normal PC (a GPU + system RAM + CPU)")
     have = installed_configs()
     if a.update or not (a.setup or a.model or a.family or a.check or a.no_start or a.calibrate or a.rollback_engine):
