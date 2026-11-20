@@ -271,7 +271,7 @@ class WhereItIsCalled(unittest.TestCase):
     def test_the_server_starts_the_pacer_right_after_the_engine(self):
         text = (ROOT / "serve" / "server.py").read_text(encoding="utf-8")
         self.assertIn("from serve import oomd_pacer", text)
-        spawn = text.index('self.proc = popen("the Strata engine"')
+        spawn = text.index('self.proc = popen("the PolyStrata engine"')
         call = text.index("oomd_pacer.start(proc, loading, args=args)")
         self.assertGreater(call, spawn)
         self.assertLess(call - spawn, 1800)

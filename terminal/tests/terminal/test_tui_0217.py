@@ -273,7 +273,7 @@ class LastRunNote(Base):
         notes = [e for e in events if e.stage == "note"]
         self.assertEqual(len(notes), 1)
         self.assertEqual(notes[0].text, lastrun.UNCLEAN_WORDS.removeprefix("[strata] "))
-        self.assertTrue(notes[0].text.startswith("Last time, Strata did not end normally"))
+        self.assertTrue(notes[0].text.startswith("Last time, PolyStrata did not end normally"))
         self.assertEqual(r.last_run, notes[0].text)
         self.assertIn(notes[0].text, r.notices)
         self.assertTrue(path.exists())                     # the server still finds the marker and replaces it itself
@@ -284,7 +284,7 @@ class LastRunNote(Base):
                 mock.patch.object(lastrun, "previous_end_words", side_effect=lambda m: lastrun.OOMD_WORDS):
             r = Runner(S.LaunchSettings(family="qwen", model="Q2_0", context=32768), catalog=catalog(HW_12))
             r.say_last_run()
-        self.assertTrue(r.last_run.startswith("Last time, this computer's memory guard (systemd-oomd) ended Strata"))
+        self.assertTrue(r.last_run.startswith("Last time, this computer's memory guard (systemd-oomd) ended PolyStrata"))
 
     def test_nothing_is_said_without_a_leftover_marker_or_off_linux(self):
         path, lastrun = self.marker()

@@ -132,7 +132,7 @@ class InstallPlan(unittest.TestCase):
     @unittest.skipIf(sys.platform == "darwin", "the test's temporary folder is under /var/folders, a macOS system folder the data-folder check refuses; and setup hands a Mac to metal/setup_mac.py")
     def test_without_the_files_there_is_no_download_and_the_words_say_so(self):
         with tempfile.TemporaryDirectory() as t:
-            data = Path(t) / "Strata-data"
+            data = Path(t) / "PolyStrata-data"
             data.mkdir()
             with self.assertRaises(M.ToolError) as raised:
                 self.plan([A750], data_dir=str(data))

@@ -97,10 +97,10 @@ class StatusProbe(unittest.TestCase):
         tools = MCP.Tools(self.strata)
         out = tools.strata_status(port=up, hardware=False)
         self.assertEqual([r["port"] for r in out["running"]], [up])
-        self.assertTrue(out["summary"].startswith(f"Strata is running on port {up}"))
+        self.assertTrue(out["summary"].startswith(f"PolyStrata is running on port {up}"))
         out = tools.strata_status(port=free_port(), hardware=False)
         self.assertEqual(out["running"], [])
-        self.assertTrue(out["summary"].startswith("Strata is not running"))
+        self.assertTrue(out["summary"].startswith("PolyStrata is not running"))
 
 
 class CardSpeedChild(unittest.TestCase):
