@@ -3186,7 +3186,19 @@ void Engine::load(const Options& o) {
     if (opt_.ram_experts_mib < -1) {
         constexpr size_t kRamHeadroom = size_t(4) << 30, kOwnHeadroom = size_t(3) << 29;
         bool own = false;
-        const size_t avail = ram_available(&own);
+        size_t avail = ram_available(&own);
+#ifdef _WIN32
+        // fill_expert_cache() let the card's experts go from the working set to the standby list, which Windows
+        // counts as available: the budget would take for the CPU's experts the RAM the load just saved.  They are
+        // counted as used, as they were before they went.  On the laptop Qwen3.6 UD-Q3_K_M saw 11.0 GiB free with
+        // its 3.6 GiB of cached experts let go, and 7.3 GiB held.  Linux counts file pages as available either way.
+        size_t held = 0;
+        for (const Layer& L : layers_)
+            if (L.moe)
+                expert_runs(L, n_expert_, [&](int e) { return L.slot[(size_t) e] != nullptr; },
+                            [&](const uint8_t*, size_t n) { held += n; });
+        if (avail) avail = avail > held ? avail - held : 1;   // 0 is "cannot tell"
+#endif
         opt_.ram_experts_mib = -1;
         if (avail && !opt_.lock_experts && outside_bytes_ + kRamHeadroom > avail) {
             const size_t keep = own ? kOwnHeadroom : kRamHeadroom;
