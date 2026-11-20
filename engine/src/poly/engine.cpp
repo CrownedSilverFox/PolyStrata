@@ -3485,12 +3485,15 @@ void Engine::alloc() {
         tab_ = (int32_t*) dmalloc(tab, "scratch");
         h_tab_ = (int32_t*) hmalloc(tab, "pinned memory");
         if (mmq_) mmq_->mirror(tab_, h_tab_, tab);   // the bounds moe_rows() hands mul() are in tab_, written from h_tab_
-        iota_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
+        // the ids of the gate and up products, with Mmq::kIdsTail behind the call's last row (d_place, the down
+        // products' ids, has the rest of tab_ behind it)
+        const size_t ids = rr + (size_t) Mmq::kIdsTail;
+        iota_ = (int32_t*) dmalloc(ids * sizeof(int32_t), "scratch");
         d_ex_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         h_ex_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");
-        std::vector<int32_t> ramp(rr);
+        std::vector<int32_t> ramp(ids);
         std::iota(ramp.begin(), ramp.end(), 0);
-        ck(cudaMemcpy(iota_, ramp.data(), rr * sizeof(int32_t), cudaMemcpyHostToDevice), "scratch");
+        ck(cudaMemcpy(iota_, ramp.data(), ids * sizeof(int32_t), cudaMemcpyHostToDevice), "scratch");
         // the next MoE layer's router on a layer's input (moe_router()), for vram_ahead() or pool_ahead(): here, so
         // that the expert cache is sized without it
         const size_t part = 16 * (size_t) n_expert_;
