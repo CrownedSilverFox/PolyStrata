@@ -2347,12 +2347,27 @@ void Engine::take_prompt() {
     if (up_) ck(cudaStreamSynchronize(cs(up_)), "a prompt's buffers");
     ck(cudaStreamSynchronize(cs(st_)), "a prompt's buffers");
     const size_t grain = pool_on_ ? pg_ : grain_;
-    const size_t want = (prompt_lent_ ? up_to(prompt_bytes_, grain) : 0) + (work_lent_ ? up_to(work_bytes_, grain) : 0);
+    const size_t mine = prompt_lent_ ? up_to(prompt_bytes_, grain) : 0;
+    const size_t want = mine + (work_lent_ ? up_to(work_bytes_, grain) : 0);
     size_t free_b = 0, total_b = 0;
     ck(cudaMemGetInfo(&free_b, &total_b), "cudaMemGetInfo");
     if (pool_on_) free_b = vpool_bytes();
     const size_t quarter = pool_on_ ? 0 : (size_t(std::max(reserve_mib_, 0)) << 20) / 4;
-    if (exp_ && free_b < want + quarter) shrink_cache(want + quarter - free_b);
+    work_over_ = 0;
+    if (exp_ && free_b < want + quarter) {
+        // shrink_cache() cuts whole pieces (kArenaPiece) from the cache's end, more than the need.  The part of that
+        // excess the prompt's buffers alone would not have cut is the work memory's, and lend_prompt() gives it back
+        // with the memory: Qwen3.6 UD-Q3_K_M at a prompt batch of 1,024 cut 242 MiB for a need of 184, where the
+        // buffers alone cut 114 for 88, and the 32 MiB more stayed free on the card.
+        const size_t need = want + quarter - free_b, alone = mine + quarter > free_b ? mine + quarter - free_b : 0;
+        size_t alone_cut = 0;
+        for (size_t i = arena_.pieces.size(); i > 0 && alone_cut < alone; --i) alone_cut += arena_.pieces[i - 1].second;
+        const size_t had = arena_.mapped;
+        shrink_cache(need);
+        const size_t over = had - arena_.mapped > need ? had - arena_.mapped - need : 0;
+        const size_t over_alone = alone_cut > alone ? alone_cut - alone : 0;
+        if (over > over_alone) work_over_ = over - over_alone;
+    }
     if (!pool_on_) budget_ -= std::min(budget_, want);
     if (prompt_lent_) vmm_map(prompt_map_, prompt_bytes_, SIZE_MAX, "a prompt's buffers");
     if (work_lent_) vmm_map(work_map_, work_bytes_, SIZE_MAX, "the prompt products' work memory");
@@ -2372,7 +2387,7 @@ void Engine::lend_prompt() {
     if (work_map_.base && !work_lent_) {   // (whole pieces: alloc() rounds it to them)
         vmm_unmap(work_map_, 0);
         work_lent_ = true;
-        bytes += work_bytes_;
+        bytes += work_bytes_ + work_over_;
         budget += work_bytes_;
     }
     if (!pool_on_) budget_ += budget;

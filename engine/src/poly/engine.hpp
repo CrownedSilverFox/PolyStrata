@@ -689,6 +689,8 @@ protected:
     /// from the start (alloc()).
     Mapped work_map_;
     size_t work_bytes_ = 0;
+    /// What take_prompt()'s cut of the expert cache gave up beyond the work memory's share (whole pieces).
+    size_t work_over_ = 0;
     bool work_lent_ = false;
     void take_prompt();
     void lend_prompt();
