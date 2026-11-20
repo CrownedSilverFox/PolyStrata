@@ -4170,6 +4170,7 @@ class Service:
         self.overrides: dict = {}
         self.cfg_overrides: dict = {}
         self.idle_thread = None                           # start_idle_unload()'s, once one is running
+        self.idle_stop = threading.Event()                # ... and what ends it (shutdown())
         # #38: every request holds the model it runs on (use_model()); a switch waits until none does.  With
         # "switch_on_request" (opt-in) a request that names another installed model loads that one first.
         self.gate = ModelGate(lambda: config_key(self.config_path) if self.config_path else None)
@@ -5256,7 +5257,8 @@ class Service:
         def loop():
             while True:
                 idle = self.idle_unload_s
-                time.sleep(max(1.0, min(30.0, idle / 4)) if idle else 30.0)
+                if self.idle_stop.wait(max(1.0, min(30.0, idle / 4)) if idle else 30.0):
+                    return
                 if not self.idle_unload_s:
                     continue
                 try:
@@ -9189,6 +9191,7 @@ def shutdown(svc: Service, httpd, hub=None) -> None:
     """Ctrl+C / SIGTERM: stop serving, then end the engine and the vision encoder that run now - after a switch not the
     ones the server started with (#37) - and the MCP servers PolyStrata started."""
     engine, vision = svc.engine, svc.vision
+    svc.idle_stop.set()                                 # no idle unload of an engine that is being closed
     closers = [httpd.shutdown, getattr(engine, "close", None), vision.shutdown if vision else None,
                hub.close if hub is not None else None]
     for close in filter(None, closers):
