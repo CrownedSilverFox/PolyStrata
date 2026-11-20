@@ -235,7 +235,10 @@ bool run(const float* q, Kvq8 kq8, Kvq8 vq8, const half* keys, const half* vals,
 
 // ---- decode (fdec_q8): a few tokens over the whole cache, split by keys, on the tensor cores ----
 
-constexpr int kSplit = 1024;   // keys a CUDA block takes, counted from the cache's first row
+// keys a CUDA block takes, counted from the cache's first row.  1024 gave 4,833 tokens of context 5 blocks a group
+// (16 in a launch recorded for 8,192), on a card with 188 multiprocessors: Qwen3.6 wrote 433 tokens/s after them
+// at 24 GB with 1024, 477 with 256, 415 with 128.
+constexpr int kSplit = 256;
 constexpr int kTile = 64;      // keys a block takes at a time: 16 a warp
 constexpr int kDecWarps = 4;
 constexpr int kDecRows = 32;   // 4 tokens x 8 heads, or 2 x 16; the scratch has the same size
