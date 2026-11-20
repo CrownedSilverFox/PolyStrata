@@ -83,8 +83,10 @@ struct Options {
     float cpu_share = -1;         ///< of the experts outside VRAM that such a call routes to, the share the CPU
                                   ///< computes while the others are copied: the ones the fewest tokens chose;
                                   ///< below 0: as the two took the time between them; 0: none
-    int expert_swaps = 64;        ///< experts on their way into the cache at a time while an answer is written, each
-                                  ///< to the slot of one the answer uses less; 0: the cache stays as it was loaded
+    int expert_swaps = -1;        ///< experts on their way into the cache at a time while an answer is written, each
+                                  ///< to the slot of one the answer uses less; 0: the cache stays as it was loaded;
+                                  ///< -1: 64, or on CUDA 0 under a RAM budget (ram_experts_mib), where they read
+                                  ///< from the pool and the disk what the CPU's experts need
     int64_t ram_experts_mib = -2; ///< the memory this process holds for the experts outside VRAM, answer or not:
                                   ///< the ones used most lately are read into it from the files; the others are left
                                   ///< to the file cache, which gives them to whatever needs the memory, and come back

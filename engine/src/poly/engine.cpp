@@ -681,8 +681,9 @@ size_t cgroup_room() {
 #endif
 
 // The RAM the machine has free for the model's file, or 0 when it cannot tell: under a cgroup's limit, what that
-// leaves if it is less.
-size_t ram_available() {
+// leaves if it is less, and then *own is true.
+size_t ram_available(bool* own = nullptr) {
+    if (own) *own = false;
 #if defined(STRATA_GPU_METAL)
     return strata::core::available_host_bytes().value_or(0);
 #elif defined(_WIN32)
@@ -698,7 +699,9 @@ size_t ram_available() {
         std::fclose(f);
     }
 #ifdef __linux__
-    return std::min(kb << 10, cgroup_room());
+    const size_t group = cgroup_room();
+    if (own) *own = group < (kb << 10);
+    return std::min(kb << 10, group);
 #else
     return kb << 10;
 #endif
@@ -2073,7 +2076,8 @@ void Engine::fill_expert_cache() {
         arena = std::min(arena, metal_cap > 256 ? metal_cap - 256 : 0);
         if (arena < all) {
             if (mmq_ && !stage_) metal_stage_need += stage_bytes_ + 256 + kTail + 2 * chunk_bytes_;
-            if (!swap_ && opt_.expert_swaps > 0) metal_stage_need += (size_t) opt_.expert_swaps * slot_max_;
+            if (!swap_ && opt_.expert_swaps != 0)   // -1 is decided after the cache is filled: as many as it can be
+                metal_stage_need += (size_t) (opt_.expert_swaps < 0 ? 64 : opt_.expert_swaps) * slot_max_;
             if (metal_cache_limit_ == SIZE_MAX && !recorded_)
                 metal_stage_need += size_t(scratch_at_) * sizeof(float) + state_n_ * sizeof(float) + (size_t(512) << 20);
             else if (arena > (size_t(512) << 20))
@@ -2863,8 +2867,8 @@ void Engine::load(const Options& o) {
         throw std::runtime_error("a prompt batch is 1 to 4096 tokens");
     if (opt_.stage_mib < 0) throw std::runtime_error("the staging buffer must be at least 1 MiB (0: the default)");
     if (opt_.stage_ahead < 0) throw std::runtime_error("the batch size to stage ahead from cannot be negative");
-    if (opt_.expert_swaps < 0 || opt_.expert_swaps > 64)
-        throw std::runtime_error("0 to 64 experts can be on their way into the cache at a time");
+    if (opt_.expert_swaps < -1 || opt_.expert_swaps > 64)
+        throw std::runtime_error("0 to 64 experts can be on their way into the cache at a time (-1: the default)");
     if (opt_.window < 0 || opt_.window > 8)
         throw std::runtime_error("a window is 1 to 8 tokens, or 0 for the model's own");
     if (opt_.lock_experts && opt_.ram_experts_mib >= 0)
@@ -3084,17 +3088,34 @@ void Engine::load(const Options& o) {
     // mapping, experts that do not fit are read back a fault at a time: on the lab's machine held to 12 GB, Qwen3.6
     // UD-Q3_K_M wrote 51, 73 and 99 tokens/s (a chat, after a 24,000-token prompt, a chat again) with every expert
     // mapped and 61, 88 and 120 with a budget of 6 GiB.
+    //
+    // Where a cgroup's limit is what leaves the least (a container), that RAM is this process's own: the budget leaves
+    // kOwnHeadroom for the rest of it (the process took 1.5 GB besides its pool under an 8 GiB limit), and holds no
+    // more than the experts outside VRAM.  Under 8 GiB the 4 GiB left 3.6 GiB for the pool, and the experts it did not
+    // hold were read from the disk: Qwen3.6 at 8 GB of VRAM wrote 70 tokens/s where 6,000 MiB wrote 91.
     if (opt_.ram_experts_mib < -1) {
-        constexpr size_t kRamHeadroom = size_t(4) << 30;
-        const size_t avail = ram_available();
+        constexpr size_t kRamHeadroom = size_t(4) << 30, kOwnHeadroom = size_t(3) << 29;
+        bool own = false;
+        const size_t avail = ram_available(&own);
         opt_.ram_experts_mib = -1;
         if (avail && !opt_.lock_experts && outside_bytes_ + kRamHeadroom > avail) {
-            opt_.ram_experts_mib = std::max<int64_t>(1024, (int64_t) ((avail > kRamHeadroom ? avail - kRamHeadroom : 0) >> 20));
+            const size_t keep = own ? kOwnHeadroom : kRamHeadroom;
+            const size_t budget = std::min(avail > keep ? avail - keep : 0, outside_bytes_);
+            opt_.ram_experts_mib = std::max<int64_t>(1024, (int64_t) (budget >> 20));
             std::fprintf(stderr, "strata-poly: %.1f GiB of RAM free for %.1f GiB of experts outside VRAM: they do not fit, "
                                  "so the ones used most stay in RAM (--ram-experts-mib -1 maps them all)\n",
                          (double) avail / (1 << 30), (double) outside_bytes_ / (1 << 30));
         }
     }
+    // Under a budget the experts swapped into VRAM come from the pool or the disk, as the CPU's own do, and the two
+    // shared the reads: with RAM held to 8 GiB and 6,000 MiB of it for the pool, Qwen3.6 wrote 91 tokens/s at 8 GB of
+    // VRAM and 79 at 6 GB with 64 of them, 102 and 89 with none.  In unified memory a swap is a copy within RAM, and
+    // the GPU computes faster than the CPU: on the M5 Ultra held to 6-7 GiB, 64 of them wrote 3-5% faster than none.
+#if defined(STRATA_GPU_METAL)
+    if (opt_.expert_swaps < 0) opt_.expert_swaps = 64;
+#else
+    if (opt_.expert_swaps < 0) opt_.expert_swaps = opt_.ram_experts_mib >= 0 ? 0 : 64;
+#endif
     if (opt_.ram_experts_mib >= 0) {
         // each size of slot takes the share of the budget its experts outside VRAM have of all of those
         pool_size_of_.assign(layers_.size(), 0);
