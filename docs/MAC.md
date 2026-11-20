@@ -1,7 +1,7 @@
 # PolyStrata on a Mac (Apple Silicon, Metal)
 
 This page is for people with an Apple Silicon Mac (M1 or newer). PolyStrata runs there on its own Metal engine: the NVIDIA kernels
-are replaced by Metal ones (`metal/`), and the host code and the server are the PC's. Intel Macs cannot run it.
+are replaced by Metal ones (`engine/metal/`), and the host code and the server are the PC's. Intel Macs cannot run it.
 
 > **On this page:** [What you need](#what-you-need) · [Install](#install) · [Defaults](#defaults-and-options) ·
 > [Gyro](#gyro-s-and-gyro-m-agentionais-trellis-experts) · [Measured](#measured-m5-max-128-gb) · [Limits](#limits-this-version) ·
@@ -60,11 +60,12 @@ context is 8,192 tokens.
 The engine uses the shared PolyStrata architecture code, expert cache, CPU experts, conversations, batching and
 speculative decoding. It speaks the existing server protocol; OpenAI and Anthropic APIs and the web app remain
 in `serve/server.py`. `--parallel`, `--conversation-cache-mib` and `--vram-reserve-mib` can be written by setup.
-`--vision yes` builds the existing image encoder with Metal and uses the family's projector. The encoder builds
-on the validation Mac; real-image inference with these families is not validated. GLM uses native KDA,
+`--vision yes` builds the picture reader, PolyStrata's own vision tower with Metal kernels (no llama.cpp in it),
+and uses the family's projector. It reads Qwen3.6's, Gemma 4's and MiniCPM-V 4.7's pictures on the GPU
+([Local validation](#local-validation) has what was measured). GLM uses native KDA,
 hyper-connections and sparse latent attention. DeepSeek uses native compression, indexer and attention kernels.
 
-The native implementation is in `metal/src/poly/`. It covers floating-point projections, quantized GGUF
+The native implementation is in `engine/metal/src/poly/`. It covers floating-point projections, quantized GGUF
 projections, expert routing, normalization and activation, attention with FP16/Q8 caches, rotary positions,
 convolution, and the recurrent delta network with speculative snapshots. The GGUF block decoders come from the
 same pinned ggml checkout as the CPU expert code. Where MetalPerformancePrimitives' `matmul2d` compiles (macOS 26
@@ -166,7 +167,7 @@ have not been validated on Metal.
 On the M1 Pro validation machine, GLM's generated in-file draft executes through the existing speculative
 protocol. DeepSeek's generated prompt crosses its 128-token compression boundary and restores a parked
 conversation. These checks establish execution and state handling, not output quality on the published models.
-Run the full native regression with `ctest --test-dir build-metal --output-on-failure`; individual groups use
+Run the full native regression with `ctest --test-dir engine/build-metal --output-on-failure`; individual groups use
 `ctest -L poly`, `ctest -L q36`, and the `nvfp4_parity` / `ready_stream` tests.
 
 ### LFM2.5 real-weight smoke test
@@ -270,10 +271,11 @@ What the first run does (each step is skipped when it is already done):
    incoai/Qwen3.8-Flash-Next-DFlash2 and licensed under Apache-2.0. IQ3_S selects MTP.
    If DFlash2 is missing, the server uses MTP when it is available. `./setup.sh --setup` can fetch the drafter later.
    [DFlash2 license notice](../terminal/data/dflash2-tuned/NOTICE.md)
-7. **Writes `strata-<model>.json` and `run-<model>.sh`, then starts the server.**
+7. **Writes `strata-<model>.json` and `run-<model>.sh` in `terminal/`, then starts the server.**
 
 After that, `./setup.sh` or the model's `terminal/run-<model>.sh` starts it directly. The server is the same as on a PC: the OpenAI-compatible
 API on `http://127.0.0.1:8080/v1`, the Anthropic API on `/v1/messages`, and the chat page on `http://127.0.0.1:8080/`.
+`python polystrata.py --list-models` in the PolyStrata folder lists the installed models, as on a PC.
 
 | Option | Meaning |
 | --- | --- |
@@ -383,13 +385,14 @@ The first request after a model loads also waits once while the engine builds it
 #5369) the first word came after about 20 seconds, 9.2 s of it for the kernels; later requests started in under a second.
 
 - **Images (vision):** on by default. `./setup.sh` builds the picture reader, `strata-vision`, beside the engine and asks
-  "Should the model also read images?" (default yes). With `--gpu` it reads on the Mac's
-  GPU (ggml's Metal backend), without it on the CPU. A Mac always gets the GPU reader, whatever its memory. The footprint is about
-  1.18 GB on the GPU and 1.05 GB on the CPU. `--vision cpu` is still allowed and prints a note. The CPU reader is slow because
-  ggml has no vector kernel for BF16 on ARM. If the GPU reader cannot start, the server prints one line and starts it on the CPU.
-  Checked on one Mac mini M4 only; the M5 Max is untested for pictures.
+  "Should the model also read images?" (default yes). The reader is PolyStrata's own vision tower (`terminal/tools/vision/own`)
+  with Metal kernels for the Qwen models', Gemma 4's and MiniCPM-V 4.7's towers; no llama.cpp or ggml is built into it. With
+  `--gpu` it reads on the Mac's GPU, without it on the CPU, from the same program. A Mac always gets the GPU reader, whatever its
+  memory. `--vision cpu` is still allowed and prints a note. If the GPU reader cannot start, the server prints one line and starts
+  it on the CPU. The tower's measurements on an M5 Ultra are under [Local validation](#local-validation).
 
-  **Measured on:** Mac mini M4, 32 GB, Qwen3.8-Flash-Next BF16 projector.
+  **Measured on:** Mac mini M4, 32 GB, Qwen3.8-Flash-Next BF16 projector, with the earlier reader (llama.cpp's mtmd on ggml's
+  Metal backend; it took about 1.18 GB on the GPU and 1.05 GB on the CPU).
 
   | Picture | GPU reader | CPU reader |
   | --- | --- | --- |
@@ -458,9 +461,9 @@ that answer, shows the GPU temperature from the HID sensors where it has them, a
 The standalone checks generate their own inputs and do not need model files or metal-cpp:
 
 ```sh
-cmake -S metal -B build-metal-check -DCMAKE_BUILD_TYPE=Release
-cmake --build build-metal-check -j 4
-ctest --test-dir build-metal-check --output-on-failure
+cmake -S engine/metal -B engine/build-metal-check -DCMAKE_BUILD_TYPE=Release
+cmake --build engine/build-metal-check -j 4
+ctest --test-dir engine/build-metal-check --output-on-failure
 ```
 
 CTest registers the memory-budget check and kernel parity checks, and serializes GPU tests even with `ctest -j`.
@@ -472,6 +475,30 @@ server behavior, or performance on other Apple chips.
 Pipeline handles share ownership across copies and release the native Metal pipeline when the last copy goes
 away. This avoids retaining every compiled pipeline after a model context is destroyed. `pipeline_lifetime`
 checks dispatch through a surviving copy and release of the last owner; it is not a throughput benchmark.
+
+### Local validation
+
+On an M5 Ultra. A setup from scratch with the model files already on the disk (nothing downloaded) took
+62 seconds, and `python polystrata.py --list-models` then listed the model:
+
+```sh
+./setup.sh --family qwen36 --model UD-Q2_K_XL --gguf-dir <folder with the files> --vision yes --yes --no-start
+```
+
+Qwen3.6 UD-Q2_K_XL with `--tail-skip 0` and memory to spare, five rounds taking turns: a 4,833-token prompt read at 3,296-3,308 tok/s, and the
+answer was written at 94.2-94.4 tok/s.
+
+Pictures on the Metal tower against the reader of v0.1.45-poly.10 (llama.cpp's mtmd on ggml's Metal backend), four rounds
+taking turns, milliseconds per picture:
+
+| Model | Picture | This reader | v0.1.45-poly.10 |
+| --- | --- | --- | --- |
+| Gemma 4 | 992 tokens | 870-872 | 964-966 |
+| MiniCPM-V 4.7 | four sizes | 16 / 52 / 134 / 175 | 26 / 81-83 / 198 / 275-276 |
+| Qwen3.6 | 2,256 / 1,024 / 1,900 tokens | 806-820 / 139-141 / 583-596 | 898 / 234-235 / 672 |
+
+Through the server with Qwen3.6 UD-Q2_K_XL, the answer about a screenshot of code gave the numbers in it, and a photo was
+described correctly. These are checks on one Mac, not a quality evaluation.
 
 ## How it works
 
