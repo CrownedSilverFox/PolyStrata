@@ -18,7 +18,7 @@ you care.
 ## Quick start
 
 ```sh
-strata launch --family gyro --model Gyro-S      # or Gyro-M
+START-HERE.bat --setup --family gyro --model Gyro-S      # or Gyro-M; Linux: ./setup.sh --setup ...
 ```
 
 Setup downloads the pinned revision of the file (size and SHA-256 checked) and prepares the pack
