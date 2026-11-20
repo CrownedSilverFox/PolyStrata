@@ -4870,26 +4870,26 @@ void Engine::moe_add(int n) { axpy(h_cpu_, 1.f, fo_, n * n_embd_, true, st_); }
 // (moe_card()), so a layer never waits for the host.  The cache's slots go to the card again when they changed.
 bool Engine::card_moe(int n) {
     if (!card_routes() || !d_slots_ || n * n_used_ > card_rows() || opt_.dump) return false;
-    const bool far = !all_cached();
+    const bool mirrored = !all_cached();
     const auto far_of = [&](int il, int e) -> void* {
         return layers_[(size_t) il].slot[(size_t) e] ? nullptr : (void*) mirror(il, e);
     };
-    bool same = !h_slots_.empty() && (!far || !h_far_.empty());
+    bool same = !h_slots_.empty() && (!mirrored || !h_far_.empty());
     for (int il = lo_; il < hi_ && same; ++il) {
         const Layer& L = layers_[(size_t) il];
         for (int e = 0; e < n_expert_ && same && L.moe; ++e) {
             const size_t i = (size_t) il * n_expert_ + e;
-            same = h_slots_[i] == L.slot[(size_t) e] && (!far || h_far_[i] == far_of(il, e));
+            same = h_slots_[i] == L.slot[(size_t) e] && (!mirrored || h_far_[i] == far_of(il, e));
         }
     }
     if (!same) {
         h_slots_.assign((size_t) n_layer_ * n_expert_, nullptr);
-        if (far) h_far_.assign((size_t) n_layer_ * n_expert_, nullptr);
+        if (mirrored) h_far_.assign((size_t) n_layer_ * n_expert_, nullptr);
         for (int il = lo_; il < hi_; ++il) {
             if (!layers_[(size_t) il].moe) continue;
             std::copy(layers_[(size_t) il].slot.begin(), layers_[(size_t) il].slot.end(),
                       h_slots_.begin() + (ptrdiff_t) il * n_expert_);
-            for (int e = 0; e < n_expert_ && far; ++e) {
+            for (int e = 0; e < n_expert_ && mirrored; ++e) {
                 const size_t i = (size_t) il * n_expert_ + e;
                 if (!h_slots_[i] && !(h_far_[i] = far_of(il, e))) {   // in neither VRAM nor the mirror
                     h_slots_.clear();
@@ -4900,7 +4900,7 @@ bool Engine::card_moe(int n) {
         }
         ck(cudaMemcpy(d_slots_, h_slots_.data(), h_slots_.size() * sizeof(void*), cudaMemcpyHostToDevice),
            "expert slots");
-        if (far)
+        if (mirrored)
             ck(cudaMemcpy(d_far_, h_far_.data(), h_far_.size() * sizeof(void*), cudaMemcpyHostToDevice),
                "expert slots");
 #if defined(STRATA_GPU_METAL)
