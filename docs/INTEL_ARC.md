@@ -10,8 +10,13 @@ driver); results from other cards are community reports. The Mac and Windows bui
 
 ## Quick start
 
-Install the [Terminal](INSTALL.md#the-terminal), then point `strata launch` at the folder that holds the model's `.gguf` files
-(the Qwen3.8-Flash-Next files from ISTA-DASLab, for example IQ3_S or IQ2_XS):
+Intel Arc runs Qwen3.8-Flash-Next (and its Swift, Coder, Gyro and Unsloth sizes) on the Strata project's engine ported to
+SYCL; PolyStrata's own models do not run there. In a PolyStrata copy, `./setup.sh --backend sycl` builds the engine from
+source ([Build with Docker](#build-with-docker-what-setup---backend-sycl-uses), [Setup and running](#setup-and-running)).
+The Strata project's Terminal, which this repository carries as `terminal/strata.py`
+([where the command comes from](TERMINAL_LAUNCH.md#where-the-command-comes-from)), takes the ready-made Intel engine from
+that project's feed instead: point `strata launch` at the folder that holds the model's `.gguf` files (the
+Qwen3.8-Flash-Next files from ISTA-DASLab, for example IQ3_S or IQ2_XS):
 
 ```sh
 strata launch --model-path /path/to/the/gguf/folder --plan    # shows what would happen, changes nothing

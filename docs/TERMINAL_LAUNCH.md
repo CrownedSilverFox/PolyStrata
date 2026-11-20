@@ -1,12 +1,17 @@
 # `strata launch`: set up, serve and watch
 
-This page is for anyone who uses the installed Terminal. One command chooses a model, tunes it, starts serving and
-opens a monitor. It also connects your coding apps. Text previews of the screens are in
+This page is about `strata launch`, the command of the Strata project's Terminal. One command chooses a model, tunes it,
+starts serving and opens a monitor. It also connects your coding apps. In this repository the command is
+`terminal/strata.py`. It sets up Qwen3.8-Flash-Next on the Strata project's engine, which it fetches from that project's
+signed update feed; PolyStrata's own models (strata-poly) are set up with `START-HERE.bat` or `./setup.sh`
+([INSTALL.md](INSTALL.md)), not by this command. Text previews of the screens are in
 [docs/terminal-previews/](terminal-previews/) (`launch-*.txt`).
 
 ## Quick start
 
-1. Install the Terminal with the one-line command in [INSTALL.md](INSTALL.md#the-terminal).
+1. Run `START-HERE.bat` or `./setup.sh` once, so that `terminal/.venv` exists. The examples call the command
+   `strata`; in the PolyStrata folder run it as `terminal\.venv\Scripts\python terminal\strata.py` on Windows, or
+   `terminal/.venv/bin/python terminal/strata.py` on Linux.
 2. Run `strata launch` and follow the screens, or run a command without screens:
 
 ```sh
@@ -18,24 +23,13 @@ strata launch --stop
 
 `strata launch --help` lists every flag with examples. An unknown model or flag gets a plain message with the closest match.
 
-## Install (one line)
+## Where the command comes from
 
-Linux and Mac:
-
-```sh
-curl -fsSL --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh -o install.sh && sh install.sh
-```
-
-Windows PowerShell (then open a new terminal):
-
-```powershell
-irm -TimeoutSec 120 https://github.com/Niko1221/Strata/releases/latest/download/install.ps1 | iex
-```
-
-More in [INSTALL.md](INSTALL.md#the-terminal). The installer needs no administrator rights and puts `strata` on your PATH.
-How far to trust a piped installer is in [SECURITY.md](../.github/SECURITY.md). The engine (the part that talks to your graphics
-card) comes with the first model: `strata launch` fetches the one for your card from the same release, checks its signature
-and test-starts it before using it.
+The command is `terminal/strata.py`, in the `terminal` folder of your PolyStrata copy. Setup installs its Python packages
+into `terminal/.venv`, so nothing needs a separate install. The engine (the part that talks to your graphics card) comes
+with the first model: `strata launch` fetches the engine for your card from the update feed (`--feed`, default:
+`STRATA_UPDATE_FEED`, or the Strata project's signed feed), checks its signature and test-starts it before using it. That
+feed and its engines are the Strata project's; they hold no strata-poly.
 
 ## The screens
 
@@ -100,7 +94,7 @@ strata launch --show-key
 | `--tune quick\|thorough\|skip`, `--tune-allow-small`, `--retune` | Tuning. `--retune` measures again; a model tuned before for the same choices on this computer reuses the stored result. |
 | `--set KEY=VALUE` | An advanced engine setting or `STRATA_*` variable (repeatable). Unknown names get a warning. |
 | `--pool-cores LIST` | Experimental: pin CPU workers to these logical processors, for example `2-14:2` ([DETAILS.md](DETAILS.md)). |
-| `--access local\|lan\|cloudflare\|tailscale`, `--port N` | Who can reach the server. |
+| `--access local\|lan\|address\|cloudflare\|tailscale`, `--port N` | Who can reach the server. `address` is one address of this computer (see `--listen`). |
 | `--api-key KEY`, `--api-key-env NAME`, `--new-key`, `--no-api-key` | The key clients must send. |
 | `--save-preset NAME`, `--list-presets`, `--delete-preset NAME` | Presets. |
 | `--no-tui` | No screens: serve, print the address and return. |
