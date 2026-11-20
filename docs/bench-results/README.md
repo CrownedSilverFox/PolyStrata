@@ -4,7 +4,7 @@ Raw results and short reports from measurement runs, one folder per run, named b
 the PolyStrata version, hardware and method of its own day, and none is a statement about a later release. Current numbers are in the
 [docs](../README.md) and the [README](../../README.md); how to measure is in [BENCHMARK_PROTOCOL.md](../BENCHMARK_PROTOCOL.md).
 
-This page is built by `python tools/bench_results_index.py` (`--check` fails when a folder is missing from it). 175 folders and 3 loose files, 2754 files in all.
+This page is built by `python tools/bench_results_index.py` (`--check` fails when a folder is missing from it). 176 folders and 3 loose files, 2756 files in all.
 
 
 ## 2026-09
@@ -182,6 +182,7 @@ This page is built by `python tools/bench_results_index.py` (`--check` fails whe
 | [2026-11-02-community-rtx-5070-ti-qwen3-6-35b-a3b-ud-q4-k-m](2026-11-02-community-rtx-5070-ti-qwen3-6-35b-a3b-ud-q4-k-m/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
 | [2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq2-xs](2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq2-xs/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
 | [2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq3-s](2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq3-s/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
+| [2026-11-02-groot-q4_k_m-rtx5060-laptop](2026-11-02-groot-q4_k_m-rtx5060-laptop/) | Groot 19B-A3B 261023 Q4_K_M on an RTX 5060 Laptop 8 GB | 2 |
 | [2026-11-03-community-rtx-5090-qwen38-flash-next-ud-q5-k-xl](2026-11-03-community-rtx-5090-qwen38-flash-next-ud-q5-k-xl/) | Community benchmark on GeForce RTX 5090 (Linux, 184 GiB) | 9 |
 | [2026-11-04-community-4x-rtx-5080-glm-5-3-flash](2026-11-04-community-4x-rtx-5080-glm-5-3-flash/) | Community benchmark on 4 × NVIDIA GeForce RTX 5080 (16 GB) — GLM 5.3 Flash, strata-poly | 3 |
 | [2026-11-10-community-rx6700xt-poly9](2026-11-10-community-rx6700xt-poly9/) | RX 6700 XT official quick/community benchmark suites | 44 |
