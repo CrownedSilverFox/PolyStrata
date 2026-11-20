@@ -6,7 +6,12 @@ no network, no pip.
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import io
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -168,6 +173,82 @@ class PolyPrebuilt(unittest.TestCase):
         made = self.compile_here({"arch": 61, "driver": "550.54"}, 12)
         self.assertIn("-DSTRATA_EXPERIMENTAL_SM60=ON", made["strata-poly"])
         self.assertIn("-DCMAKE_CUDA_ARCHITECTURES=61", made["strata-poly"])
+
+
+class FromARelease(unittest.TestCase):
+    """The ready-made strata-poly from a GitHub release, as a released copy of PolyStrata gets it: the zip is checked
+    against the size and SHA-256 the releases API publishes for that tag before it is opened."""
+
+    URL = "https://github.com/simplexai-labs/PolyStrata/releases/download/v0.2.17-poly.1/"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "repo"
+        self.rel = Path(self.tmp.name) / "release"
+        self.root.mkdir()
+        self.rel.mkdir()
+        release(self.rel)
+        self.zip = self.rel / setup.POLY_ASSET.format(src=SRC)
+        self.eng = self.root / setup.ENGINE_POLY_DIR
+        self.asked = []
+        for p in (mock.patch.object(setup, "ROOT", self.root), mock.patch.object(setup, "WIN", True),
+                  mock.patch.object(setup, "POLY_PREBUILT_URL", self.URL),
+                  mock.patch.object(setup, "source_hash", lambda parts: SRC),
+                  mock.patch.object(setup, "cpu_info", lambda: ("an AVX2 CPU", True, False)),
+                  mock.patch.object(setup, "pip_cuda_libs", lambda toolkit=13: None),
+                  mock.patch("urllib.request.urlopen", lambda req, timeout=None: mock.MagicMock()),
+                  mock.patch.object(setup, "download", self.download)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def download(self, url, dst, what=None):
+        self.assertEqual(url, self.URL + self.zip.name)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(self.zip.read_bytes())
+
+    def api(self, digest):
+        """setup._urlopen answering the releases API with this digest for the asset (None: the API cannot be reached)."""
+        def answer(req, timeout=None):
+            self.asked.append(req.full_url)
+            if digest is None:
+                raise OSError("offline")
+            body = {"assets": [{"name": self.zip.name, "size": self.zip.stat().st_size, "digest": digest}]}
+            r = mock.MagicMock()
+            r.__enter__.return_value.read.return_value = json.dumps(body).encode()
+            return r
+        return mock.patch.object(setup, "_urlopen", answer)
+
+    def test_the_default_is_this_repository_s_latest_release(self):
+        env = {k: v for k, v in os.environ.items() if k != "STRATA_POLY_PREBUILT_URL"}
+        url = subprocess.run([sys.executable, "-c", "import setup; print(setup.POLY_PREBUILT_URL)"], cwd=ROOT, env=env,
+                             capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(setup.release_of(url),
+                         ("https://api.github.com/repos/simplexai-labs/PolyStrata/releases", None))
+
+    def test_the_published_sha256_is_checked_for_that_tag(self):
+        sha = hashlib.sha256(self.zip.read_bytes()).hexdigest()
+        out = io.StringIO()
+        with self.api("sha256:" + sha), contextlib.redirect_stdout(out):
+            self.assertTrue(setup.get_poly_prebuilt(GPU))
+        self.assertEqual(self.asked, ["https://api.github.com/repos/simplexai-labs/PolyStrata/releases/tags/v0.2.17-poly.1"])
+        self.assertIn("SHA-256 checksum verified against GitHub's", out.getvalue())
+        self.assertEqual((self.eng / setup.POLY_EXE).read_text(), "new engine")
+
+    def test_a_zip_that_is_not_the_published_one_is_not_opened(self):
+        out = io.StringIO()
+        with self.api("sha256:" + "0" * 64), contextlib.redirect_stdout(out):
+            self.assertFalse(setup.get_poly_prebuilt(GPU))
+        self.assertIn("wrong SHA-256", out.getvalue())
+        self.assertFalse((self.eng / setup.POLY_EXE).exists())
+        self.assertFalse((self.eng / "_unpack").exists())
+        self.assertFalse((self.eng / self.zip.name).exists(), "the refused zip is deleted")
+
+    def test_no_answer_from_the_api_says_so_and_installs(self):
+        out = io.StringIO()
+        with self.api(None), contextlib.redirect_stdout(out):
+            self.assertTrue(setup.get_poly_prebuilt(GPU))
+        self.assertIn("NOT verified", out.getvalue())
 
 
 if __name__ == "__main__":
