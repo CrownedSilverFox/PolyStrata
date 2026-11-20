@@ -442,6 +442,8 @@ struct Likeliest {
     float prob;
 };
 void likeliest(const float* logits, int n, Likeliest* out, void* stream);
+/// likeliest() for `rows` rows of n scores back to back, out[r] row r's.
+void likeliest_rows(const float* logits, int n, int rows, Likeliest* out, void* stream);
 /// acc[r][i] *= sigmoid(g[r][i]) for `rows` groups of n values; group r's gates start r * g_stride floats into g.
 /// With one_gate a group has one gate for all its values.
 void mul_sigmoid(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream);

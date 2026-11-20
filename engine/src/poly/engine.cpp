@@ -3444,6 +3444,10 @@ void Engine::alloc() {
     const size_t logit_rows = (size_t) std::max(opt_.window, (opt_.batch_mtp ? 2 : 1) * (opt_.batch + 1));
     wlogits_ = (float*) dmalloc(logit_rows * n_vocab_ * sizeof(float), "scratch");
     h_wlogits_ = (float*) hmalloc(logit_rows * n_vocab_ * sizeof(float), "pinned memory");
+    if (opt_.batch > 0) {
+        d_picks_ = (Likeliest*) dmalloc(logit_rows * sizeof(Likeliest), "scratch");
+        h_picks_ = (Likeliest*) hmalloc(logit_rows * sizeof(Likeliest), "pinned memory");
+    }
     alloc_caches();
     cover(1);   // a short conversation's rows, before the expert cache is sized
     // --batch: the other sequences, each with a state and caches of its own (bind())
@@ -6375,6 +6379,8 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
     }
     const int R = (int) rseq.size();
     if (R > rows_) throw std::logic_error("step: more rows than a call takes");
+    const bool picks = std::exchange(step_picks_, false) && d_picks_;
+    picks_ = picks;
 
     ck(cudaStreamSynchronize(cs(st_)), "step");
     if (n_swap_ > 0) follow(R);
@@ -6421,9 +6427,16 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
         output_rows(0, m, xn_);
         lin(output_, xn_, lg, m);
         finish_logits(lg, m);
-        ck(cudaMemcpyAsync(h_wlogits_ + (size_t) r0 * n_vocab_, lg, (size_t) m * n_vocab_ * sizeof(float),
-                           cudaMemcpyDeviceToHost, cs(st_)),
-           "logits");
+        if (picks) {
+            likeliest_rows(lg, n_vocab_, m, d_picks_ + r0, st_);
+            ck(cudaMemcpyAsync(h_picks_ + r0, d_picks_ + r0, (size_t) m * sizeof(Likeliest), cudaMemcpyDeviceToHost,
+                               cs(st_)),
+               "logits");
+        } else {
+            ck(cudaMemcpyAsync(h_wlogits_ + (size_t) r0 * n_vocab_, lg, (size_t) m * n_vocab_ * sizeof(float),
+                               cudaMemcpyDeviceToHost, cs(st_)),
+               "logits");
+        }
         // with guesses: each row's output for its sequence's draft block, in its rows after the first, as window()
         // leaves them (draft_rows())
         if (guesses)
@@ -6446,7 +6459,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
     }
     if (whole) {
         const int64_t keep = pos_;
-        std::vector<int> wkey{R};
+        std::vector<int> wkey{R, picks ? 1 : 0};
         for (int i = 0; i < R; ++i) {
             pos_ = at[(size_t) i];
             wkey.push_back(rseq[(size_t) i]);
@@ -6668,6 +6681,10 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
     }
     use(home);
     stats_.tokens += n;
+}
+
+int32_t Engine::picked(int i) const {
+    return picks_ ? h_picks_[i].token : most_likely(logits_of(i), n_vocab_);
 }
 
 void Engine::keep_step(const int* kept) {

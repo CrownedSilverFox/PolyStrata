@@ -932,6 +932,13 @@ int serve(Session& ss) {
             }
         // --batch-mtp: each slot's draft block guesses the token after its next one, and the step checks it
         const bool guessing = engine.steps_guesses();
+        // every slot greedy with no penalty: the card picks, Sampler::pick()'s most_likely() to the token
+        const bool on_card = std::all_of(which.begin(), which.end(), [&](size_t b) {
+            const Sampling& s = slots[b].s;
+            return s.temperature <= 0.f &&
+                   (s.penalty_last_n == 0 ||
+                    (s.penalty_repeat == 1.f && s.penalty_freq == 0.f && s.penalty_present == 0.f));
+        });
         try {
             if (guessing) {
                 guess.resize(seqs.size());
@@ -940,8 +947,10 @@ int serve(Session& ss) {
                 // that many check no guess this step
                 for (size_t i = 0, rows = seqs.size(); i < guess.size(); ++i)
                     if (guess[i] >= 0 && (int) ++rows > engine.step_rows_alone()) guess[i] = -1;
+                if (on_card) engine.step_picks();
                 engine.step(seqs.data(), feed.data(), (int) seqs.size(), guess.data());
             } else {
+                if (on_card) engine.step_picks();
                 engine.step(seqs.data(), feed.data(), (int) seqs.size());
             }
         } catch (const std::exception& e) {
@@ -970,14 +979,16 @@ int serve(Session& ss) {
         engine.on_threads((int) which.size(), [&](int i) {
             Slot& sl = slots[which[(size_t) i]];
             Sampler& sp = samplers[which[(size_t) i]];
-            const int32_t t = (int32_t) sp.pick(engine.logits_of(row_of[(size_t) i]), engine.n_vocab(), sl.s, sl.held,
-                                                sl.rng);
+            const auto pick = [&](int row) {
+                return on_card ? engine.picked(row)
+                               : (int32_t) sp.pick(engine.logits_of(row), engine.n_vocab(), sl.s, sl.held, sl.rng);
+            };
+            const int32_t t = pick(row_of[(size_t) i]);
             picked[2 * (size_t) i] = t;
             picked[2 * (size_t) i + 1] = -1;
             if (!guessing || guess[(size_t) i] != t || ends(sl, t)) return;
             sl.held.push_back(t);
-            picked[2 * (size_t) i + 1] =
-                (int32_t) sp.pick(engine.logits_of(row_of[(size_t) i] + 1), engine.n_vocab(), sl.s, sl.held, sl.rng);
+            picked[2 * (size_t) i + 1] = pick(row_of[(size_t) i] + 1);
             sl.held.pop_back();
         });
         for (size_t i = 0; i < which.size(); ++i) {
@@ -1523,21 +1534,23 @@ int check_batch(Engine& engine, const std::vector<int32_t>& ids, int k, long lon
                 if (guess[i] >= 0 && (int) ++rows > engine.step_rows_alone()) guess[i] = -1;   // as the batch loop
                 offered += guess[i] >= 0;
             }
+            engine.step_picks();
             engine.step(live.data(), feed.data(), (int) live.size(), guess.data());
         } else {
+            engine.step_picks();
             engine.step(live.data(), feed.data(), (int) live.size());
         }
         ++steps;
         kept.assign(live.size(), 1);
         for (size_t i = 0, row = 0; i < live.size(); ++i) {
             const size_t j = (size_t) live[i] - 1;
-            int32_t t = (int32_t) strata::poly::most_likely(engine.logits_of((int) row), engine.n_vocab());
+            int32_t t = engine.picked((int) row);
             const bool guessed = guessing && guess[i] >= 0;
             if (guessed && t == guess[i]) {
                 got[j].push_back(t);
                 kept[i] = 2;
                 ++right;
-                t = (int32_t) strata::poly::most_likely(engine.logits_of((int) row + 1), engine.n_vocab());
+                t = engine.picked((int) row + 1);
             }
             next[j] = t;
             row += guessed ? 2 : 1;

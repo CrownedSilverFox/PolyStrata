@@ -327,6 +327,11 @@ public:
     int max_window() const { return opt_.window; }
     void window(const int32_t* tokens, int t);
     const float* logits_of(int i) const { return next_ ? next_->logits_of(i) : h_wlogits_ + (size_t) i * n_vocab_; }
+    /// The next step() leaves its rows' most likely tokens (picked()) on the host in place of their scores, which
+    /// stay on the card: the scores of 8 rows of Qwen3.6 are 7.9 MB to copy and to search on the host.  On one card;
+    /// a step() takes it back.  picked() is the token either way.
+    void step_picks() { step_picks_ = !next_; }
+    int32_t picked(int i) const;
     void keep(int n);
 
     /// Some files carry a block that guesses ahead: one layer that takes a token and the model's output for the
@@ -962,6 +967,8 @@ protected:
     float* step_snap_ = nullptr;
     float* step_h_ = nullptr;           ///< draft_many() and keep_step(): the rows' model outputs, gathered
     Likeliest* h_guesses_ = nullptr;    ///< draft_many()'s guesses, pinned
+    Likeliest *d_picks_ = nullptr, *h_picks_ = nullptr;   ///< step_picks()'s, on the card and pinned
+    bool step_picks_ = false, picks_ = false;            ///< asked for the next step(); what the last one left
     void draft_rows_of(const Row* rows, const int32_t* tokens, int n, Likeliest* out);
     std::vector<int> step_seqs_, step_rows_;   ///< the sequences of the step, and how many rows each had
     std::vector<int32_t> step_tok_;            ///< each sequence's token and guess, two places a sequence

@@ -2672,6 +2672,8 @@ __global__ void softcap_kernel(float* x, size_t n, float cap) {
 // One block reads a vocabulary's scores twice.  Four values a load and four loads in flight a thread: with a load
 // at a time each thread waited out the memory's latency 128 times a pass, 62 us for Qwen3.6's 131,072 guesses.
 __global__ void likeliest_kernel(const float* __restrict__ x, int n, Likeliest* __restrict__ out) {
+    x += size_t(blockIdx.x) * n;   // likeliest_rows(): a block a row
+    out += blockIdx.x;
     __shared__ float part[32];
     __shared__ int first[32];
     const int n4 = ((uintptr_t) x & 15) == 0 ? n / 4 : 0;   // the rest one at a time
@@ -4931,6 +4933,10 @@ void softcap(float* x, size_t n, float cap, void* stream) {
 
 void likeliest(const float* logits, int n, Likeliest* out, void* stream) {
     likeliest_kernel<<<1, 1024, 0, cs(stream)>>>(logits, n, out);
+}
+
+void likeliest_rows(const float* logits, int n, int rows, Likeliest* out, void* stream) {
+    likeliest_kernel<<<rows, 1024, 0, cs(stream)>>>(logits, n, out);
 }
 
 void mul_sigmoid(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream) {
