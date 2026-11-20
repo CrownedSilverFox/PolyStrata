@@ -206,9 +206,9 @@ engine log is `strata-<model>.log` in the `terminal` folder.
   [DETAILS.md](DETAILS.md#the-responses-api-and-codex-cli)).
 - **Claude Code:** `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, `ANTHROPIC_MODEL` set to a Claude model name it knows
   (PolyStrata ignores the name), and any `ANTHROPIC_AUTH_TOKEN` (or the configured key). Add
-  `"anthropic_thinking": "on_request"` and `"fit_max_tokens": true` to the model's `strata-<model>.json` (in the
-  `terminal` folder) and restart: Claude Code asks for 32,000 tokens of answer in every request, and with the second
-  setting the server shortens that to the room the context has left ([why](FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)).
+  `"anthropic_thinking": "on_request"` to the model's `strata-<model>.json` (in the `terminal` folder) and restart.
+  Claude Code asks for 32,000 tokens of answer in every request, and the server shortens that to the room the context
+  has left (`"fit_max_tokens"`, on by default since 0.2.17) ([why](FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)).
 - **Thinking level:** `"reasoning_effort": "none" | "low" | "medium" | "high"`.
 - PolyStrata answers one request at a time by default. `--parallel N` lets up to N requests decode together (opt-in,
   [BATCHING.md](BATCHING.md)). API details: [DETAILS.md](DETAILS.md#using-it).

@@ -119,8 +119,10 @@ Qwen3.6-35B-A3B 读完 32,000 个 token 的提示后，0.1.45-poly.6 占 17.9 Gi
 
 不限内存时，同一台机器是 63 / 169 / 203。Windows 上跑的是同一段代码，但没有测。加上 `"--ram-experts-mib", "-1"` 就和以前一样全部映射。
 
-反过来，加上 `"--lock-experts"` 会把显卡外的专家锁在内存里，系统不能把这部分内存让给别的程序，引擎也就不用回头从 SSD
-重读。Linux 上最多锁 `ulimit -l` 允许的量，引擎启动时会说锁了多少。
+反过来，加上 `"--lock-experts"` 会把显卡外的专家留在内存里，系统不能把这部分内存让给别的程序，引擎也就不用回头从 SSD
+重读。只有一张 N 卡时，引擎加载时把它们拷进锁页内存，系统不会把它换出去，`ulimit -l` 也管不到它；之后离开显存的专家在两次
+请求之间从模型文件拷进来。拷不了的情况（A 卡、Mac、模型层分在几张卡上、空闲内存不够）改为锁住模型文件的页面，Linux 上锁到
+`ulimit -l` 为止，引擎启动那行会写出这个上限和调高的办法。
 
 读提示用的显存也少了 350 到 400 MiB：要么给专家缓存（Qwen3.6 显存里的专家从 2,444 个变成 2,712 个），要么用
 `--vram-reserve-mib` 留给别的程序。原理和测法见 [docs/BACKENDS.md](docs/BACKENDS.md#less-of-the-pcs-ram-and-vram)。
@@ -226,7 +228,7 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 - **你的应用和编程智能体：** 添加一个“OpenAI 兼容”的提供商，base URL 填 **`http://127.0.0.1:8080/v1`**。
   API key 和模型名随便填都行。
   - 使用 Anthropic API 的应用：`http://127.0.0.1:8080/v1/messages`（Claude Code：
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`，并在 `strata-<model>.json` 里加 `"fit_max_tokens": true`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`，并在 `strata-<model>.json` 里加 `"anthropic_thinking": "on_request"`
     （[原因](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)））。
   - Codex CLI 和其他使用 OpenAI Responses API 的应用：`/v1/responses`
     （[设置方法](docs/DETAILS.md#the-responses-api-and-codex-cli)）。

@@ -207,8 +207,8 @@ packing conversion and is not an installer menu option.
 A smaller model from the same maker: [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) (35 billion
 parameters, 3 billion active per token, 256 experts, Apache 2.0). The Strata project's engine runs
 [Unsloth's GGUFs with the MTP draft layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) on a path of its own,
-chosen by the file: setup's `--family qwen36-strata`. It runs on NVIDIA and AMD cards; the Intel Arc engine and the
-Mac engine do not run it. `--family qwen36` runs the same model on PolyStrata's own engine, strata-poly, with other sizes
+chosen by the file: setup's `--family qwen36-strata`. It runs on NVIDIA and AMD cards, and on a Mac as an experiment
+that is slow there ([MAC.md](MAC.md#additional-qwen-and-ready-pack-choices)); the Intel Arc engine does not run it. `--family qwen36` runs the same model on PolyStrata's own engine, strata-poly, with other sizes
 and on smaller cards ([qwen36.md](models/qwen36.md), [BACKENDS.md](BACKENDS.md#qwen36-on-two-engines)). It reads
 pictures and serves several requests at once.
 

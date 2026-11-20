@@ -141,9 +141,13 @@ dans un chat court ensuite.
 Sans limite, la même machine écrit 63 / 169 / 203. Ce n'est pas mesuré sous Windows, où le même code tourne.
 `"--ram-experts-mib", "-1"` garde tous les experts mappés comme avant.
 
-À l'inverse, `"--lock-experts"` verrouille en RAM les experts hors de la VRAM : le système ne peut pas donner cette
-mémoire à d'autres programmes, et le moteur n'a pas à les relire depuis le SSD. Sous Linux il en verrouille au plus
-ce que permet `ulimit -l`, et le moteur indique au démarrage combien il en a verrouillé.
+À l'inverse, `"--lock-experts"` garde en RAM les experts hors de la VRAM : le système ne peut pas donner cette
+mémoire à d'autres programmes, et le moteur n'a pas à les relire depuis le SSD. Avec une seule carte NVIDIA, le
+moteur les copie au chargement dans de la mémoire épinglée, que le système ne pagine pas et que `ulimit -l` ne limite
+pas ; un expert qui quitte la VRAM plus tard y est copié depuis le fichier du modèle entre deux requêtes. Là où il ne
+fait pas cette copie (carte AMD, Mac, couches réparties sur plusieurs cartes, trop peu de RAM libre), il verrouille à
+la place les pages du fichier du modèle ; sous Linux cela s'arrête à `ulimit -l`, et la ligne de démarrage du moteur
+donne la limite et la façon de la relever.
 
 Le moteur demande aussi 350 à 400 MiB de VRAM de moins pour lire les prompts : le cache d'experts les prend (Qwen3.6
 garde 2,712 experts en VRAM au lieu de 2,444), ou `--vram-reserve-mib` les laisse aux autres programmes.
@@ -256,7 +260,7 @@ Les douze modèles s'utilisent de la même façon : la même application, la mê
 - **Vos applications et agents de code :** ajoutez un fournisseur « OpenAI-compatible » avec l'URL de base
   **`http://127.0.0.1:8080/v1`**. N'importe quelle clé API et n'importe quel nom de modèle fonctionnent.
   - Applications qui utilisent l'API d'Anthropic : `http://127.0.0.1:8080/v1/messages` (Claude Code :
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, et `"fit_max_tokens": true` dans `strata-<model>.json`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, et `"anthropic_thinking": "on_request"` dans `strata-<model>.json`
     ([pourquoi](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI et les autres applications qui utilisent l'API OpenAI Responses : `/v1/responses`
     ([configuration](docs/DETAILS.md#the-responses-api-and-codex-cli)).

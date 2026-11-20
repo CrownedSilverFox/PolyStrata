@@ -128,8 +128,12 @@ RTX PRO 6000、エンジンの RAM を 12 GB と 10 GB に制限（16 GB の PC 
 制限なしでは同じマシンで 63 / 169 / 203 です。Windows では測っていませんが、同じコードが動きます。
 `"--ram-experts-mib", "-1"` で以前どおりすべてをマップします。
 
-逆に `"--lock-experts"` を加えると、VRAM の外のエキスパートを RAM に固定します。システムがそのメモリをほかのプログラムに
-回して、あとで SSD から読み直すことがなくなります。Linux では `ulimit -l` の範囲までで、固定した量は起動時に表示されます。
+逆に `"--lock-experts"` を加えると、VRAM の外のエキスパートを RAM に置いたままにします。システムがそのメモリをほかの
+プログラムに回して、あとで SSD から読み直すことがなくなります。NVIDIA のカード 1 枚なら、エンジンは読み込み時にそれらを
+ピン留めしたメモリにコピーします。このメモリはページアウトされず、`ulimit -l` の制限も受けません。あとで VRAM から外れた
+エキスパートは、リクエストとリクエストの間にモデルファイルからコピーされます。このコピーを作らない場合（AMD のカード、Mac、
+層を複数のカードに分けたとき、空き RAM が足りないとき）は、代わりにモデルファイルのページを固定します。Linux ではそれが
+`ulimit -l` までで止まり、エンジンの起動時の行に上限と上げ方が出ます。
 
 プロンプトを読むための VRAM も 350〜400 MiB 減りました。その分はエキスパートキャッシュが使うか（Qwen3.6 は VRAM の
 エキスパートが 2,444 個から 2,712 個に）、`--vram-reserve-mib` でほかのプログラムに残せます。
@@ -239,7 +243,7 @@ PolyStrata のインストール、起動、停止もできます。
 - **アプリやコーディングエージェントから：** 「OpenAI-compatible」プロバイダーを追加し、ベース URL に
   **`http://127.0.0.1:8080/v1`** を指定します。API キーとモデル名は何でもかまいません。
   - Anthropic の API を使うアプリ：`http://127.0.0.1:8080/v1/messages`（Claude Code：
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`、`strata-<model>.json` に `"fit_max_tokens": true`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`、`strata-<model>.json` に `"anthropic_thinking": "on_request"`
     （[理由](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)））。
   - Codex CLI など OpenAI Responses API を使うアプリ：`/v1/responses`
     （[設定方法](docs/DETAILS.md#the-responses-api-and-codex-cli)）。

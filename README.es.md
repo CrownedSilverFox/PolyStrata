@@ -139,9 +139,12 @@ después.
 Sin límite, la misma máquina escribe 63 / 169 / 203. No se midió en Windows, donde corre el mismo código.
 `"--ram-experts-mib", "-1"` mantiene todos los expertos mapeados como antes.
 
-Al revés, `"--lock-experts"` bloquea en RAM los expertos que quedan fuera de la VRAM, así el sistema no da esa memoria
-a otros programas ni el motor tiene que volver a leerlos del SSD. En Linux bloquea como mucho lo que permite
-`ulimit -l`, y el motor dice al arrancar cuánto bloqueó.
+Al revés, `"--lock-experts"` mantiene en RAM los expertos que quedan fuera de la VRAM, así el sistema no da esa
+memoria a otros programas ni el motor tiene que volver a leerlos del SSD. Con una sola tarjeta NVIDIA el motor los
+copia al cargar en memoria fijada (pinned), que el sistema no pagina y que `ulimit -l` no limita, y un experto que
+sale de la VRAM más tarde se copia desde el archivo del modelo entre dos peticiones. Donde no hace esa copia (una
+tarjeta AMD, un Mac, capas repartidas entre tarjetas, poca RAM libre) bloquea en su lugar las páginas del archivo del
+modelo; en Linux eso se detiene en `ulimit -l`, y la línea de arranque del motor da el límite y cómo subirlo.
 
 El motor también necesita entre 350 y 400 MiB menos de VRAM para leer prompts: se los queda la caché de expertos
 (Qwen3.6 guarda 2,712 expertos en VRAM en vez de 2,444), o `--vram-reserve-mib` los deja a otros programas. Cómo
@@ -253,7 +256,7 @@ Los doce modelos se usan igual: la misma aplicación, la misma API.
 - **Tus aplicaciones y agentes de programación:** añade un proveedor "compatible con OpenAI" con la URL base
   **`http://127.0.0.1:8080/v1`**. Sirve cualquier clave de API y cualquier nombre de modelo.
   - Aplicaciones que usan la API de Anthropic: `http://127.0.0.1:8080/v1/messages` (Claude Code:
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, y `"fit_max_tokens": true` en `strata-<model>.json`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, y `"anthropic_thinking": "on_request"` en `strata-<model>.json`
     ([por qué](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI y otras aplicaciones que usan la API Responses de OpenAI: `/v1/responses`
     ([configuración](docs/DETAILS.md#the-responses-api-and-codex-cli)).

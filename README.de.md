@@ -142,9 +142,13 @@ und in einem kurzen Chat danach.
 Ohne Limit schreibt dieselbe Maschine 63 / 169 / 203. Unter Windows, wo derselbe Code läuft, wurde es nicht
 gemessen. `"--ram-experts-mib", "-1"` bildet wie bisher alle Experten ab.
 
-Umgekehrt sperrt `"--lock-experts"` die Experten außerhalb des VRAM im RAM, sodass das System ihren Speicher nicht an
-andere Programme gibt und die Engine sie später nicht wieder von der SSD liest. Unter Linux sperrt es höchstens, was
-`ulimit -l` erlaubt, und die Engine sagt beim Start, wie viel es war.
+Umgekehrt hält `"--lock-experts"` die Experten außerhalb des VRAM im RAM, sodass das System ihren Speicher nicht an
+andere Programme gibt und die Engine sie später nicht wieder von der SSD liest. Auf einer einzelnen NVIDIA-Karte
+kopiert die Engine sie beim Laden in gepinnten Speicher, den das System nicht auslagert und den `ulimit -l` nicht
+begrenzt; ein Experte, der später das VRAM verlässt, wird zwischen zwei Anfragen aus der Modelldatei nachkopiert. Wo
+sie diese Kopie nicht anlegt (AMD-Karte, Mac, Schichten auf mehrere Karten verteilt, zu wenig freier RAM), sperrt sie
+stattdessen die Seiten der Modelldatei; unter Linux endet das bei `ulimit -l`, und die Startzeile der Engine nennt
+das Limit und wie man es anhebt.
 
 Zum Lesen von Prompts braucht die Engine außerdem 350 bis 400 MiB weniger VRAM: Der Expertencache nimmt sie (Qwen3.6
 hält 2,712 statt 2,444 Experten im VRAM), oder `--vram-reserve-mib` lässt sie anderen Programmen. Wie es funktioniert
@@ -257,7 +261,7 @@ Alle zwölf Modelle benutzt du gleich: dieselbe App, dieselbe API.
 - **Deine Apps und Coding-Agents:** Füge einen „OpenAI-kompatiblen“ Anbieter mit der Basis-URL
   **`http://127.0.0.1:8080/v1`** hinzu. Jeder API-Key und jeder Modellname funktioniert.
   - Apps, die die API von Anthropic nutzen: `http://127.0.0.1:8080/v1/messages` (Claude Code:
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, dazu `"fit_max_tokens": true` in `strata-<model>.json`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, dazu `"anthropic_thinking": "on_request"` in `strata-<model>.json`
     ([warum](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI und andere Apps, die die OpenAI Responses API nutzen: `/v1/responses`
     ([Einrichtung](docs/DETAILS.md#the-responses-api-and-codex-cli)).
