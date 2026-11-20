@@ -75,21 +75,29 @@ rows or more is first turned into fp16 once, and prompt attention is a flash-sty
 256 values. Otherwise the older kernels run. Decode attention splits a token's keys among up to 32 threadgroups
 and merges their results.
 
-On the M5 Ultra Mac Studio (thinking off, greedy, 200-token answers, medians of three runs taking turns with an
-older engine; the Mac was shared with other work):
+On an M5 Ultra, against the v0.1.45-poly.10 engine loaded at the same time and sent the same text: thinking off,
+greedy, answers of up to 200 tokens, 12 rounds taking turns with 3 seconds idle before each request; `--tail-skip 0
+--max-context 8192`, the expert profile in each model's pack, `--threads 10 --metal-optimize --metal-memory balanced`,
+the draft on. The two engines gave the same answer in every round. Each cell is the range and, in brackets, the median,
+in tok/s: prompt read / decode.
 
-| Model | Prompt tokens | Prompt read | Decode |
-|---|---:|---:|---:|
-| LFM2.5 UD-Q3_K_XL | 30 | | 153 tok/s |
-| | 1,786 | 3,650 tok/s | 144 tok/s |
-| | 3,680 | 4,294 tok/s | 136 tok/s |
-| | 6,829 | 4,357 tok/s | 121 tok/s |
-| Qwen3.6 UD-Q2_K_XL | 32 | | 134 tok/s |
-| | 1,798 | 2,700 tok/s | 109 tok/s |
-| | 3,768 | 2,978 tok/s | 97 tok/s |
-| | 7,217 | 2,738 tok/s | 81 tok/s |
+| Model | Prompt tokens | This release | v0.1.45-poly.10 |
+|---|---:|---|---|
+| Qwen3.6 UD-Q2_K_XL | 31 | decode 123.9-138.2 (135.2) | decode 125.9-145.0 (137.1) |
+| | 670 | 1,485-1,703 (1,523) / 118.5-129.9 (124.4) | 1,438-1,623 (1,482) / 110.0-129.8 (123.8) |
+| | 1,797 | 2,586-2,721 (2,598) / 110.4-130.1 (121.1) | 2,521-2,703 (2,553) / 111.3-127.2 (119.3) |
+| | 3,767 | 2,947-3,065 (3,004) / 95.6-101.9 (98.8) | 2,970-3,045 (2,993) / 95.3-99.8 (98.0) |
+| | 7,216 | 2,744-2,772 (2,755) / 79.8-89.4 (81.5) | 2,710-2,758 (2,732) / 77.3-89.0 (81.9) |
+| LFM2.5 UD-Q3_K_XL | 29 | decode 152.2-156.7 (154.9) | decode 152.9-156.8 (154.9) |
+| | 643 | 1,844-2,076 (1,884) / 147.2-160.1 (149.7) | 1,810-2,114 (1,890) / 147.6-162.0 (149.8) |
+| | 1,785 | 3,197-3,688 (3,458) / 144.0-157.3 (148.2) | 3,414-3,727 (3,458) / 143.7-158.4 (148.1) |
+| | 3,679 | 4,192-4,489 (4,280) / 133.0-137.7 (135.2) | 4,122-4,350 (4,257) / 134.9-137.6 (135.5) |
+| | 6,828 | 4,361-4,494 (4,422) / 120.9-126.3 (122.8) | 4,329-4,444 (4,417) / 121.2-126.4 (122.5) |
 
-Other Apple GPUs have not been measured.
+The two engines read and write at about the same speed on this Mac (their ranges overlap). Requests sent back to back, with no
+idle time between them, read the prompt at one of two levels depending on what the GPU did just before: the 1,797-token
+prompt jumped between about 2,900 and about 3,850 tok/s, and both engines landed on the slower level as often. The table
+uses the reads after an idle pause for that reason. Other Apple GPUs have not been measured.
 
 For these checks, add `-DSTRATA_METAL_POLY=ON` to the engine build below and run `ctest -L poly`. Tests include
 CPU-reference kernel comparisons, small generated GGUF fixtures for all five architectures, graph replay,
@@ -158,11 +166,19 @@ match ggml's decoder for 1, 4 and 8 tokens. Neither published NVFP4 pack has bee
 
 `qwen36-strata` selects the separate `strata-q36` Metal executable, including UD-Q4_K_XL, UD-Q6_K_XL and Q8_0.
 It keeps the original driver's MTP, parallel sessions, hybrid CPU experts and server protocol. A build-time
-adapter reads `src/qwen35/q36_engine.cu`, emits Metal kernels and substitutes native dispatch calls. CUDA-only
+adapter reads `engine/src/qwen35/q36_engine.cu`, emits Metal kernels and substitutes native dispatch calls. CUDA-only
 fused optimizations use equivalent unfused operations. This path is distinct from `qwen36` on `strata-poly`.
 Its generated model tests compare graph/plain/MTP generation, hybrid MTP, conversation replay and two parallel
-MTP slots. Reference checks cover recurrent state updates and split-K attention. Actual Qwen3.6 weights
-have not been validated on Metal.
+MTP slots. Reference checks cover recurrent state updates and split-K attention.
+
+Earlier Mac builds of `strata-q36` gave 0 for every routed expert, so only the shared expert reached the output. With
+that fixed, the real UD-Q4_K_XL file writes the same tokens as `qwen36` on strata-poly (greedy, a 40-token prompt, 64
+tokens). It is experimental on a Mac and slow there. On an M5 Ultra, UD-Q4_K_XL wrote 60 tok/s (an 8-token prompt, 256
+tokens, no MTP) and read prompts at 19 tok/s in chunks of 8 tokens, which is what `--prefill auto` picks on Metal; the
+same model on strata-poly wrote 147 tok/s and read prompts at thousands of tokens a second. The warm-up before the first
+answer took 0.5 seconds, and the first start of a newly built engine takes about 20 seconds more while Metal compiles
+its shaders. For Qwen3.6 on a Mac, install the `qwen36` family (strata-poly), and do not use `qwen36-strata` for long
+prompts.
 
 On the M1 Pro validation machine, GLM's generated in-file draft executes through the existing speculative
 protocol. DeepSeek's generated prompt crosses its 128-token compression boundary and restores a parked
@@ -388,7 +404,8 @@ The first request after a model loads also waits once while the engine builds it
   "Should the model also read images?" (default yes). The reader is PolyStrata's own vision tower (`terminal/tools/vision/own`)
   with Metal kernels for the Qwen models', Gemma 4's and MiniCPM-V 4.7's towers; no llama.cpp or ggml is built into it. With
   `--gpu` it reads on the Mac's GPU, without it on the CPU, from the same program. A Mac always gets the GPU reader, whatever its
-  memory. `--vision cpu` is still allowed and prints a note. If the GPU reader cannot start, the server prints one line and starts
+  memory. `--vision cpu` is still allowed and prints a note (M5 Ultra, Qwen3.6's projector, a 256-token picture: 0.85 s on the
+  CPU, 0.03 s on the GPU). If the GPU reader cannot start, the server prints one line and starts
   it on the CPU. The tower's measurements on an M5 Ultra are under [Local validation](#local-validation).
 
   **Measured on:** Mac mini M4, 32 GB, Qwen3.8-Flash-Next BF16 projector, with the earlier reader (llama.cpp's mtmd on ggml's
@@ -407,7 +424,8 @@ The first request after a model loads also waits once while the engine builds it
 - **Families:** every installer choice is offered ([model coverage](#model-coverage)). On the original engine the original
   Qwen3.8-Flash-Next, Unsloth's UD-Q4/Q5/Q6_K_XL and agentionai's Gyro-S are measured; setup repacks Unsloth's shards into one
   file for the GPU, and a Gyro file is used as it is. Qwen3.6 and LFM2.5 run on strata-poly's Metal engine as a beta (measured
-  in [model coverage](#model-coverage)). The other newly ported paths (Swift, Coder, NVFP4, GLM, DeepSeek and the rest) have
+  in [model coverage](#model-coverage)); Qwen3.6 also runs on `strata-q36` (`qwen36-strata`), experimental and slow
+  ([Additional Qwen and ready-pack choices](#additional-qwen-and-ready-pack-choices)). The other newly ported paths (Swift, Coder, NVFP4, GLM, DeepSeek and the rest) have
   not run on a Mac with their real weights.
 
 ### Quality
@@ -478,27 +496,36 @@ checks dispatch through a surviving copy and release of the last owner; it is no
 
 ### Local validation
 
-On an M5 Ultra. A setup from scratch with the model files already on the disk (nothing downloaded) took
-62 seconds, and `python polystrata.py --list-models` then listed the model:
+On an M5 Ultra. A setup from scratch with the model files already on the disk (nothing downloaded) and pictures on took
+43 to 51 seconds, and `python polystrata.py --list-models` then listed the model:
 
 ```sh
 ./setup.sh --family qwen36 --model UD-Q2_K_XL --gguf-dir <folder with the files> --vision yes --yes --no-start
 ```
 
-Qwen3.6 UD-Q2_K_XL with `--tail-skip 0` and memory to spare, five rounds taking turns: a 4,833-token prompt read at 3,296-3,308 tok/s, and the
-answer was written at 94.2-94.4 tok/s.
-
-Pictures on the Metal tower against the reader of v0.1.45-poly.10 (llama.cpp's mtmd on ggml's Metal backend), four rounds
-taking turns, milliseconds per picture:
-
-| Model | Picture | This reader | v0.1.45-poly.10 |
-| --- | --- | --- | --- |
-| Gemma 4 | 992 tokens | 870-872 | 964-966 |
-| MiniCPM-V 4.7 | four sizes | 16 / 52 / 134 / 175 | 26 / 81-83 / 198 / 275-276 |
-| Qwen3.6 | 2,256 / 1,024 / 1,900 tokens | 806-820 / 139-141 / 583-596 | 898 / 234-235 / 672 |
+`python polystrata.py benchmark --model <name>` on that config (setup's defaults for Qwen3.6 UD-Q2_K_XL, which include
+`--tail-skip 6`): a 21-token prompt, first token after 0.23 seconds and the answer at 148 tok/s; a 2,981-token prompt,
+read at 3,890 tok/s and the answer at 117 tok/s. The engine speeds against v0.1.45-poly.10 are in
+[model coverage](#model-coverage).
 
 Through the server with Qwen3.6 UD-Q2_K_XL, the answer about a screenshot of code gave the numbers in it, and a photo was
-described correctly. These are checks on one Mac, not a quality evaluation.
+described correctly.
+
+Pictures on the Metal tower against the Metal reader of v0.1.45-poly.10 (llama.cpp's mtmd on ggml's Metal backend), on
+the GPU: a picture of 992 tokens, a 1600x1200 photo and a 1024x1024 picture, the time of each picture's second read in
+milliseconds, the peak memory from `/usr/bin/time -l`, 3 rounds taking turns.
+
+| Model | This reader | v0.1.45-poly.10 |
+| --- | --- | --- |
+| Gemma 4 | 922 / 675-677 / 238-239 ms, peak 993 MiB | 963-965 / 721-722 / 271 ms, 1,806 MiB |
+| MiniCPM-V 4.7 | 174-175 / 174-175 / 134 ms, 1,596 MiB | 276-277 / 276 / 198 ms, 1,680 MiB |
+| Qwen3.6 | 816-819 / 591-592 / 141 ms, 758-793 MiB | 898 / 672 / 234 ms, 1,567-1,584 MiB |
+
+The reader now reads the weights in place from the mapped mmproj file. macOS can drop those pages and read them again,
+so they do not count in the process's memory.
+
+`tools/packaging/mac/build_engine.sh --version 0.1.63` made a Mac engine package of 6.8 MiB in 41 files that needs
+macOS 15.0 or newer. These are checks on one Mac, not a quality evaluation.
 
 ## How it works
 
