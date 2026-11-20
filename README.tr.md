@@ -144,9 +144,12 @@ kısa bir sohbette.
 Sınır olmadan aynı makine 63 / 169 / 203 yazar. Aynı kodun çalıştığı Windows'ta ölçülmedi.
 `"--ram-experts-mib", "-1"` her uzmanı önceki gibi eşlenmiş tutar.
 
-Tersine, `"--lock-experts"` VRAM dışındaki uzmanları RAM'de kilitler; böylece sistem onların belleğini diğer
-programlara verip motorun onları daha sonra SSD'den yeniden okumasına yol açamaz. Linux'ta `ulimit -l`'in izin
-verdiğinden fazlasını kilitlemez ve motor başlarken ne kadarını kilitlediğini söyler.
+Tersine, `"--lock-experts"` VRAM dışındaki uzmanları RAM'de tutar; böylece sistem onların belleğini diğer
+programlara verip motorun onları daha sonra SSD'den yeniden okumasına yol açamaz. Tek bir NVIDIA kartında motor
+onları yüklerken sabitlenmiş (pinned) belleğe kopyalar; sistem bu belleği diske atmaz ve `ulimit -l` onu sınırlamaz.
+Daha sonra VRAM'den çıkan bir uzman, iki istek arasında model dosyasından kopyalanır. Bu kopyayı yapmadığı yerde
+(AMD kartı, Mac, katmanlar kartlara bölünmüşse, boş RAM yetmiyorsa) onun yerine model dosyasının sayfalarını kilitler;
+Linux'ta bu `ulimit -l`'de durur ve motorun başlangıç satırı sınırı ve nasıl yükseltileceğini söyler.
 
 Motor ayrıca prompt okumak için 350 ila 400 MiB daha az VRAM'e ihtiyaç duyar: bu alanı uzman önbelleği kullanır
 (Qwen3.6, VRAM'de 2.444 yerine 2.712 uzman tutar) ya da `--vram-reserve-mib` onu diğer programlara bırakır.

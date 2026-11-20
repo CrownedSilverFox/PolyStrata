@@ -2094,6 +2094,29 @@ slower, as below. It says so at the start:
 
 It was measured with 6,144 MiB on files with 6 to 12 GiB of experts outside VRAM, not with more.
 
+Under a budget the cache still swaps experts into VRAM while an answer is written, 64 at a time by default as
+without one (`--expert-swaps`). A swap reads its expert from the pool or the disk, as the CPU's misses do, but with
+none the cache stays as it was loaded while the answer moves on, and the misses go to the CPU, which under a budget
+reads many of them from the disk. On lab-241's RTX 4090 D, `--tail-skip 0`, the same `--ram-experts-mib` and
+`--vram-pool` for all three, the RAM held by a systemd scope and the model's pages dropped from the file cache before
+each run: four long prompts, then two answers of 512 tokens, three runs in turn, medians and ranges in tokens/s of
+the second to fourth reads and of the answers:
+
+| Model, VRAM, budget, RAM | | Reads | Answers |
+| --- | --- | ---: | ---: |
+| Qwen3.6 UD-Q3_K_M, 8 GB, 6,000 MiB, 8 GiB | 0.1.45-poly.10 | 2,575 (2,398-2,840) | 98 (67-144) |
+| | no swaps | 2,701 (2,537-2,765) | 120 (116-125) |
+| | 64 swaps | 2,717 (2,642-2,857) | 174 (124-247) |
+| Qwen3.6 UD-Q3_K_M, 4.8 GB, 5,120 MiB, 8 GiB | 0.1.45-poly.10 | 1,366 (1,255-1,414) | 45 (38-58) |
+| | no swaps | 1,985 (1,946-2,006) | 87 (75-101) |
+| | 64 swaps | 1,824 (1,710-1,918) | 98 (84-116) |
+| Gemma 4 UD-Q6_K_XL, 6.9 GB, 5,120 MiB, 11 GiB | 0.1.45-poly.10 | 1,038 (878-1,214) | 129 (56-166) |
+| | no swaps | 989 (918-1,007) | 100 (66-126) |
+| | 64 swaps | 1,144 (1,100-1,196) | 137 (122-159) |
+
+"VRAM" is what `--vram-pool` held the card to, not a card of that size. The swaps cost Qwen3.6 at 4.8 GB 8% of its
+later reads there.
+
 Three quarters of the budget are the experts the profile and this run used most, read through the mapping as before:
 their pages are the file cache's, so the RAM holds them once. The last quarter is a pool of slots, each a private
 copy. A call's experts outside both are read into free slots by eight threads, with ReadFile in pieces of 256 KiB,
@@ -2134,16 +2157,49 @@ and 232.18); one run each, 1,024 tokens of a short chat at 196.5 where 227.7 and
 where 200.6. With the experts held still and no guesses (`--expert-swaps 0 --cpu-share 0 --tail-skip 0 --window 1`)
 the 256 tokens of each of the three answers were the same as with every expert in RAM, on Windows and on Linux.
 
-`--lock-experts`, off by default, goes the other way: the experts outside VRAM are locked in RAM, so the system
-cannot hand their memory to another program. Without it they are pages of the file, which Windows counts in the
-engine's working set and Linux in its page cache, and either takes them back when memory runs short; a token that
-needs one then reads it from the disk again. A user's 16.7 GB file had 3.4 GB of it left in memory under Linux
-([issue 79](https://github.com/simplexai-labs/PolyStrata/issues/79)). The engine locks them once the load has read them
-in (mlock under Linux, VirtualLock under Windows), and between requests unlocks the ones the cache has taken and
-locks the ones it has given up. Linux locks no more than `ulimit -l` allows; past it the engine says how much it
-locked and the rest stay in the file cache. It does not go with `--ram-experts-mib`.
+`--lock-experts`, off by default, goes the other way: the experts outside VRAM stay in RAM, so the system cannot
+hand their memory to another program. Without it they are pages of the file, which Windows counts in the engine's
+working set and Linux in its page cache, and either takes them back when memory runs short; a token that needs one
+then reads it from the disk again. A user's 16.7 GB file had 3.4 GB of it left in memory under Linux
+([issue 79](https://github.com/simplexai-labs/PolyStrata/issues/79)). It does not go with `--ram-experts-mib`.
 
-On the laptop with Qwen3.6 UD-Q3_K_M it locked 10.1 GiB. With Windows emptying the engine's working set from
+On an NVIDIA card the engine keeps its own copy of the experts outside VRAM in pinned memory (the mirror the card
+copies them from), and `--lock-experts` takes that copy as the one that stays: pinned pages are not paged out, and
+the NVIDIA driver pins them past `ulimit -l`, which is 8 MiB on many Linux desktops and kept mlock from locking
+anything there. An expert that leaves VRAM once the mirror's spare slots are used goes back to the file as without
+the option, and a thread of its own reads it from the model file into pinned pieces of 32 MiB between requests, so
+a request does not wait for the pinning. The start line says how many experts it copied into how many GiB, and the
+thread's lines how much more it locked later.
+
+The engine makes no mirror on an AMD card or a Mac, with the layers split over cards, with `STRATA_POLY_MIRROR=0`,
+or when the experts outside VRAM and 4 GiB more do not fit in the free RAM. There it locks the experts' pages in the
+mapped file once the load has read them in, as up to 0.1.45-poly.10 (mlock under Linux, VirtualLock under Windows),
+and between requests unlocks the ones the cache has taken and locks the ones it has given up. Linux locks no more
+than `ulimit -l` allows; past it the engine says how much it locked, gives the limit and how to raise it, and the
+rest stay in the file cache.
+
+Measured on lab-241's RTX 4090 D held to 14 GB, Qwen3.6 UD-Q3_K_M, the engine in an 8 GiB memory scope with
+`ulimit -l 8192`: before, it locked none of the 3.2 GiB of experts outside VRAM, and once another process in the
+scope had taken its memory and let it go the engine held 0.85 of its 4.19 GiB and read a 4,833-token prompt at 2,183
+tokens/s where the one before read at 4,039. With the pinned copy it pinned 3.3 GiB, held its 4.63 GiB through the
+same pressure, and read the prompt after it at 3,852. Held to 12 GiB (6,807 to 6,809 experts in VRAM), `--tail-skip
+0`, five long prompts, three runs each in turn with and without the option, each read's range overlapped the
+default's whether the prompts came back to back or 5 s apart; 5 s apart the thread copied 434 MiB after the first and
+26 MiB after the fifth, 0.8 GiB more locked in all. Before the thread, the first three reads with the option were
+2,339 to 3,288 tokens/s where the default read 3,269 to 3,505.
+
+The same pinned copy lets an answer's tokens route on the card, as with every expert in VRAM, while the card copies
+the few picks it lacks from that copy itself; the other way, each MoE layer waits for a round trip to the host,
+which routes the token. Which costs less depends on the bus and the host, so the engine measures both at the load,
+for one answer at a time (no `--batch`): the card's copy speed times what the cache lacks of the expert profile's
+picks, against one round trip per MoE layer. It takes the cheaper way and its start line gives the numbers; with no
+profile it routes on the host, as 0.1.45-poly.10 did. On lab-241's RTX 4090 D (PCIe 4.0 x8: 12.6 GB/s, round trips of
+11 to 12 µs), Qwen3.6 UD-Q3_K_M took the host with 92% to 97.2% of the picks cached and the card with 98.8%; forced
+the other way in an earlier build, the card wrote 10 to 30% slower at 92% and no slower at 98.8%.
+`STRATA_POLY_CARD_FAR=1` forces the card, any other value the host.
+
+The paragraphs below measured the locked pages of the file, which is what the option did up to 0.1.45-poly.10. On
+the laptop with Qwen3.6 UD-Q3_K_M it locked 10.1 GiB. With Windows emptying the engine's working set from
 outside, as it does when memory runs short, 0.07 GiB of the 14.05 stayed without the lock and 10.13 GiB with it.
 After a 32K prompt the cache gave up 345 experts, and 10.63 GiB stayed. With the cache the same size in both runs
 (`--vram-reserve-mib 2000`), the three answers above were the same with it and without it.

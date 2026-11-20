@@ -141,9 +141,13 @@ dans un chat court ensuite.
 Sans limite, la même machine écrit 63 / 169 / 203. Ce n'est pas mesuré sous Windows, où le même code tourne.
 `"--ram-experts-mib", "-1"` garde tous les experts mappés comme avant.
 
-À l'inverse, `"--lock-experts"` verrouille en RAM les experts hors de la VRAM : le système ne peut pas donner cette
-mémoire à d'autres programmes, et le moteur n'a pas à les relire depuis le SSD. Sous Linux il en verrouille au plus
-ce que permet `ulimit -l`, et le moteur indique au démarrage combien il en a verrouillé.
+À l'inverse, `"--lock-experts"` garde en RAM les experts hors de la VRAM : le système ne peut pas donner cette
+mémoire à d'autres programmes, et le moteur n'a pas à les relire depuis le SSD. Avec une seule carte NVIDIA, le
+moteur les copie au chargement dans de la mémoire épinglée, que le système ne pagine pas et que `ulimit -l` ne limite
+pas ; un expert qui quitte la VRAM plus tard y est copié depuis le fichier du modèle entre deux requêtes. Là où il ne
+fait pas cette copie (carte AMD, Mac, couches réparties sur plusieurs cartes, trop peu de RAM libre), il verrouille à
+la place les pages du fichier du modèle ; sous Linux cela s'arrête à `ulimit -l`, et la ligne de démarrage du moteur
+donne la limite et la façon de la relever.
 
 Le moteur demande aussi 350 à 400 MiB de VRAM de moins pour lire les prompts : le cache d'experts les prend (Qwen3.6
 garde 2,712 experts en VRAM au lieu de 2,444), ou `--vram-reserve-mib` les laisse aux autres programmes.

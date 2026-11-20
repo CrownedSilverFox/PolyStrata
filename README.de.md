@@ -142,9 +142,13 @@ und in einem kurzen Chat danach.
 Ohne Limit schreibt dieselbe Maschine 63 / 169 / 203. Unter Windows, wo derselbe Code läuft, wurde es nicht
 gemessen. `"--ram-experts-mib", "-1"` bildet wie bisher alle Experten ab.
 
-Umgekehrt sperrt `"--lock-experts"` die Experten außerhalb des VRAM im RAM, sodass das System ihren Speicher nicht an
-andere Programme gibt und die Engine sie später nicht wieder von der SSD liest. Unter Linux sperrt es höchstens, was
-`ulimit -l` erlaubt, und die Engine sagt beim Start, wie viel es war.
+Umgekehrt hält `"--lock-experts"` die Experten außerhalb des VRAM im RAM, sodass das System ihren Speicher nicht an
+andere Programme gibt und die Engine sie später nicht wieder von der SSD liest. Auf einer einzelnen NVIDIA-Karte
+kopiert die Engine sie beim Laden in gepinnten Speicher, den das System nicht auslagert und den `ulimit -l` nicht
+begrenzt; ein Experte, der später das VRAM verlässt, wird zwischen zwei Anfragen aus der Modelldatei nachkopiert. Wo
+sie diese Kopie nicht anlegt (AMD-Karte, Mac, Schichten auf mehrere Karten verteilt, zu wenig freier RAM), sperrt sie
+stattdessen die Seiten der Modelldatei; unter Linux endet das bei `ulimit -l`, und die Startzeile der Engine nennt
+das Limit und wie man es anhebt.
 
 Zum Lesen von Prompts braucht die Engine außerdem 350 bis 400 MiB weniger VRAM: Der Expertencache nimmt sie (Qwen3.6
 hält 2,712 statt 2,444 Experten im VRAM), oder `--vram-reserve-mib` lässt sie anderen Programmen. Wie es funktioniert

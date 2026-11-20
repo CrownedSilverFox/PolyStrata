@@ -138,9 +138,12 @@ depois de um prompt de 24,000 tokens e num chat curto depois disso.
 Sem limite, a mesma máquina escreve 63 / 169 / 203. Não foi medido no Windows, onde roda o mesmo código.
 `"--ram-experts-mib", "-1"` mantém todos os experts mapeados como antes.
 
-Ao contrário, `"--lock-experts"` trava na RAM os experts que ficam fora da VRAM, então o sistema não passa essa memória
-para outros programas e o motor não precisa lê-los de novo do SSD. No Linux ele trava no máximo o que o `ulimit -l`
-permite, e o motor diz ao iniciar quanto travou.
+Ao contrário, `"--lock-experts"` mantém na RAM os experts que ficam fora da VRAM, então o sistema não passa essa
+memória para outros programas e o motor não precisa lê-los de novo do SSD. Com uma placa NVIDIA só, o motor os copia
+ao carregar para memória fixada (pinned), que o sistema não pagina e que o `ulimit -l` não limita, e um expert que
+sai da VRAM depois é copiado do arquivo do modelo entre duas requisições. Onde ele não faz essa cópia (placa AMD, Mac,
+camadas divididas entre placas, pouca RAM livre) ele trava as páginas do arquivo do modelo; no Linux isso para no
+`ulimit -l`, e a linha de início do motor mostra o limite e como aumentá-lo.
 
 O motor também precisa de 350 a 400 MiB a menos de VRAM para ler prompts: o cache de experts fica com eles (o Qwen3.6
 mantém 2,712 experts na VRAM em vez de 2,444), ou `--vram-reserve-mib` os deixa para outros programas.
