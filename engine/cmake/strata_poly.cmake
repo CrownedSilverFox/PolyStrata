@@ -3,11 +3,11 @@
 # strata_poly() after Strata's own targets exist; it uses their libraries (strata_kernels, strata_spec, the GPU
 # runtime and BLAS targets).
 #
-# strata-poly needs no ggml and no llama.cpp: a prompt's quantized products are Strata's own grouped kernel
-# (src/poly/mmq_own.cu), the CPU experts' rows its quant layer (strata_quant).  -DSTRATA_POLY_MMQ=ON builds the
-# products llama.cpp's way instead (its MMQ kernels, its flash-attention kernel and the GDN adapter that needs its
-# headers), from a llama.cpp checkout given as -DSTRATA_GGML_DIR: the tree vendored in third_party/strata-ggml has no
-# ggml-cuda.  That is the default only on HIP, where the own kernel does not exist yet and a checkout is there.
+# strata-poly needs no ggml and no llama.cpp: a prompt's quantized products are Strata's own kernels
+# (src/poly/mmq_own.cu: int8 and fp16 tiles where the card has them, else a dequantized matrix and the BLAS library,
+# which is the HIP and Turing path), the CPU experts' rows its quant layer (strata_quant).  -DSTRATA_POLY_MMQ=ON
+# builds the products llama.cpp's way instead (its MMQ kernels, its flash-attention kernel and the GDN adapter that
+# needs its headers), from a llama.cpp checkout given as -DSTRATA_GGML_DIR: an override kept for two releases.
 
 macro(strata_poly)
 if(STRATA_BUILD_TESTS)
@@ -83,17 +83,17 @@ endif()
 if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT STRATA_HIP_GFX906)
   if(STRATA_POLY_MMQ)
   # The prompt path's quantized products: llama.cpp's MMQ kernels (ggml-cuda, MIT) for the types the model's
-  # GGUFs keep their matrices in (the list in src/poly/mmq.cu), from the checkout strata_mmq is compiled from and
-  # with the same host symbols.  A library of its own, so that what `strata` multiplies with MMQ stays as it is.
+  # GGUFs keep their matrices in (the list in src/poly/mmq.cu), compiled from the given checkout.  A library of its
+  # own: `strata` has no MMQ.
   set(_strata_gg ${_strata_ggml_root}/ggml)
-  set(_strata_mmq ${_strata_gg}/src/ggml-cuda)
+  set(_strata_ggml_cuda ${_strata_gg}/src/ggml-cuda)
   # Navi 12 / Navi 14 (gfx1011, gfx1012) have the signed dot4 that llama.cpp's ggml_cuda_dp4a leaves to RDNA1's SDWA
   # sequence (its vendors/hip.h counts gfx1012 as RDNA1); include/strata/hip_compat/intrinsics.hpp has the
   # measurement.  A HIP build for either has the checkout's common.cuh take __builtin_amdgcn_sdot4 there as well: the
   # same products.  The checkout is downloaded, not part of this tree, so it is patched here, once, by its exact line;
   # STRATA_GFX1012_SDWA_DOT=ON (cmake/hip_backend.cmake) leaves it as it is.
   if(STRATA_ENABLE_HIP AND CMAKE_HIP_ARCHITECTURES MATCHES "gfx101[12]" AND NOT STRATA_GFX1012_SDWA_DOT)
-    set(_strata_cc ${_strata_mmq}/common.cuh)
+    set(_strata_cc ${_strata_ggml_cuda}/common.cuh)
     file(READ ${_strata_cc} _strata_cc_text)
     set(_strata_cc_old "#if defined(CDNA) || defined(RDNA2) || defined(__gfx906__)\n    c = __builtin_amdgcn_sdot4")
     set(_strata_cc_new "#if defined(CDNA) || defined(RDNA2) || defined(__gfx906__) || defined(__gfx1011__) || defined(__gfx1012__)\n    c = __builtin_amdgcn_sdot4")
@@ -107,25 +107,25 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   set(_strata_poly_mmq_instances "")
   foreach(_t q4_0 q4_1 q5_0 q5_1 q8_0 q2_k q3_k q4_k q5_k q6_k iq1_s iq2_xxs iq2_xs iq2_s iq3_xxs iq3_s iq4_nl
              iq4_xs)
-    list(APPEND _strata_poly_mmq_instances ${_strata_mmq}/template-instances/mmq-instance-${_t}.cu)
+    list(APPEND _strata_poly_mmq_instances ${_strata_ggml_cuda}/template-instances/mmq-instance-${_t}.cu)
   endforeach()
   # MXFP4 and NVFP4: on RTX 50 llama.cpp's tiles use the FP4 MMA with block scales, which exists only in the
   # arch-specific target, so on CUDA their instances alone are built with 12x -> 12xa, as Strata's W4A4 unit is.  A
   # Blackwell other than 12.0 has no image of them, and Mmq::fits() leaves MXFP4 out there.  NVFP4 takes this
   # instance only on a 12.0 card with STRATA_PREFILL_NVFP4=w4a4; otherwise its tiles are mmq_nvfp4.cu's int8 ones,
   # built for the architectures as given.  On HIP there is no NVFP4 prompt product.
-  set(_strata_poly_mxfp4 ${_strata_mmq}/template-instances/mmq-instance-mxfp4.cu)
+  set(_strata_poly_mxfp4 ${_strata_ggml_cuda}/template-instances/mmq-instance-mxfp4.cu)
   if(STRATA_ENABLE_HIP)
     list(APPEND _strata_poly_mmq_instances ${_strata_poly_mxfp4})
   else()
-    list(APPEND _strata_poly_mxfp4 ${_strata_mmq}/template-instances/mmq-instance-nvfp4.cu)
+    list(APPEND _strata_poly_mxfp4 ${_strata_ggml_cuda}/template-instances/mmq-instance-nvfp4.cu)
     list(APPEND _strata_poly_mmq_instances src/poly/mmq_nvfp4.cu)
     set(_strata_poly_fp4_archs ${CMAKE_CUDA_ARCHITECTURES})
     list(TRANSFORM _strata_poly_fp4_archs REPLACE "^(12[0-9])$" "\\1a")
     list(TRANSFORM _strata_poly_fp4_archs REPLACE "^(12[0-9])-(real|virtual)$" "\\1a-\\2")
     add_library(strata_poly_mmq_mxfp4 OBJECT ${_strata_poly_mxfp4})
     set_target_properties(strata_poly_mmq_mxfp4 PROPERTIES CUDA_ARCHITECTURES "${_strata_poly_fp4_archs}")
-    target_include_directories(strata_poly_mmq_mxfp4 PRIVATE ${_strata_gg}/include ${_strata_gg}/src ${_strata_mmq})
+    target_include_directories(strata_poly_mmq_mxfp4 PRIVATE ${_strata_gg}/include ${_strata_gg}/src ${_strata_ggml_cuda})
     target_compile_options(strata_poly_mmq_mxfp4 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda -use_fast_math>)
     if(MSVC)
       target_compile_options(strata_poly_mmq_mxfp4 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/bigobj>)
@@ -134,13 +134,12 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   endif()
   if(STRATA_ENABLE_HIP)
     # CMake does not infer HIP from the .cu suffixes outside src/ (and drops a .cu source it has no language
-    # for), and ggml's MMQ sources take its native HIP path (vendors/hip.h) instead of the hip_compat headers,
-    # as strata_mmq's does.
-    set_source_files_properties(${_strata_mmq}/quantize.cu ${_strata_poly_mmq_instances} PROPERTIES LANGUAGE HIP)
+    # for), and ggml's MMQ sources take its native HIP path (vendors/hip.h) instead of the hip_compat headers.
+    set_source_files_properties(${_strata_ggml_cuda}/quantize.cu ${_strata_poly_mmq_instances} PROPERTIES LANGUAGE HIP)
   endif()
-  add_library(strata_poly_mmq STATIC src/poly/mmq.cu src/poly/fattn.cu src/poly/ggml_cuda_host.cu ${_strata_mmq}/quantize.cu
+  add_library(strata_poly_mmq STATIC src/poly/mmq.cu src/poly/fattn.cu src/poly/ggml_cuda_host.cu ${_strata_ggml_cuda}/quantize.cu
               ${_strata_poly_mmq_instances})
-  target_include_directories(strata_poly_mmq PRIVATE ${_strata_gg}/include ${_strata_gg}/src ${_strata_mmq}
+  target_include_directories(strata_poly_mmq PRIVATE ${_strata_gg}/include ${_strata_gg}/src ${_strata_ggml_cuda}
                                                     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_compile_options(strata_poly_mmq PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda -use_fast_math>)
   if(MSVC)

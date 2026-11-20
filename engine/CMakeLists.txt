@@ -627,16 +627,10 @@ strata_cpu_kernels()
 # third_party/strata-ggml (frozen at the llama.cpp commit in third_party/ggml/VERSION.txt, see its UPSTREAM.md): no download.
 # -DSTRATA_GGML_DIR=<llama.cpp checkout> still builds from that checkout instead (an override kept for two releases).
 strata_ggml_resolve("${CMAKE_CURRENT_SOURCE_DIR}")
-# strata-poly (cmake/strata_poly.cmake).  Its prompt products are Strata's own kernels; llama.cpp's MMQ in their place
-# needs ggml-cuda, which only a checkout given as -DSTRATA_GGML_DIR has.  On HIP, where the own kernel does not exist
-# yet, MMQ is the default when such a checkout is there.
+# strata-poly (cmake/strata_poly.cmake).  Its prompt products are Strata's own kernels on CUDA and HIP; llama.cpp's MMQ
+# in their place (an override kept for two releases) needs ggml-cuda, which only a checkout given as -DSTRATA_GGML_DIR has.
 option(STRATA_BUILD_POLY "Build strata-poly" ON)
-set(_strata_poly_mmq_default OFF)
-if(STRATA_ENABLE_HIP AND EXISTS "${_strata_ggml_root}/ggml/src/ggml-cuda/mmq.cuh")
-  set(_strata_poly_mmq_default ON)
-endif()
-option(STRATA_POLY_MMQ "strata-poly: llama.cpp's MMQ prompt kernels instead of Strata's own (needs -DSTRATA_GGML_DIR=<llama.cpp checkout>)"
-       ${_strata_poly_mmq_default})
+option(STRATA_POLY_MMQ "strata-poly: llama.cpp's MMQ prompt kernels instead of Strata's own (needs -DSTRATA_GGML_DIR=<llama.cpp checkout>)" OFF)
 if(STRATA_POLY_MMQ AND NOT EXISTS "${_strata_ggml_root}/ggml/src/ggml-cuda/mmq.cuh")
   message(FATAL_ERROR "STRATA_POLY_MMQ needs llama.cpp's ggml-cuda: give a checkout with -DSTRATA_GGML_DIR (looked in ${_strata_ggml_root})")
 endif()
