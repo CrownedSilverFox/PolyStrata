@@ -82,7 +82,7 @@ class MirrorEqualsTheEngine(unittest.TestCase):
 
     def test_the_catalog_sizes_are_setups(self):
         import setup
-        fam = setup.OWN_PATH_FAMILIES[q36_types.FAMILY]
+        fam = setup.OWN_PATH_FAMILIES["qwen36-strata"]
         self.assertEqual(tuple(fam["models"]), q36_types.SIZES)
         self.assertEqual(fam["file"], q36_types.FILE)
         self.assertEqual(fam["arch"], "qwen35moe")
