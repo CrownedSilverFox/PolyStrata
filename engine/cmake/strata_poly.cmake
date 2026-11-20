@@ -283,6 +283,18 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_link_libraries(poly_mmq_tiles_test PRIVATE strata_poly_mmq ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
   add_test(NAME poly_mmq_tiles_test COMMAND poly_mmq_tiles_test)
   set_tests_properties(poly_mmq_tiles_test PROPERTIES SKIP_RETURN_CODE 77)
+  # a prompt product of each path (the card's, and the BLAS path with STRATA_POLY_PROMPT_BLAS=1) against a double-precision
+  # product of ggml's dequantized weights; needs a card
+  if(TARGET ggml-base)
+    add_executable(poly_mmq_paths_test src/poly/mmq_paths_test.cu)
+    target_include_directories(poly_mmq_paths_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/poly
+                                                          ${_strata_gpu_include_directories} ${_strata_ggml_root}/ggml/include)
+    target_link_libraries(poly_mmq_paths_test PRIVATE strata_poly_mmq ggml-base ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+    add_test(NAME poly_mmq_paths_test COMMAND poly_mmq_paths_test)
+    add_test(NAME poly_mmq_paths_test_blas COMMAND poly_mmq_paths_test)
+    set_tests_properties(poly_mmq_paths_test poly_mmq_paths_test_blas PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(poly_mmq_paths_test_blas PROPERTIES ENVIRONMENT "STRATA_POLY_PROMPT_BLAS=1")
+  endif()
   # LFM2's short convolution against the same arithmetic on the host; needs a card, so it is run by hand
   add_executable(poly_shortconv_test src/poly/shortconv_test.cu src/poly/kernels.cu)
   target_include_directories(poly_shortconv_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include

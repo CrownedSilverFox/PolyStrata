@@ -3484,6 +3484,7 @@ void Engine::alloc() {
 #endif
         tab_ = (int32_t*) dmalloc(tab, "scratch");
         h_tab_ = (int32_t*) hmalloc(tab, "pinned memory");
+        if (mmq_) mmq_->mirror(tab_, h_tab_, tab);   // the bounds moe_rows() hands mul() are in tab_, written from h_tab_
         iota_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         d_ex_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         h_ex_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");

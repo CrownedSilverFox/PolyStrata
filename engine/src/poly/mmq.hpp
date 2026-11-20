@@ -46,8 +46,19 @@ public:
              const int32_t* bounds, const int32_t* ids, int64_t total_rows, int64_t max_rows, float* dst,
              int64_t ld_dst, void* stream, const int32_t* from = nullptr);
 
+    /// mul()'s bounds lie in `dev`, a copy of `host` (`bytes` long) that the caller has filled for the call before
+    /// it calls mul(): a product that sizes its launches on the host reads them there (mmq_own.cu's BLAS path).
+    void mirror(const void* dev, const void* host, size_t bytes) {
+        mirror_dev_ = dev;
+        mirror_host_ = host;
+        mirror_bytes_ = bytes;
+    }
+
 private:
     void* ctx_ = nullptr;   ///< llama.cpp's launch context: a small scratch pool
+    const void* mirror_dev_ = nullptr;
+    const void* mirror_host_ = nullptr;
+    size_t mirror_bytes_ = 0;
 };
 
 }  // namespace strata::poly
