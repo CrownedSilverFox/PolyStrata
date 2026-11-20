@@ -2254,7 +2254,13 @@ void Engine::ensure_stage() {
     } else {
         stage_ = (uint8_t*) dmalloc(stage_bytes_ + 256 + kTail, "the expert staging buffer");
     }
-    for (int b = 0; b < 2; ++b) h_stage_[b] = (uint8_t*) hmalloc(chunk_bytes_, "pinned memory");
+}
+
+// The pinned buffers that stage() fills in turn.  A card that holds every expert stages none: they wait for the
+// first one that it lacks, 128 MiB of RAM the load no longer takes.
+void Engine::stage_pins() {
+    for (int b = 0; b < 2; ++b)
+        if (!h_stage_[b]) h_stage_[b] = (uint8_t*) hmalloc(chunk_bytes_, "pinned memory");
 }
 
 // The thread and the stream that bring experts into the cache while an answer is written (follow()).
@@ -3119,6 +3125,7 @@ void Engine::load(const Options& o) {
     if (!opt_.profile.empty()) read_profile(opt_.profile, (int) layers_.size(), n_expert_, prior_);
     fill_expert_cache();
     ensure_stage();
+    if (mmq_ && !all_cached()) stage_pins();
     // The weights and the expert cache are written on st_ now (h2d(), zero_vram()): the load is not over until
     // those are done, so that everything after it - a read of what the cache holds, the first request's cover()
     // mapping the attention caches - finds what it expects.
@@ -5130,6 +5137,7 @@ void Engine::stage(const Layer& L, const int32_t* experts, int m, void* stream, 
         return;
     }
 #endif
+    stage_pins();
     const int per = (int) (chunk_bytes_ / (step + L.d_bytes));
     for (int j0 = 0; j0 < m; j0 += per) {
         const size_t c = (size_t) std::min(per, m - j0);
@@ -5172,6 +5180,7 @@ void Engine::stage(const Layer& L, const int32_t* experts, int m, void* stream, 
 void Engine::stage_rest(const Layer& L, const int32_t* experts, const std::vector<int>& which, int m, void* stream,
                         bool alone) {
     const size_t step = L.gu_step, down_at = pad((size_t) m * step), one = L.gu2() + L.d_bytes;
+    stage_pins();
     const int per = (int) std::max<size_t>(chunk_bytes_ / one, 1);
     for (size_t i0 = 0; i0 < which.size(); i0 += (size_t) per) {
         const size_t c = std::min((size_t) per, which.size() - i0);
