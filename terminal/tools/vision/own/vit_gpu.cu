@@ -879,7 +879,7 @@ std::string VitGpu::arch_name() {
 bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patches, std::string& err) {
     VitGpuImpl& m = *impl_;
     std::string why;
-    if (!vit_geometry_supported(g, why)) { err = "this tower is not supported: " + why; return false; }
+    if (!vit_geometry_supported(g, why) || !vit_geometry_qwen(g, why)) { err = "this tower is not supported: " + why; return false; }
     m.g = g;
     m.device = device;
 #if defined(STRATA_VIT_HIP)

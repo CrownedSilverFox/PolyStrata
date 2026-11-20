@@ -2,8 +2,10 @@
 //
 // Nothing about a Qwen tower is a constant in the code: layers, widths, heads, patch and merge sizes, the position grid, the output
 // width, the norm, the activation and the image limits all come from the file.  What the code does know is the list of *operations* a
-// tower may be made of (see supported()): today the Qwen3-VL family ("qwen3vl_merger": LayerNorm, fused QKV, 2D rotary, global
-// attention, a plain tanh-GELU MLP, a 2x2 merger).  A tower of that family with other numbers is a new file, not new code.
+// tower may be made of (see supported()): the Qwen3-VL family ("qwen3vl_merger": LayerNorm, fused QKV, 2D rotary, global
+// attention, a plain tanh-GELU MLP, a 2x2 merger) and Gemma 4's ("gemma4v": RMS norms, separate q/k/v with per-head norms, a 2D NeoX
+// rotary, post-norms, a gated FFN, x/y position tables, an average pool and a projection).  A tower of either family with other
+// numbers is a new file, not new code.
 #pragma once
 
 #include "gguf_lite.h"
@@ -44,6 +46,8 @@ struct VitGeometry {
     int max_tokens = 4096;
     int merger_in = 0;                // width * merge^2
     int merger_hidden = 0;            // mm.0's output width
+    int pool = 0;                     // gemma4v: the tokens averaged into one, pool x pool (= merge, clip.vision.projector.scale_factor); 0 none
+    bool std_norm = false;            // gemma4v: v.std_bias and v.std_scale after the pool
 
     // tokens a patch grid gives: (w / merge) * (h / merge) for a w x h patch grid
     int align() const { return patch * merge; }   // image sides are multiples of this
@@ -56,5 +60,9 @@ bool vit_geometry_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err);
 
 // True when the operations this geometry needs are all implemented; otherwise `why` says which one is not.
 bool vit_geometry_supported(const VitGeometry& g, std::string& why);
+
+// The towers other than the fast CPU one (VitRef, VitGpu, VitSycl, VitMetal) read the Qwen family only: false and `why` for another, so a
+// GPU reader stops before READY and the server starts the CPU one.
+bool vit_geometry_qwen(const VitGeometry& g, std::string& why);
 
 }  // namespace strata_vit

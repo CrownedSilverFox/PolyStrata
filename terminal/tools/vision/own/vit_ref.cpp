@@ -180,7 +180,7 @@ double cosine(const float* a, const float* b, size_t n) {
 bool VitRef::load(const Gguf& gg, const VitGeometry& g, std::string& err) {
     g_ = g;
     std::string why;
-    if (!vit_geometry_supported(g, why)) { err = "this tower is not supported: " + why; return false; }
+    if (!vit_geometry_supported(g, why) || !vit_geometry_qwen(g, why)) { err = "this tower is not supported: " + why; return false; }
     // the two temporal taps of the patch embedding are summed: a still picture is fed to both
     std::vector<float> w0, w1;
     if (!read_t(gg, "v.patch_embd.weight", w0, err)) return false;

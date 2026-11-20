@@ -33,6 +33,21 @@ struct Layer {
     Mat qkv, o, up, down;
 };
 
+struct GemmaLayer {   // gemma4v: RMS norm weights, the per-head q / k norms, no biases
+    std::vector<float> ln1, ln2, attn_post, ffn_post, q_norm, k_norm;
+    Mat q, k, v, o, gate, up, down;
+};
+
+// y = x / sqrt(mean(x^2) + eps) (* w), ggml_rms_norm's order: the sum in double, the scale in float
+void rms_row(const float* x, float* y, int n, const float* w, float eps) {
+    double s = 0.0;
+    for (int i = 0; i < n; ++i) s += (double) x[i] * x[i];
+    const float scale = 1.0f / std::sqrt((float) (s / n) + eps);
+    for (int i = 0; i < n; ++i) y[i] = x[i] * scale;
+    if (w)
+        for (int i = 0; i < n; ++i) y[i] *= w[i];
+}
+
 }  // namespace
 
 struct VitCpu::Impl {
@@ -42,6 +57,9 @@ struct VitCpu::Impl {
     std::vector<float> patch_b, pos, post_w, post_b, mm0_b, mm2_b;
     Mat patch_w, mm0, mm2;
     std::vector<Layer> layers;
+    std::vector<GemmaLayer> glayers;          // gemma4v
+    std::vector<float> std_bias, std_scale;   // gemma4v, when the file has them
+    Mat proj;                                 // gemma4v: mm.input_projection
     std::unique_ptr<Team> team;
     int team_threads = 0;
 
@@ -132,6 +150,9 @@ struct VitCpu::Impl {
             if (gelu) ops->gelu(C + (size_t) m0 * ldc + n0, ldc, mr, nv);
         });
     }
+
+    bool load_gemma4(const Gguf& gg, std::string& err);
+    bool encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
 };
 
 VitCpu::VitCpu() : impl_(new Impl()) {}
@@ -145,6 +166,7 @@ bool VitCpu::load(const Gguf& gg, const VitGeometry& g, std::string& err) {
     if (!vit_geometry_supported(g, why)) { err = "this tower is not supported: " + why; return false; }
     m.g = g;
     m.ops = &cpu_ops(quant::best_isa());
+    if (g.projector == "gemma4v") return m.load_gemma4(gg, err);
     // the patch embedding: the two temporal taps summed (a still picture is fed to both), kept float32 (a small matrix)
     {
         const GgufTensorInfo* t0 = gg.tensor("v.patch_embd.weight");
@@ -194,6 +216,12 @@ int vit_cpu_round_kind(int weight_kind, const char* env) {
 bool VitCpu::encode(const PreparedImage& img, int threads, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
     Impl& m = *impl_;
     const VitGeometry& g = m.g;
+    if (g.projector == "gemma4v") {
+        if (m.glayers.empty()) { err = "the tower is not loaded"; return false; }
+        const int nth = threads > 0 ? threads : (int) std::max(1u, std::min(16u, std::thread::hardware_concurrency() / 2));
+        if (!m.team || m.team_threads != nth) { m.team.reset(new Team(nth)); m.team_threads = nth; }
+        return m.encode_gemma4(img, rows, nx, ny, err);
+    }
     if (m.layers.empty()) { err = "the tower is not loaded"; return false; }
     const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn;
     if (HD > 128 || HD % 4 != 0) { err = "this head size is not handled by the CPU tower"; return false; }
@@ -399,6 +427,223 @@ bool VitCpu::encode(const PreparedImage& img, int threads, std::vector<float>& r
         std::fprintf(stderr, "vit-cpu-prof N=%d threads=%d isa=%s: patch+pos %.1f, ln+qkv %.1f, rope+KT %.1f, attention %.1f (thread 0, %d tasks: QK %.1f, softmax %.1f, PV %.1f), "
                              "o-proj %.1f, ln+up+gelu %.1f, down %.1f, post+merger %.1f ms\n",
                      N, nth, ops.name, pt[0], pt[1], pt[2], pt[3], (int) pt[11], pt[8], pt[9], pt[10], pt[4], pt[5], pt[6], pt[7]);
+    return true;
+}
+
+bool VitCpu::Impl::load_gemma4(const Gguf& gg, std::string& err) {
+    {   // the patch embedding, float32 (a small matrix), no bias
+        const GgufTensorInfo* t = gg.tensor("v.patch_embd.weight");
+        if (!t) { err = "the mmproj file lacks v.patch_embd.weight"; return false; }
+        patch_w.kind = 0;
+        patch_w.rows = g.width;
+        patch_w.cols = 3 * g.patch * g.patch;
+        patch_w.f32.resize((size_t) t->nelem());
+        if (!gg.read_f32(*t, patch_w.f32.data(), err)) return false;
+    }
+    if (!read_f(gg, "v.position_embd.weight", pos, err) || !read_m(gg, "mm.input_projection.weight", proj, err)) return false;
+    if (g.std_norm && (!read_f(gg, "v.std_bias", std_bias, err) || !read_f(gg, "v.std_scale", std_scale, err))) return false;
+    glayers.assign((size_t) g.layers, GemmaLayer{});
+    for (int il = 0; il < g.layers; ++il) {
+        GemmaLayer& L = glayers[(size_t) il];
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        if (!read_f(gg, p + "ln1.weight", L.ln1, err) || !read_f(gg, p + "ln2.weight", L.ln2, err) ||
+            !read_f(gg, p + "attn_post_norm.weight", L.attn_post, err) || !read_f(gg, p + "ffn_post_norm.weight", L.ffn_post, err) ||
+            !read_f(gg, p + "attn_q_norm.weight", L.q_norm, err) || !read_f(gg, p + "attn_k_norm.weight", L.k_norm, err) ||
+            !read_m(gg, p + "attn_q.weight", L.q, err) || !read_m(gg, p + "attn_k.weight", L.k, err) || !read_m(gg, p + "attn_v.weight", L.v, err) ||
+            !read_m(gg, p + "attn_out.weight", L.o, err) || !read_m(gg, p + "ffn_gate.weight", L.gate, err) ||
+            !read_m(gg, p + "ffn_up.weight", L.up, err) || !read_m(gg, p + "ffn_down.weight", L.down, err))
+            return false;
+    }
+    return true;
+}
+
+// Gemma 4's tower, mtmd's clip_graph_gemma4v step for step: tokens in reading order (row t is the patch at column t % pw, row t / pw), the
+// pixels as 2 v - 1, the x and y position tables added, then per layer RMS norm, q / k / v, an RMS norm per head on q and k (weighted)
+// and v (not), the rotary of the first half of a head by the column and of the second half by the row (NeoX pairs, i with i + HD / 4),
+// attention without a scale, the output's RMS norm, the residual, then the same around a gated quick-GELU FFN.  After the layers: the
+// average of every pool x pool square times sqrt(width), the standardisation, an RMS norm and the projection.  The rows come out in reading
+// order of the pooled grid, and the grid is reported as one line (nx = rows, ny = 1): Gemma 4's image tokens take positions as text does.
+bool VitCpu::Impl::encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
+    const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn, K = g.pool, T = g.pos_grid;
+    if (HD > 128 || HD % 4 != 0) { err = "this head size is not handled by the CPU tower"; return false; }
+    if (img.w <= 0 || img.h <= 0 || img.w % (P * K) != 0 || img.h % (P * K) != 0) { err = "the picture size is not a multiple of patch * pool"; return false; }
+    const int pw = img.w / P, ph = img.h / P, N = pw * ph;
+    if (pw > T || ph > T) { err = "the picture has more patches a side than the position tables"; return false; }
+    const CpuOps& o = *ops;
+    const int nth = team->size();
+    std::vector<std::vector<float>> scratch((size_t) nth, std::vector<float>((size_t) kKC * 2 * o.NR));
+    const int R = std::min(N, kRowsChunk);
+
+    const int K0 = 3 * P * P;
+    std::vector<float> x((size_t) N * D);
+    {
+        std::vector<float> A((size_t) R * K0);
+        const size_t plane = (size_t) img.w * img.h;
+        for (int r0 = 0; r0 < N; r0 += R) {
+            const int rn = std::min(R, N - r0);
+            rows_par(rn, [&](int i) {
+                const int t = r0 + i, py = t / pw, px = t % pw;
+                float* a = &A[(size_t) i * K0];
+                for (int c = 0; c < 3; ++c)
+                    for (int ky = 0; ky < P; ++ky) {
+                        const float* src = &img.chw[c * plane + (size_t) (py * P + ky) * img.w + (size_t) px * P];
+                        float* dst = a + (size_t) c * P * P + (size_t) ky * P;
+                        for (int kx = 0; kx < P; ++kx) dst[kx] = src[kx] * 2.0f - 1.0f;
+                    }
+            });
+            linear(patch_w, A.data(), (size_t) K0, rn, x.data() + (size_t) r0 * D, (size_t) D, 0, nullptr, false, scratch);
+        }
+    }
+    rows_par(N, [&](int t) {   // the x table's row of the column, then the y table's of the row: two adds, as the graph has them
+        float* r = &x[(size_t) t * D];
+        const float* tx = &pos[(size_t) (t % pw) * D];
+        const float* ty = &pos[((size_t) T + (size_t) (t / pw)) * D];
+        for (int d = 0; d < D; ++d) r[d] += tx[d];
+        for (int d = 0; d < D; ++d) r[d] += ty[d];
+    });
+
+    // the rotary: pair i of a half head (i, i + HD / 4) turns by p * theta^(-4 i / HD), the angle grown by multiplication as ggml's cache is
+    const int half = HD / 2, pairs = half / 2;
+    const float theta_scale = std::pow(g.rope_theta, -2.0f / (float) half);
+    auto table = [&](int n, std::vector<float>& c, std::vector<float>& s) {
+        c.resize((size_t) n * pairs);
+        s.resize((size_t) n * pairs);
+        for (int p = 0; p < n; ++p) {
+            float th = (float) p;
+            for (int i = 0; i < pairs; ++i) {
+                c[(size_t) p * pairs + i] = std::cos(th);
+                s[(size_t) p * pairs + i] = std::sin(th);
+                th *= theta_scale;
+            }
+        }
+    };
+    std::vector<float> cx, sx, cy, sy;
+    table(pw, cx, sx);
+    table(ph, cy, sy);
+    auto rope = [&](float* h, int px, int py) {
+        for (int part = 0; part < 2; ++part) {
+            const float* c = part ? &cy[(size_t) py * pairs] : &cx[(size_t) px * pairs];
+            const float* s = part ? &sy[(size_t) py * pairs] : &sx[(size_t) px * pairs];
+            float* q = h + part * half;
+            for (int i = 0; i < pairs; ++i) {
+                const float x0 = q[i], x1 = q[i + pairs];
+                q[i] = x0 * c[i] - x1 * s[i];
+                q[i + pairs] = x0 * s[i] + x1 * c[i];
+            }
+        }
+    };
+
+    const size_t slack = 256, D3 = (size_t) 3 * D;
+    std::vector<float> qkv((size_t) N * D3 + slack, 0.0f), ctx((size_t) N * D), hbuf((size_t) R * D), tmp((size_t) R * D);
+    std::vector<float> gb((size_t) R * F), ub((size_t) R * F);
+    const int Np = (N + 63) / 64 * 64, OD = (HD + 15) / 16 * 16, QB = kQBDefault, tasks_q = (N + QB - 1) / QB;
+    std::vector<float> KT((size_t) H * HD * Np, 0.0f), VP((size_t) H * N * HD + slack, 0.0f);
+    std::vector<std::vector<float>> sscr((size_t) nth, std::vector<float>((size_t) QB * kTK + (size_t) QB * OD + 2 * QB));
+    const float eps = g.eps;
+    for (const GemmaLayer& L : glayers) {
+        for (int r0 = 0; r0 < N; r0 += R) {
+            const int rn = std::min(R, N - r0);
+            rows_par(rn, [&](int i) { rms_row(&x[(size_t) (r0 + i) * D], &hbuf[(size_t) i * D], D, L.ln1.data(), eps); });
+            float* dst = qkv.data() + (size_t) r0 * D3;
+            linear(L.q, hbuf.data(), (size_t) D, rn, dst, D3, 0, nullptr, false, scratch);
+            linear(L.k, hbuf.data(), (size_t) D, rn, dst + D, D3, 0, nullptr, false, scratch);
+            linear(L.v, hbuf.data(), (size_t) D, rn, dst + 2 * D, D3, 0, nullptr, false, scratch);
+        }
+        rows_par(N, [&](int t) {
+            float* row = qkv.data() + (size_t) t * D3;
+            for (int h = 0; h < H; ++h) {
+                float* q = row + (size_t) h * HD;
+                float* k = row + D + (size_t) h * HD;
+                float* v = row + 2 * (size_t) D + (size_t) h * HD;
+                rms_row(q, q, HD, L.q_norm.data(), eps);
+                rope(q, t % pw, t / pw);
+                rms_row(k, k, HD, L.k_norm.data(), eps);
+                rope(k, t % pw, t / pw);
+                rms_row(v, v, HD, nullptr, eps);
+            }
+        });
+        {   // K transposed per head (KT[h][d][j]) and V packed per head (VP[h][j][d])
+            const int jb = 64, njb = (N + jb - 1) / jb;
+            team->run(H * njb, [&](int task, int) {
+                const int hh = task / njb, j0 = (task % njb) * jb, j1 = std::min(N, j0 + jb);
+                for (int j = j0; j < j1; ++j) {
+                    const float* kr = qkv.data() + (size_t) j * D3 + D + (size_t) hh * HD;
+                    float* kt = KT.data() + (size_t) hh * HD * Np + j;
+                    for (int d = 0; d < HD; ++d) kt[(size_t) d * Np] = kr[d];
+                    std::memcpy(VP.data() + ((size_t) hh * N + j) * HD, kr + D, sizeof(float) * (size_t) HD);
+                }
+            });
+        }
+        team->run(H * tasks_q, [&](int task, int thr) {   // softmax(q k^T) v, no scale (the graph's kq_scale is 1)
+            const int hh = task / tasks_q, q0 = (task % tasks_q) * QB, qr = std::min(QB, N - q0);
+            float* S = sscr[(size_t) thr].data();
+            float* O = S + (size_t) QB * kTK;
+            float* mx = O + (size_t) QB * OD;
+            float* ls = mx + QB;
+            std::memset(O, 0, sizeof(float) * (size_t) QB * OD);
+            for (int r = 0; r < QB; ++r) { mx[r] = -3.0e38f; ls[r] = 0.0f; }
+            const float* Q = qkv.data() + (size_t) q0 * D3 + (size_t) hh * HD;
+            const float* KTh = KT.data() + (size_t) hh * HD * Np;
+            const float* Vh = VP.data() + (size_t) hh * N * HD;
+            for (int j0 = 0; j0 < N; j0 += kTK) {
+                const int tk = std::min(kTK, N - j0);
+                o.gemm(Q, D3, qr, KTh + j0, (size_t) Np, HD, tk, S, (size_t) kTK, 0, nullptr);
+                o.softmax_update(S, (size_t) kTK, qr, tk, mx, ls, O, (size_t) OD, HD);
+                o.gemm(S, (size_t) kTK, qr, Vh + (size_t) j0 * HD, (size_t) HD, tk, HD, O, (size_t) OD, 1, nullptr);
+            }
+            for (int r = 0; r < qr; ++r) {
+                const float inv = 1.0f / ls[r];
+                float* dst = ctx.data() + (size_t) (q0 + r) * D + (size_t) hh * HD;
+                for (int d = 0; d < HD; ++d) dst[d] = O[(size_t) r * OD + d] * inv;
+            }
+        });
+        for (int r0 = 0; r0 < N; r0 += R) {      // x += norm(o(ctx)); x += norm(down(gelu_quick(gate) * up))
+            const int rn = std::min(R, N - r0);
+            linear(L.o, ctx.data() + (size_t) r0 * D, (size_t) D, rn, tmp.data(), (size_t) D, 0, nullptr, false, scratch);
+            rows_par(rn, [&](int i) {
+                float* t = &tmp[(size_t) i * D];
+                float* xr = &x[(size_t) (r0 + i) * D];
+                rms_row(t, t, D, L.attn_post.data(), eps);
+                for (int d = 0; d < D; ++d) xr[d] += t[d];
+                rms_row(xr, &hbuf[(size_t) i * D], D, L.ln2.data(), eps);
+            });
+            linear(L.gate, hbuf.data(), (size_t) D, rn, gb.data(), (size_t) F, 0, nullptr, false, scratch);
+            linear(L.up, hbuf.data(), (size_t) D, rn, ub.data(), (size_t) F, 0, nullptr, false, scratch);
+            rows_par(rn, [&](int i) {
+                float* a = &gb[(size_t) i * F];
+                const float* u = &ub[(size_t) i * F];
+                for (int j = 0; j < F; ++j) a[j] = a[j] * (1.0f / (1.0f + std::exp(-1.702f * a[j]))) * u[j];
+            });
+            linear(L.down, gb.data(), (size_t) F, rn, tmp.data(), (size_t) D, 0, nullptr, false, scratch);
+            rows_par(rn, [&](int i) {
+                float* t = &tmp[(size_t) i * D];
+                float* xr = &x[(size_t) (r0 + i) * D];
+                rms_row(t, t, D, L.ffn_post.data(), eps);
+                for (int d = 0; d < D; ++d) xr[d] += t[d];
+            });
+        }
+    }
+
+    const int ox = pw / K, oy = ph / K, M = ox * oy;
+    const float sq = std::sqrt((float) D), area = (float) (K * K);
+    std::vector<float> pooled((size_t) M * D);
+    rows_par(M, [&](int t) {
+        const int by = (t / ox) * K, bx = (t % ox) * K;
+        float* dst = &pooled[(size_t) t * D];
+        for (int d = 0; d < D; ++d) {
+            float s = 0.0f;
+            for (int ky = 0; ky < K; ++ky)
+                for (int kx = 0; kx < K; ++kx) s += x[((size_t) (by + ky) * pw + (size_t) (bx + kx)) * D + d];
+            dst[d] = s / area * sq;
+        }
+        if (g.std_norm)
+            for (int d = 0; d < D; ++d) dst[d] = (dst[d] - std_bias[(size_t) d]) * std_scale[(size_t) d];
+        rms_row(dst, dst, D, nullptr, eps);
+    });
+    rows.assign((size_t) M * g.out_dim, 0.0f);
+    linear(proj, pooled.data(), (size_t) D, M, rows.data(), (size_t) g.out_dim, 0, nullptr, false, scratch);
+    nx = M;
+    ny = 1;
     return true;
 }
 

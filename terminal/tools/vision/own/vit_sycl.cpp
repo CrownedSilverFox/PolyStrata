@@ -420,7 +420,7 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
     VitGpuImpl& m = *impl_;
     (void) device;          // one GPU: the one pick_gpu chooses
     std::string why;
-    if (!vit_geometry_supported(g, why)) { err = "this tower is not supported: " + why; return false; }
+    if (!vit_geometry_supported(g, why) || !vit_geometry_qwen(g, why)) { err = "this tower is not supported: " + why; return false; }
     m.g = g;
     sycl::device dev;
     if (!pick_gpu(dev, why)) { err = "cannot use the GPU: " + why; return false; }
