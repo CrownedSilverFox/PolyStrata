@@ -6,24 +6,24 @@ chunk behave. For sizes and memory, see [MODELS.md](MODELS.md). This is the Stra
 in setup with `--family qwen36-strata`; `--family qwen36` runs the same model on strata-poly instead
 ([BACKENDS.md](BACKENDS.md#qwen36-on-two-engines)).
 
-PolyStrata runs [Unsloth's GGUFs with the MTP layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF)
-(UD-Q4_K_XL, UD-Q6_K_XL, Q8_0) on its own engine path (`engine/src/qwen35`; `strata` switches to it from the file's
+The Strata project's engine runs [Unsloth's GGUFs with the MTP layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF)
+(UD-Q4_K_XL, UD-Q6_K_XL, Q8_0) on a path of its own (`engine/src/qwen35`; `strata` switches to it from the file's
 architecture). It runs on NVIDIA and AMD cards. The Intel Arc and Mac engines do not run it.
 
 ## Quick start
 
-Pick it in the app's model list, in `strata launch` or in setup:
+Install it with setup:
 
 ```sh
-strata launch --family qwen36 --model ud-q4_k_xl
-strata launch --family qwen36 --model ud-q4_k_xl --vision on --parallel 2
+START-HERE.bat --setup --family qwen36-strata --model UD-Q4_K_XL                          # Linux: ./setup.sh ...
+START-HERE.bat --setup --family qwen36-strata --model UD-Q4_K_XL --vision yes --parallel 2
 ```
 
 | Option | Effect |
 | --- | --- |
-| `--vision on\|off\|gpu\|cpu` | Terminal: pictures and which reader. Source setup uses `--vision yes\|no\|gpu\|cpu` and `--vision-tokens N`. |
-| `--parallel N` | How many requests are answered at once, 1 to 8. Source setup has the same option. |
-| `--prefill 512` | Engine flag in the config's `args`, not a `strata launch` option: the prompt chunk size ([Prompt chunk](#prompt-chunk)). |
+| `--vision yes\|no\|gpu\|cpu` | Pictures and which reader; `--vision-tokens N` sets the most image tokens a picture becomes. |
+| `--parallel N` | How many requests are answered at once, 1 to 8. |
+| `--prefill 512` | Engine flag in the config's `args`, not a setup option: the prompt chunk size ([Prompt chunk](#prompt-chunk)). |
 
 ## Pictures
 
@@ -57,7 +57,7 @@ picture). A different picture starts that conversation again.
 
 ## Several requests at once
 
-`"parallel": N` in the model's config (`strata-qwen36-<size>.json`) or `--parallel N` makes the engine keep N
+`"parallel": N` in the model's config (`strata-qwen36s-<size>.json`) or `--parallel N` makes the engine keep N
 conversations open (`--batch N`, up to 8) and decode them together. Every window carries one token of each
 conversation, so the dense weights, the head and every routed expert that conversations share are read once for all of
 them. The server speaks the same engine protocol as for Flash-Next ([BATCHING.md](BATCHING.md)).
