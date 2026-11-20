@@ -1,41 +1,35 @@
 # PolyStrata on the NVIDIA DGX Spark (Linux, ARM64)
 
 The DGX Spark is a small desktop box with a GB10 chip: a Blackwell GPU (compute capability 12.1, 48 SMs) and 20 Arm CPU cores that share
-128 GB of memory. PolyStrata 0.2.7.1 runs Qwen3.8-Flash-Next on it. This page says what works, how to install it, what
-the Spark does with its memory, and how the speeds were measured. It was tested on one Spark (Ubuntu 24.04, driver 580.173, CUDA 13.0).
-Nothing here is known to work on another ARM machine.
+128 GB of memory. The Strata project's 0.2.7.1 ran Qwen3.8-Flash-Next on it, and PolyStrata installs the same engine there. This page says
+what works, how to install it, what the Spark does with its memory, and how the speeds were measured. It was tested on one Spark (Ubuntu
+24.04, driver 580.173, CUDA 13.0). Nothing here is known to work on another ARM machine, and it covers the Qwen3.8-Flash-Next engine only:
+the models of the PolyStrata engine (strata-poly) are not part of it.
 
 ## What works, and what does not
 
-- **Works:** Qwen3.8-Flash-Next IQ3_S and the NVFP4 GPTQ pack (64K context, every expert in the GPU's cache),
-  the Terminal (`strata launch`, `strata update`, `strata serve`) and the engine packages of the signed feed.
-- **Not built for ARM:** the desktop app (no AppImage; use the Terminal), the HIP, SYCL and CPU-only engines, and the Q2_0 and Gyro packs,
-  whose CPU kernels are x86-only (the engine refuses them at start). Picture reading is compiled in and was not tried on the Spark.
-- **Not tested:** contexts above 128K, more than eight chat slots (four and eight were measured: "Several chats at once" below), a long soak. `strata doctor --live` lists the GB10 with no memory
-  figure, because `nvidia-smi` reports none for it.
+- **Works:** Qwen3.8-Flash-Next IQ3_S and the NVFP4 GPTQ pack (64K context, every expert in the GPU's cache), and the
+  Strata project's `linux-aarch64` engine package from its signed feed.
+- **Not built for ARM:** the HIP, SYCL and CPU-only engines, and the Q2_0 and Gyro packs, whose CPU kernels are x86-only (the engine
+  refuses them at start). Picture reading is compiled in and was not tried on the Spark.
+- **Not tested:** contexts above 128K, more than eight chat slots (four and eight were measured: "Several chats at once" below), a long
+  soak. `nvidia-smi` reports no memory figure for the GB10; setup counts the RAM, less 6 GB for the system, as the GPU's.
 
-## Install with the Terminal
-
-```sh
-curl -fsSL --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh -o install.sh && sh install.sh
-strata launch
-```
-
-`install.sh` unpacks the Terminal into `~/.local/share/strata` (no administrator rights) and checks the release's signed feed. `strata launch`
-fetches the `linux-aarch64` engine package, shows what each model needs, downloads the one you choose and starts it. Pick Qwen3.8-Flash-Next
-IQ3_S (84 GB download) or the NVFP4 pack. The engine package needs glibc 2.39 or newer
-(Ubuntu 24.04, DGX OS 7) and NVIDIA driver 580.65 or newer.
-
-## Install from a source checkout
+## Install
 
 ```sh
+git clone https://github.com/simplexai-labs/PolyStrata.git && cd PolyStrata
 ./setup.sh --setup --family qwen --model IQ3_S --context 65536 --vision no --yes --no-start --data-dir ~/PolyStrata-data
 ./setup.sh --setup --family nvfp4 --model NVFP4 --context 65536 --vision no --yes --no-start --data-dir ~/PolyStrata-data
 ```
 
-`--data-dir` must be a folder you can write (the default, next to the checkout, may be under `/home`, which a normal user cannot create).
-Setup finds the GB10, calls it unified memory, takes the engine from the feed (or compiles it with `engine/spark/build_engine.sh` when the release
-has none) and writes the run config with the settings measured on this part:
+Pick Qwen3.8-Flash-Next IQ3_S (84 GB download) or the NVFP4 pack. `--data-dir` must be a folder you can write (the default, next to the
+checkout, may be under `/home`, which a normal user cannot create). Setup finds the GB10, calls it unified memory, takes the
+Strata project's `linux-aarch64` engine package from the signed feed (or compiles the engine with `engine/spark/build_engine.sh` when the
+release has none) and writes the run config with the settings measured on this part. The engine package needs glibc 2.39 or newer
+(Ubuntu 24.04, DGX OS 7) and NVIDIA driver 580.65 or newer.
+
+The Spark settings in the run config:
 
 | Setting | Why |
 |---|---|
@@ -47,17 +41,17 @@ has none) and writes the run config with the settings measured on this part:
 Setup prints `--draft-vocab en` as a tip and does not set it: it measured +3.1% decode on English prompts, and it would cut the Chinese,
 Japanese and Korean drafts.
 
-Start a model with its run script (`./run-iq3_s.sh`) or `./setup.sh`.
+Start a model with its run script (`terminal/run-iq3_s.sh`) or `./setup.sh`.
 
 ## Build the engine yourself
 
-You need the CUDA 13.0 toolkit (`/usr/local/cuda`; DGX OS has it), cmake, ninja and Python 3.10 or newer.
+You need the CUDA 13.0 toolkit (`/usr/local/cuda`; DGX OS has it), cmake, ninja and Python 3.10 or newer. From the top of the checkout:
 
 ```sh
 python3 -m venv terminal/.venv-build
-.venv-build/bin/pip install -r terminal/requirements.txt -r terminal/requirements-build.txt
-PATH="$PWD/.venv-build/bin:/usr/local/cuda/bin:$PATH" PYTHON="$PWD/.venv-build/bin/python" JOBS=16 sh engine/spark/build_engine.sh
-cp -r out-spark/engine ./engine
+terminal/.venv-build/bin/pip install -r terminal/requirements.txt -r terminal/requirements-build.txt
+PATH="$PWD/terminal/.venv-build/bin:/usr/local/cuda/bin:$PATH" PYTHON="$PWD/terminal/.venv-build/bin/python" JOBS=16 sh engine/spark/build_engine.sh
+mkdir -p terminal/engine && cp -r out-spark/engine/. terminal/engine/
 ```
 
 About 3 minutes for the engine. `out-spark/engine/` holds `strata`, `strata-vision`, the CUDA libraries and a `BUILD.json`.
@@ -82,7 +76,7 @@ decode, against 1,252 and 39 without. Leave it on the SSD (setup does).
 
 ## Speeds
 
-Measured on the release-candidate engine package of 0.2.7.1 with `terminal/tools/dgx_bench.py`: fresh 4K, 16K and 32K prompts at temperature 0, 256-token
+Measured by the Strata project on the release-candidate engine package of its 0.2.7.1 with `terminal/tools/dgx_bench.py`: fresh 4K, 16K and 32K prompts at temperature 0, 256-token
 answers, 64K context, the model's own run config, four samples a cell in two blocks (on, off, off, on), medians. "Table off" is
 `STRATA_SM121_PERF=0`. One Spark, 27 October 2026; the figures move a few percent between sessions.
 
@@ -97,7 +91,8 @@ The table makes prompts faster: IQ3_S 1.20x over the three sizes (90% interval 1
 1.24x (1.14 to 1.36). It does not change decode speed in this check: 0.996x (0.97 to 1.02) on IQ3_S, with the 4K cell 0.94x, and 1.02x (1.00 to
 1.05) on NVFP4. The first run of the port (26 October) had measured +5% each for the two decode switches; this check did not see it.
 
-Several chats at once (`"parallel"` is 4 on a Spark for `strata launch`; the setup script leaves it off): IQ3_S, 2K-token prompts, 128-token cap,
+Several chats at once (setup leaves `"parallel"` off; `--parallel 4` or `--parallel 8` turns it on, and the Strata project's
+`strata launch` sets 4 on a Spark): IQ3_S, 2K-token prompts, 128-token cap,
 the aggregate tokens per second over all clients: 8 clients 35.6, 16 clients 41.7, 32 clients 47.3 at 4 slots; 32 clients 54.2 at 8 slots. With
 a prompt of its own and a hidden code for each client, every answer named its own code and nobody else's (8 clients at 4 slots, 16 clients at 8
 slots), and none failed or hung.
@@ -136,7 +131,7 @@ of the same setting gave identical logits, so the difference is the switches, no
 prompt path, and all of the NVFP4 difference from `w4a4`. On the 61-task quality suite (long-document retrieval, extraction of up to 72 exact rows, summaries, code, JSON, agent loops with tools), run through the server with the switches on and off: IQ3_S passed 56 tasks on and 51 off, NVFP4 56 on and 52 off. Retrieval found all 63 facts in every run, and no agent loop made an invalid tool call. The extraction facts were equal on IQ3_S (621 of 642 both ways); on NVFP4 one 40-row register lost a row with the switches on (616 against 621 of 642). One summary in each model gained or lost a flagged name or figure. Answers differ in wording on 21 of 61 tasks (IQ3_S) and 25 of 61 (NVFP4), and the wins and losses go both ways, so read the suite as "no loss we could measure", not as an improvement. The same setting run twice gave identical answers, so every difference comes from the switches. If you want the answers of 0.2.7, set `STRATA_SM121_PERF=0`: you keep the other
 Spark settings and lose the prompt speed-up. For the K-quant switch (UD-Q4_K_XL, 48 prompts of 2K and 4K tokens, 256 forced tokens each) the forced-token KL against the FP16 prompt path's text is 0.895 times that of MMQ (interval 0.81 to 0.99; the most likely token agrees with the FP16 path in 96.3% of positions against 95.7%), and the same text came out twice, byte for byte, on both sides.
 
-With `"parallel": 4` (the default) the original four-switch set adds up: 32 clients at 2,000-token prompts read 41.3 tok/s with those four on
+With `"parallel": 4` the original four-switch set adds up: 32 clients at 2,000-token prompts read 41.3 tok/s with those four on
 and 35.7 with all four off. The side mixer was not part of that check. At `"parallel": 8` the two original decode switches cost about 3.5%
 each; set `STRATA_HC_UPMIX=0 STRATA_SPEC_COST=0` there.
 
