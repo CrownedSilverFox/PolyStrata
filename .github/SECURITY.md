@@ -4,12 +4,12 @@
 
 Please report anything that should not be public until it is fixed **privately**, through GitHub's private
 vulnerability reporting: the repository's **Security** tab, **Report a vulnerability**
-([direct link](https://github.com/Niko1221/Strata/security/advisories/new)). Say what you found, how to reproduce it
+([direct link](https://github.com/simplexai-labs/PolyStrata/security/advisories/new)). Say what you found, how to reproduce it
 (the request, the config keys involved, the PolyStrata version), and what an attacker gains. We answer there, fix it in
 a release, and credit you in the advisory unless you ask us not to.
 
 Ordinary hardening ideas and findings that are safe to discuss in public are welcome as an
-[issue](https://github.com/Niko1221/Strata/issues) (#544 collects audit findings) or as a pull request, which we
+[issue](https://github.com/simplexai-labs/PolyStrata/issues) (#544 collects audit findings) or as a pull request, which we
 review like our own code.
 
 Supported: the latest release. Fixes go into the next release, not into older ones.
@@ -46,8 +46,8 @@ this PC only. The details and every setting are in [docs/DETAILS.md](../docs/DET
 
 ## The desktop app and the Terminal
 
-PolyStrata comes in three parts that share one engine: the **desktop app**, the **Terminal** (`strata`) and the **engine** that runs
-the model. The section above is about the engine's HTTP server. This is what the other two add.
+The Strata project's **desktop app** and **Terminal** (`strata`), which this repository carries in `app/` and `terminal/` but
+does not publish, share the engine. The section above is about the engine's HTTP server. This is what the other two add.
 
 - **The app's host listens on this PC only.** The app serves its page from a local host process on `127.0.0.1` (port 8791 unless
   changed). A request to its `/api/` endpoints that carries a browser `Origin` from any other site gets 403. The app shell holds a
@@ -70,27 +70,14 @@ the model. The section above is about the engine's HTTP server. This is what the
   with a separate key (Tauri's minisign key) that the app and the Terminal both check. The private keys are kept offline by the owner.
   See [packaging/UPDATES.md](../tools/packaging/UPDATES.md).
 
-### How far to trust `curl | sh` and `irm | iex`
+### Installing from this repository
 
-The Terminal installs with one line:
-
-```sh
-curl -fsSL --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh -o install.sh && sh install.sh
-irm -TimeoutSec 120 https://github.com/Niko1221/Strata/releases/latest/download/install.ps1 | iex
-```
-
-Piping a script into a shell runs whatever the server sends, so it deserves the same care as running any downloaded program.
-What the script does is short and written at its top: it fetches the Terminal archive named in the release's `install-manifest.txt`,
-checks its SHA-256, unpacks it into your home folder (no administrator rights, nothing outside your home), checks the release's signed feed
-with the Terminal it just unpacked and removes it again if that fails, and puts `strata` on your PATH.
-
-Those checks have a limit. The checksum comes from the same release as the archive, and the public key that checks the feed arrives inside
-that archive, so for the first install all trust rests on HTTPS and on the `Niko1221/Strata` GitHub release itself. The checks catch a
-damaged or half-finished download and a feed that was not signed by the release key; they do not protect you if the release has been replaced
-by someone who controls it. Later updates are checked against the key already on your PC, which is a stronger position.
-
-If that is not enough: save the script (`curl -fsSLO --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh`), read it, and
-run it from the file; or install the desktop app or build from source instead and check the code you build.
+PolyStrata is installed from a git clone or the source zip of
+[simplexai-labs/PolyStrata](https://github.com/simplexai-labs/PolyStrata), so the first trust rests on HTTPS and on that
+GitHub repository. Setup then checks every model file it downloads against a pinned SHA-256, and a ready-made engine
+against the SHA-256 GitHub publishes for it, and does not use a file that does not match (when GitHub cannot say, setup
+warns and installs the engine anyway: [docs/SAFETY.md](../docs/SAFETY.md)). Read the scripts before you run them if that
+is not enough (`START-HERE.bat`, `setup.sh` and `terminal/setup.py`), or build the engine yourself (`--build`).
 
 PolyStrata has not had an outside security audit yet.
 What PolyStrata downloads, when it uses the internet, what stays on your PC and how downloads are checked is written up in [docs/SAFETY.md](../docs/SAFETY.md).
