@@ -16,6 +16,10 @@
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
 #define AMPERE_MMA_AVAILABLE
 #endif
+// Volta arm of gdn_mma.cu (STRATA_EXPERIMENTAL_SM60 builds only; the host gate is gdn_mma_policy.hpp)
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 700
+#define VOLTA_MMA_AVAILABLE
+#endif
 
 #define GGML_CUDA_MAX_DEVICES 16
 
