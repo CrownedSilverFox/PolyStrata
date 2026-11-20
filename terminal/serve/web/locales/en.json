@@ -188,6 +188,12 @@
   "model.unloadingTitle": "The model is unloading",
   "model.unsupported": "Unload is not available",
   "model.waiting": "Waiting for the server",
+  "msg.edit": "Edit",
+  "msg.editTitle": "Edit this message. The messages after it are removed and a new answer is written.",
+  "msg.editedTail": {
+    "one": "{n} later message removed. A new answer is being written.",
+    "other": "{n} later messages removed. A new answer is being written."
+  },
   "msg.next": "Next answer",
   "msg.prev": "Previous answer",
   "msg.regenEarlier": "Another answer to an earlier question",

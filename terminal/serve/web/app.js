@@ -1091,6 +1091,13 @@ function msgEl(m, i) {
     const meta = document.createElement("div");
     meta.className = "st-msg__meta";
     meta.textContent = `${tr("chat.you", "You")} · ${timeStr(m.time)}`;
+    const edit = node("button", "st-btn st-btn--icon");
+    edit.type = "button";
+    edit.dataset.msgEdit = "";
+    edit.innerHTML = icon("edit", "st-icon st-icon--sm");
+    edit.setAttribute("aria-label", tr("msg.edit", "Edit"));
+    edit.title = tr("msg.editTitle", "Edit this message. The messages after it are removed and a new answer is written.");
+    meta.appendChild(edit);
     el.appendChild(meta);
   } else {
     el.innerHTML = `<details class="st-collapse think" hidden><summary>${icon("thinking", "st-icon st-icon--sm")}<span class="think-title"></span>` +
@@ -1173,10 +1180,70 @@ function swipeGo(i, delta) {
   if (el) el.replaceWith(msgEl(m, i));                // drawn anew: a variant without thinking has no thinking block
   saveChat();
 }
-// the buttons that change an answer are off while one is written, while something is open above and while a message waits
+// ------------------------------------------------------------------ edit a question (PR #75)
+// The ✎ button: the question is edited in place. Saving removes the messages after it (they answered the old wording, tool calls
+// and results included) and writes a new answer to the new one. Undo, in the toast, brings them back while nothing else has been
+// sent. Upstream's "Rewind to here" (Chat settings > Edit) is the other way: the question goes back into the message box.
+function editUserMessage(i) {
+  const m = messages[i];
+  if (!m || m.role !== "user") return;
+  if (busy) { stillWriting(); return; }
+  if (panel || pending || lostAttachmentsToast(m)) return;
+  const el = $("chat").querySelector(`.st-msg[data-i="${i}"]`);
+  const bubble = el && el.querySelector(".st-bubble");
+  if (!bubble || el.querySelector(".edit-box")) return;
+  const original = m.text || "";
+  const box = node("textarea", "edit-box st-input");
+  box.value = original;
+  box.rows = Math.min(20, Math.max(2, original.split("\n").length));
+  box.setAttribute("aria-label", tr("msg.edit", "Edit"));
+  const actions = node("div", "edit-actions");
+  const save = node("button", "st-btn st-btn--primary", tr("hist.save", "Save"));
+  const cancel = node("button", "st-btn st-btn--secondary", tr("cancel", "Cancel"));
+  save.type = cancel.type = "button";
+  actions.append(save, cancel);
+  bubble.replaceWith(box);
+  box.after(actions);
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+  const close = () => { box.replaceWith(bubble); actions.remove(); };
+  cancel.onclick = close;
+  const imeKey = StrataIme.watch(box);                // Enter and Escape inside an IME conversion are the IME's (#5071)
+  box.onkeydown = (e) => {
+    if (imeKey(e)) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save.click(); }
+  };
+  save.onclick = () => {
+    const next = box.value.trim();
+    if (!next || next === original) { close(); return; }
+    if (busy) { stillWriting(); return; }
+    clearUndo();
+    const dropped = messages.slice(i + 1);
+    m.text = next;
+    setMessages(messages.slice(0, i + 1));
+    close();
+    saveChat();
+    generateReply();                                  // the new answer's place goes after the question, and it streams there
+    if (!dropped.length) { toast("success", tr("hist.edited", "Edited"), ""); return; }
+    toast("info", tr("hist.edited", "Edited"),
+          tr("msg.editedTail", {one: "{n} later message removed. A new answer is being written.", other: "{n} later messages removed. A new answer is being written."}, {n: dropped.length}),
+          8000, {label: tr("undo", "Undo"), run: () => {
+            // only while the chat is still the edit's own: the question and the answer to it
+            if (messages[i] !== m || messages.length > i + 2) return;
+            if (busy) busy.controller.abort();
+            m.text = original;
+            setMessages(messages.slice(0, i + 1).concat(dropped));
+            saveChat();
+            renderChat();
+          }});
+  };
+}
+// the buttons that change an answer or a question are off while one is written, while something is open above and while a
+// message waits
 function syncVariantButtons() {
   const off = !!busy || !!panel || !!pending;
-  for (const b of $("chat").querySelectorAll("[data-msg-regen], [data-msg-prev], [data-msg-next]")) b.disabled = off;
+  for (const b of $("chat").querySelectorAll("[data-msg-regen], [data-msg-prev], [data-msg-next], [data-msg-edit]")) b.disabled = off;
 }
 // One MCP tool call in the answer: a compact block (name, state, a one-line preview) that opens to the arguments and
 // the result as the model read it.  Its body is built only while open: a result can be 20,000 characters.
@@ -1344,6 +1411,8 @@ function scrollDown(force) {
 })();
 
 $("chat").addEventListener("click", (e) => {
+  const me = e.target.closest("[data-msg-edit]");
+  if (me) { editUserMessage(+me.closest(".st-msg").dataset.i); return; }
   const mr = e.target.closest("[data-msg-regen]");
   if (mr) { regenerateAnswer(+mr.closest(".st-msg").dataset.i); return; }
   const mp = e.target.closest("[data-msg-prev], [data-msg-next]");

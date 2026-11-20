@@ -1,6 +1,7 @@
-"""The web page's answers: ↻ writes another answer and keeps the old one as a variant, the arrows go between them (issue #12,
-PR #74). PolyStrata's own, lost once in a merge of upstream's page, so these checks read the sources for it. What it does in a
-real browser is in tools/webtest/browser_test.mjs ("regenerate"), run here when WEBTEST_MODULES is set.
+"""The web page's answers and questions: ↻ writes another answer and keeps the old one as a variant, the arrows go between them
+(issue #12, PR #74); ✎ edits a question, removes what came after it and writes a new answer, with an Undo (PR #75).
+PolyStrata's own, lost once in a merge of upstream's page, so these checks read the sources for them. What they do in a real
+browser is in tools/webtest/browser_test.mjs ("regenerate", "edit a question"), run here when WEBTEST_MODULES is set.
 
     WEBTEST_MODULES=<folder> python -m unittest serve.test_web_answers -v
 """
@@ -30,12 +31,17 @@ class TheSourcesKeepThem(unittest.TestCase):
     def test_an_earlier_answer_is_asked_for_without_what_comes_after_it(self):
         self.assertIn("if (busy && busy.msg === m) break;", self.app)
 
+    def test_a_question_can_be_edited(self):
+        self.assertIn("edit.dataset.msgEdit", self.app)
+        self.assertIn("editUserMessage(+me.closest", self.app)
+        self.assertIn("setMessages(messages.slice(0, i + 1));", self.app, "the edit removes what came after the question")
+
 
 @unittest.skipUnless(os.environ.get("WEBTEST_MODULES") and shutil.which("node"),
                      "set WEBTEST_MODULES (a folder with node_modules/puppeteer-core) to run the browser tests")
 class InABrowser(unittest.TestCase):
     def test_answers_in_chrome(self):
-        for name in ("regenerate",):
+        for name in ("regenerate", "edit a question"):
             with self.subTest(name=name):
                 r = subprocess.run([shutil.which("node"), str(ROOT / "tools" / "webtest" / "browser_test.mjs"), name],
                                    capture_output=True, text=True, timeout=300)

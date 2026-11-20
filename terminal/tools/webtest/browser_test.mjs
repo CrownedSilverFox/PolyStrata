@@ -538,6 +538,72 @@ htest("regenerate: the buttons wait while an answer is written; with the history
   await page.close();
 });
 
+// ---- edit a question (PR #75): ✎, the answers after it go, a new one to the new wording, Undo in the toast
+const editTo = async (page, i, text) => {
+  await page.click(`[data-i="${i}"] [data-msg-edit]`);
+  await page.$eval(".edit-box", (e, t) => { e.value = t; }, text);
+};
+
+htest("edit a question: the messages after it go, tool calls too; a new answer is written to the new wording; Undo brings them back", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  await ask(page, "q1"); await ask(page, "#tool q2"); await ask(page, "q3");
+  assert.equal(await page.evaluate(() => messages[3].tools.length), 1, "the second answer called a tool");
+  const before = await texts(page);
+  await editTo(page, 0, "q1 changed");
+  await page.click(".edit-actions .st-btn--primary");
+  await idle(page);
+  assert.deepEqual(await texts(page), ["u:q1 changed", "a:Mock answer 4."]);
+  assert.deepEqual(mock.state.requests.at(-1).messages, [{ role: "user", content: "q1 changed" }], "the model reads the new wording and nothing after it");
+  assert.match(await page.$eval(".st-toast .t-text", (e) => e.textContent), /^5 later messages removed/);
+  await page.evaluate(() => [...document.querySelectorAll(".st-toast button")].find((b) => b.textContent === "Undo").click());
+  await sleep(50);
+  assert.deepEqual(await texts(page), before);
+  assert.equal(await page.evaluate(() => messages[3].tools.length), 1, "the tool call is back with its answer");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("strata.chat")).length), 6, "and the chat as saved");
+  // an edit of the last question has nothing to remove
+  await editTo(page, 4, "q3 again");
+  await page.click(".edit-actions .st-btn--primary");
+  await idle(page);
+  assert.deepEqual((await texts(page)).slice(4), ["u:q3 again", "a:Mock answer 5."]);
+  assert.deepEqual(pageErrors(page), []);
+  await page.close();
+});
+
+htest("edit a question: Cancel and Escape keep the text, Ctrl+Enter saves; not while an answer is written, and no Undo after a new question", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  await ask(page, "q1"); await ask(page, "q2");
+  await editTo(page, 0, "changed but cancelled");
+  await page.click(".edit-actions .st-btn--secondary");
+  assert.equal(await page.$(".edit-box"), null, "the editor is closed");
+  assert.equal(await page.$eval('[data-i="0"] .st-bubble', (e) => e.textContent), "q1");
+  await editTo(page, 0, "changed but escaped");
+  await page.focus(".edit-box");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.$(".edit-box"), null);
+  assert.equal(await shown(page, 0), "q1");
+  await editTo(page, 2, "q2 by keyboard");
+  await page.focus(".edit-box");
+  await page.keyboard.down("Control"); await page.keyboard.press("Enter"); await page.keyboard.up("Control");
+  await idle(page);
+  assert.deepEqual(await texts(page), ["u:q1", "a:Mock answer 1.", "u:q2 by keyboard", "a:Mock answer 3."]);
+  // the toast's Undo does nothing once something else was sent
+  await editTo(page, 0, "q1 changed");
+  await page.click(".edit-actions .st-btn--primary");
+  await idle(page);
+  await ask(page, "q-next");
+  await page.evaluate(() => [...document.querySelectorAll(".st-toast button")].find((b) => b.textContent === "Undo").click());
+  await sleep(50);
+  assert.deepEqual(await texts(page), ["u:q1 changed", "a:Mock answer 4.", "u:q-next", "a:Mock answer 5."]);
+  await say(page, "#hold q");
+  await page.waitForFunction(() => busy !== null);
+  assert.deepEqual(await page.$$eval("[data-msg-edit]", (b) => b.map((x) => x.disabled)), [true, true, true], "no edit while an answer is written");
+  await page.evaluate(() => document.querySelectorAll(".st-toast").forEach((t) => t.remove()));
+  await page.click("#stop-btn");
+  await idle(page);
+  assert.deepEqual(await page.$$eval("[data-msg-edit]", (b) => b.map((x) => x.disabled)), [false, false, false]);
+  await page.close();
+});
+
 htest("edit answer: the text is saved, thinking and tools go, later messages are hidden, no request", async ({ browser, mock }) => {
   reset(mock);
   const page = await openPage(browser, mock, { seed: on() });
@@ -581,6 +647,8 @@ htest("history: an attachment that was only kept by name is not sent as if it we
   await sleep(200);
   assert.equal(mock.state.requests.length, 0, "no request with a missing file");
   assert.match(await page.$eval(".st-toast__title", (e) => e.textContent), /Attachments need to be added again/);
+  await page.click('[data-i="0"] [data-msg-edit]');
+  assert.equal(await page.$(".edit-box"), null, "an edit, which would send the question again, is not started either");
   await clickAction(page, 0, "Rewind to here");
   await page.$eval(".history-panel .st-btn--primary", (b) => b.click());
   assert.equal(await page.$eval("#input", (e) => e.value), "see file");
