@@ -1,10 +1,10 @@
 # Benchmark results
 
 Raw results and short reports from measurement runs, one folder per run, named by date. They stay here as they were written: each states
-the Strata version, hardware and method of its own day, and none is a statement about a later release. Current numbers are in the
+the PolyStrata version, hardware and method of its own day, and none is a statement about a later release. Current numbers are in the
 [docs](../README.md) and the [README](../../README.md); how to measure is in [BENCHMARK_PROTOCOL.md](../BENCHMARK_PROTOCOL.md).
 
-This page is built by `python tools/bench_results_index.py` (`--check` fails when a folder is missing from it). 143 folders and 3 loose files, 2188 files in all.
+This page is built by `python tools/bench_results_index.py` (`--check` fails when a folder is missing from it). 175 folders and 3 loose files, 2754 files in all.
 
 
 ## 2026-09
@@ -152,18 +152,50 @@ This page is built by `python tools/bench_results_index.py` (`--check` fails whe
 | [2026-10-11-community-rtx3090-5600x-arena-async](2026-10-11-community-rtx3090-5600x-arena-async/) | --adapt-async 1 in the arena mode — community report, RTX 3090 + Ryzen 5 5600X (Windows 11) | 7 |
 | [2026-10-11-community-rtx3090-5600x-arena-pin-by-need](2026-10-11-community-rtx3090-5600x-arena-pin-by-need/) | Pin by need (STRATA_PIN_BY_NEED=1) — community report, RTX 3090 + Ryzen 5 5600X (Windows 11) | 8 |
 | [2026-10-11-gfx1100-qsa-scores](2026-10-11-gfx1100-qsa-scores/) | Exact gfx1100 QSA scorer: measured prefill benefit, opt-in only | 7 |
+| [2026-10-11-laptop-qwen36-llamacpp-b11540](2026-10-11-laptop-qwen36-llamacpp-b11540/) | Qwen3.6-35B-A3B on a laptop: PolyStrata and llama.cpp b11540 (2026-10-11) | 10 |
+| [2026-10-11-laptop-tiel-llamacpp-b11540](2026-10-11-laptop-tiel-llamacpp-b11540/) | Tiel Coder 35B-A3B on a laptop: PolyStrata and llama.cpp b11540 (2026-10-11) | 10 |
 | [2026-10-11-rtx-5090-callback-affinity](2026-10-11-rtx-5090-callback-affinity/) | RTX 5090: adaptive-overlap callback affinity (#1975) | 1 |
 | [2026-10-12-community-gfx1103](2026-10-12-community-gfx1103/) | Radeon 780M (gfx1103) on ROCm 10.1: dot4 + WMMA + a hipBLASLt table (2026-10-12) | 23 |
 | [2026-10-12-hc-persist-gfx1030](2026-10-12-hc-persist-gfx1030/) | STRATA_HC_PERSIST=1: the verifier's hyper-connection read as one persistent kernel (gfx1030) | 2 |
 | [2026-10-12-p40-sm61-kernels](2026-10-12-p40-sm61-kernels/) | Tesla P40 (sm_61): wide dequantization, the dense GEMMs as cublasSgemm (opt-in), expert mode 8 and a matvec table (2026-10-12) | 16 |
+| [2026-10-15-laptop-lfm25-llamacpp-b11540](2026-10-15-laptop-lfm25-llamacpp-b11540/) | LFM2.5-24B-A2B UD-Q4_K_XL on the 8 GB laptop: PolyStrata and llama.cpp b11540 (2026-10-15) | 21 |
+| [2026-10-19-community-rx6700xt-polystrata](2026-10-19-community-rx6700xt-polystrata/) | RX 6700 XT 12 GB: official PolyStrata speed suite | 78 |
 | [2026-10-20-0.2.1-bench](2026-10-20-0.2.1-bench/) | First real strata bench run on the released 0.2.1 (terminal 0.2.1, engine 0.1.46 cuda12 Linux packages) | 43 |
 | [2026-10-20-0.2.1-idle-gpu](2026-10-20-0.2.1-idle-gpu/) | The idle GPUs (proposal 2507-0): what the existing switches do on NVIDIA | 15 |
+| [2026-10-21-ornith-gqa16](2026-10-21-ornith-gqa16/) | Ornith 122B GQA-16 attention validation | 31 |
+| [2026-10-22-community-rx6700xt-5600x-polystrata](2026-10-22-community-rx6700xt-5600x-polystrata/) | Community benchmark on AMD Radeon RX 6700 XT 12 GB (gfx1031), Ryzen 5 5600X | 24 |
+| [2026-10-24-community-rtx3060-polystrata-poly2-poly3](2026-10-24-community-rtx3060-polystrata-poly2-poly3/) | RTX 3060 12 GB: PolyStrata v0.1.45-poly.2 and v0.1.45-poly.3 | 31 |
+| [2026-10-24-laptop-flint-llamacpp-a37cc46](2026-10-24-laptop-flint-llamacpp-a37cc46/) | Flint 40B-A2.5B UD-Q3_K_XL on the 8 GB laptop: PolyStrata and llama.cpp a37cc46104 (2026-10-24) | 10 |
+| [2026-10-24-rx9070-hip-value-split](2026-10-24-rx9070-hip-value-split/) | RX 9070 XT: opt-in HIP split value reduction | 18 |
+| [2026-10-26-community-rx6700xt-poly2-poly4-memory](2026-10-26-community-rx6700xt-poly2-poly4-memory/) | RX 6700 XT 12 GB: poly.2 / poly.4 and memory availability | 129 |
+| [2026-10-27-community-rx5700xt-windows-qwen36-q3](2026-10-27-community-rx5700xt-windows-qwen36-q3/) | RX 5700 XT on Windows: four official suites and supplementary context tests | 61 |
+| [2026-10-28-community-rtx4060-laptop-128k](2026-10-28-community-rtx4060-laptop-128k/) | RTX 4060 Laptop 8 GB, Qwen3.6-35B-A3B at 118K: the two opt-in attention kernels, and what the prompt cache gives back | 26 |
+| [2026-10-30-community-gtx-1650-clover-35b-a3b-preview-apex-i-nanoplus](2026-10-30-community-gtx-1650-clover-35b-a3b-preview-apex-i-nanoplus/) | Community benchmark on NVIDIA GeForce GTX 1650 | 3 |
+| [2026-10-30-community-gtx-1650-minicpm-v-4-7-35b-a3b-mix-q3gud-im](2026-10-30-community-gtx-1650-minicpm-v-4-7-35b-a3b-mix-q3gud-im/) | Community benchmark on NVIDIA GeForce GTX 1650 | 3 |
+| [2026-10-30-community-rtx-3080-tiel-coder-35b-a3b-ud-q4-k-xl](2026-10-30-community-rtx-3080-tiel-coder-35b-a3b-ud-q4-k-xl/) | Community benchmark on NVIDIA GeForce RTX 3080 | 2 |
 
 ## 2026-11
 
 | Folder | What | Files |
 | --- | --- | ---: |
+| [2026-11-02-community-rtx-5070-ti-deepseek-v4-flash-ud-iq2-xxs](2026-11-02-community-rtx-5070-ti-deepseek-v4-flash-ud-iq2-xxs/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
+| [2026-11-02-community-rtx-5070-ti-qwen3-6-35b-a3b-ud-q4-k-m](2026-11-02-community-rtx-5070-ti-qwen3-6-35b-a3b-ud-q4-k-m/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
+| [2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq2-xs](2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq2-xs/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
+| [2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq3-s](2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq3-s/) | Community benchmark on NVIDIA GeForce RTX 5070 Ti | 3 |
+| [2026-11-03-community-rtx-5090-qwen38-flash-next-ud-q5-k-xl](2026-11-03-community-rtx-5090-qwen38-flash-next-ud-q5-k-xl/) | Community benchmark on GeForce RTX 5090 (Linux, 184 GiB) | 9 |
+| [2026-11-04-community-4x-rtx-5080-glm-5-3-flash](2026-11-04-community-4x-rtx-5080-glm-5-3-flash/) | Community benchmark on 4 × NVIDIA GeForce RTX 5080 (16 GB) — GLM 5.3 Flash, strata-poly | 3 |
+| [2026-11-10-community-rx6700xt-poly9](2026-11-10-community-rx6700xt-poly9/) | RX 6700 XT official quick/community benchmark suites | 44 |
+| [2026-11-10-community-unknown-flint-40b-a2-5b-ud-q3-k-xl](2026-11-10-community-unknown-flint-40b-a2-5b-ud-q3-k-xl/) | Community benchmark on AMD Radeon | 3 |
+| [2026-11-14-community-rtx-2080-gemma-4-26b-a4b-it-ud-q4-k-xl](2026-11-14-community-rtx-2080-gemma-4-26b-a4b-it-ud-q4-k-xl/) | Community benchmark on NVIDIA GeForce RTX 2080 | 3 |
 | [2026-11-14-rdna2-pcie-auto](2026-11-14-rdna2-pcie-auto/) | PcieAuto on gfx103x: the decode miss split from the CPU pool's speed (#4007) | 3 |
+| [2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl](2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/) | 2x RX 5700 XT (gfx1010) on Linux, a layer split: Cyber-Tiel Coder 35B-A3B UD-Q4_K_XL | 7 |
+| [2026-11-15-community-rx-7900-xtx-ornith-1-5-and-nex-n2-5-mini](2026-11-15-community-rx-7900-xtx-ornith-1-5-and-nex-n2-5-mini/) | Ornith 1.5 and Nex-N2.5-mini on one RX 7900 XTX (gfx1100): suite, and PolyStrata vs llama.cpp | 12 |
+| [2026-11-17-community-rx-7600-xt-five-models](2026-11-17-community-rx-7600-xt-five-models/) | Five models on a Radeon RX 7600 XT | 1 |
+| [2026-11-17-community-rx-7600-xt-gemma-4-26b-a4b-ud-q4-k-m](2026-11-17-community-rx-7600-xt-gemma-4-26b-a4b-ud-q4-k-m/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
+| [2026-11-17-community-rx-7600-xt-qwen3-6-35b-a3b-ud-q4-k-m](2026-11-17-community-rx-7600-xt-qwen3-6-35b-a3b-ud-q4-k-m/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
+| [2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-iq3-s](2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-iq3-s/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
+| [2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-q2-0](2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-q2-0/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
+| [2026-11-17-community-rx-7600-xt-tiel-coder-35b-a3b-ud-q4-k-xl](2026-11-17-community-rx-7600-xt-tiel-coder-35b-a3b-ud-q4-k-xl/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
 
 ## Loose files
 
