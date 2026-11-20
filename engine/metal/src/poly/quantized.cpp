@@ -1,34 +1,26 @@
-// PolyStrata projections using the pinned ggml Metal block decoders. All dispatch
+// PolyStrata projections on the GGUF block decoders of dequant.metal. All dispatch
 // and graph ownership stays in PolyStrata's Metal runtime.
 #include "strata/kernels/native_mmvq.hpp"
 #include "strata/poly/kernels.hpp"
+#include "strata/quant/types.hpp"
 #include "launch.hpp"
 #include "quantized.hpp"
 #include "mmq.hpp"
-#include "ggml.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 namespace strata::poly::metal_detail {
 namespace {
-std::string without(std::string s,const std::string& line) {
-    auto p=s.find(line); if(p!=std::string::npos) s.erase(p,line.size());return s;
+// The block structs and tables (the quant header in its Metal mode) and the block decoders, ahead of a kernel file
+std::string block_source() {
+    return "#include <metal_stdlib>\nusing namespace metal;\n#define GGML_COMMON_DECL_METAL\n#define GGML_COMMON_IMPL_METAL\n"+
+           read_source(STRATA_POLY_QUANT_COMMON)+read_source(STRATA_POLY_DEQUANT_SOURCE);
 }
-// ggml's block structs and Metal block decoders, ahead of a kernel file
-std::string ggml_source() {
-    const std::string root=STRATA_POLY_GGML_SOURCE;
-    auto common=read_source((root+"/ggml-metal/kernels/common.h").c_str());
-    common=without(common,"#include \"ggml-metal-impl.h\"");
-    auto deq=read_source((root+"/ggml-metal/kernels/dequantize.h").c_str());
-    deq=without(deq,"#include \"common.h\"");
-    auto pos=deq.find("#include \"ggml-common.h\"");
-    deq.replace(pos,std::string("#include \"ggml-common.h\"").size(),read_source((root+"/ggml-common.h").c_str()));
-    return read_source((root+"/ggml-metal/ggml-metal-impl.h").c_str())+common+deq;
-}
-std::string quant_source() { return ggml_source()+read_source(STRATA_POLY_QUANT_SOURCE); }
+int64_t block_values(int t) { return quant::type_info(t)->blck; }
+std::string quant_source() { return block_source()+read_source(STRATA_POLY_QUANT_SOURCE); }
 const std::string& mm_source() {
-    static const std::string source=ggml_source()+read_source(STRATA_POLY_MM_SOURCE);
+    static const std::string source=block_source()+read_source(STRATA_POLY_MM_SOURCE);
     return source;
 }
 // The matrix-unit library compiles here (Metal 4's matmul2d); asked once
@@ -101,8 +93,8 @@ size_t native_q8_1_bytes(int n,int rows) {
     return size_t(n/32)*36*rows;
 }
 size_t native_mmvq_weight_bytes(int t,int ni,int no) {
-    if(!native_mmvq_supported(t) || ni<=0 || no<=0 || ni%ggml_blck_size(ggml_type(t))) throw std::invalid_argument("Metal quantized matrix shape");
-    return ggml_row_size(ggml_type(t),ni)*no;
+    if(!native_mmvq_supported(t) || ni<=0 || no<=0 || ni%block_values(t)) throw std::invalid_argument("Metal quantized matrix shape");
+    return quant::row_bytes(t,ni)*no;
 }
 void native_quantize_q8_1(const float* x,void* q,int n,int rows,void* s) {
     native_q8_1_bytes(n,rows);
@@ -145,7 +137,7 @@ using namespace metal_detail;
 Mmq::Mmq() = default;
 Mmq::~Mmq() = default;
 bool Mmq::fits(int t,int64_t rows,int64_t cols) {
-    return kernels::native_mmvq_supported(t) && rows>0 && rows<=INT32_MAX && cols>0 && cols<=INT32_MAX && cols%ggml_blck_size(ggml_type(t))==0;
+    return kernels::native_mmvq_supported(t) && rows>0 && rows<=INT32_MAX && cols>0 && cols<=INT32_MAX && cols%block_values(t)==0;
 }
 // room for either form of the rows: q8_1, or fp16 on the matrix-unit path (mm_rows())
 size_t Mmq::q8_bytes(int64_t rows,int64_t cols) {
@@ -178,7 +170,7 @@ void Mmq::mul(const void* w,int type,int64_t nr,int64_t nc,size_t stride,int n,c
             else dq_buf=nullptr;
         }
         if(dq_buf) {
-            MArgs m;m.p[0]=w;m.p[1]=dq_buf;m.row_bytes=ggml_row_size(ggml_type(type),nc);m.ni=int(nc);m.no=int(nr);
+            MArgs m;m.p[0]=w;m.p[1]=dq_buf;m.row_bytes=quant::row_bytes(type,nc);m.ni=int(nc);m.no=int(nr);
             const uint64_t threads=uint64_t(nr)*uint64_t(nc/16);
             dispatch("poly_mm",mm_source(),(std::string("poly_dq_")+quant_name(type)).c_str(),m,s,
                      {uint32_t((threads+255)/256),1,1},256);
@@ -188,7 +180,7 @@ void Mmq::mul(const void* w,int type,int64_t nr,int64_t nc,size_t stride,int n,c
     }
     if(mm_rows(nc)) {   // TM rows of one matrix and TN outputs a threadgroup, the rows past a matrix's bounds idle
         MArgs m;m.p[0]=w;m.p[1]=x;m.p[2]=y;m.p[3]=ids;m.p[4]=bounds;
-        m.stride=stride;m.row_bytes=ggml_row_size(ggml_type(type),nc);m.ld=uint64_t(ld);m.ni=int(nc);m.no=int(nr);m.total=int(total);
+        m.stride=stride;m.row_bytes=quant::row_bytes(type,nc);m.ld=uint64_t(ld);m.ni=int(nc);m.no=int(nr);m.total=int(total);
         const int64_t rows=bounds?max_rows:total;
         const MmTile& t=mm_tile;
         const std::string name=std::string("poly_mm_")+quant_name(type)+"_"+std::to_string(t.tm)+"_"+std::to_string(t.tn)+"_"+

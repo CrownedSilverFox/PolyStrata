@@ -1,9 +1,9 @@
 // A prompt batch's projections (Mmq::mul) on the matrix units: Metal 4's MetalPerformancePrimitives matmul2d (on the
 // M5, its neural accelerators), as the routed experts of metal/kernels/moe_mm.metal do for the Strata engine.  A
 // threadgroup takes TM rows of one matrix (an expert's rows lie between its bounds) and TN of its outputs.  Per TK
-// values of a row it decodes the TN x TK weights with ggml's decoders into threadgroup memory as fp16, and matmul2d
+// values of a row it decodes the TN x TK weights with the block decoders into threadgroup memory as fp16, and matmul2d
 // multiplies the rows' fp16 activations, read where they lie, by them, summing in fp32 in its destination; the
-// sums go out from there, row r to row ids[r] of y.  ggml's pinned dequantize.h comes first (quantized.cpp).
+// sums go out from there, row r to row ids[r] of y.  dequant.metal comes first (quantized.cpp).
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 using namespace mpp::tensor_ops;
 

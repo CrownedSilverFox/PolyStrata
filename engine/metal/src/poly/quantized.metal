@@ -1,4 +1,4 @@
-// ggml's pinned dequantize.h is prepended by quantized.cpp (upstream MIT license).
+// dequant.metal (the block decoders, after the quant header) is prepended by quantized.cpp.
 struct QArgs {
     device void* p[24]; ulong stride,xstride,ystride,offset;
     int ni,no,rows,count,every,kind;

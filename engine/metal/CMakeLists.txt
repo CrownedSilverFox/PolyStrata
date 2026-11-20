@@ -182,8 +182,8 @@ include(${STRATA_ROOT}/cmake/backends/metal.cmake)
 # tests/quant/run_oracle.sh, OWN-2N); -DSTRATA_OWN_CPU_QUANT=OFF builds the ggml-cpu pool (kept selectable for two releases).
 option(STRATA_OWN_CPU_QUANT "CPU expert pool and --mtp-q4 on the Strata quant layer instead of ggml-cpu's type traits" ON)
 option(STRATA_BUILD_TESTS "Build the quant layer's self-test and ggml oracle test (needs STRATA_OWN_CPU_QUANT)" OFF)
-# ggml-base / ggml-cpu only where something links them: the ggml-cpu pool, the tests (ggml as the oracle) and strata-poly, whose
-# kernels still sit on ggml.  The default engine has no ggml.
+# ggml-base / ggml-cpu only where something links them: the ggml-cpu pool, the tests (ggml as the oracle) and strata-q36, built
+# beside strata-poly.  The default engine and strata-poly have no ggml.
 if(NOT STRATA_OWN_CPU_QUANT OR STRATA_BUILD_TESTS OR STRATA_METAL_POLY)
   strata_ggml_resolve("${STRATA_ROOT}")
   if(NOT EXISTS "${_strata_ggml_root}/ggml/CMakeLists.txt")
@@ -259,23 +259,23 @@ target_link_libraries(window_probe PRIVATE strata_metal_kernels strata_metal_hos
 # experts, batching, conversations and speculative decoding.
 if(STRATA_METAL_POLY)
   target_sources(strata_poly_metal_kernels PRIVATE src/poly/quantized.cpp src/poly/unported.cpp)
-  target_include_directories(strata_poly_metal_kernels PRIVATE ${S}/poly ${_strata_ggml_root}/ggml/include)
+  if(NOT TARGET strata_quant)
+    message(FATAL_ERROR "strata-poly on Metal needs the Strata quant layer (STRATA_OWN_CPU_QUANT=ON)")
+  endif()
+  target_include_directories(strata_poly_metal_kernels PRIVATE ${S}/poly)
   target_compile_definitions(strata_poly_metal_kernels PRIVATE
-    STRATA_POLY_GGML_SOURCE="${_strata_ggml_root}/ggml/src"
+    STRATA_POLY_QUANT_COMMON="${GGML_COMMON}"
+    STRATA_POLY_DEQUANT_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/src/poly/dequant.metal"
     STRATA_POLY_QUANT_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/src/poly/quantized.metal"
     STRATA_POLY_MM_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/src/poly/mm.metal")
-  target_link_libraries(strata_poly_metal_kernels PUBLIC ggml-base)
+  target_link_libraries(strata_poly_metal_kernels PUBLIC strata_quant)
   add_executable(strata-poly ${S}/poly/main.cpp ${S}/poly/engine.cpp ${S}/poly/qwen35.cpp
     ${S}/poly/gemma4.cpp ${S}/poly/lfm2moe.cpp ${S}/poly/glm5next.cpp ${S}/poly/deepseek4.cpp ${S}/poly/flint.cpp
     ${S}/poly/kolibri1.cpp ${S}/poly/cpu_experts.cpp ${S}/poly/spill.cpp ${S}/platform/memory.cpp
     ${S}/core/conversation_memory.cpp ${S}/core/conversation_file.cpp ${S}/spec/draft_policy.cpp
     ${S}/spec/suffix_drafter.cpp)
-  target_include_directories(strata-poly PRIVATE ${_strata_ggml_root}/ggml/include ${_strata_ggml_root}/ggml/src)
-  # the CPU experts' rows and the tensor types read on the host are the Strata quant layer's
-  if(NOT TARGET strata_quant)
-    message(FATAL_ERROR "strata-poly on Metal needs the Strata quant layer (STRATA_OWN_CPU_QUANT=ON)")
-  endif()
-  target_link_libraries(strata-poly PRIVATE strata_poly_metal_kernels strata_quant ggml-cpu ggml-base)
+  # the CPU experts' rows and the tensor types read on the host are the Strata quant layer's: no ggml
+  target_link_libraries(strata-poly PRIVATE strata_poly_metal_kernels strata_quant)
   target_compile_definitions(strata-poly PRIVATE STRATA_VERSION="0.1.45-metal-poly")
   set_source_files_properties(${S}/poly/norm_q8_test.cu PROPERTIES LANGUAGE CXX)
   add_executable(poly_norm_q8_metal_test ${S}/poly/norm_q8_test.cu)
@@ -288,13 +288,14 @@ endif()
 
 if(STRATA_METAL_POLY)
   # Mmq::mul's time on a prompt batch's shapes, run by hand
+  # (the bench and the quantized parity test quantize their weights with ggml, the reference)
   add_executable(poly_mm_bench poly_tests/mm_bench.cpp)
-  target_include_directories(poly_mm_bench PRIVATE ${S}/poly)
-  target_link_libraries(poly_mm_bench PRIVATE strata_poly_metal_kernels)
+  target_include_directories(poly_mm_bench PRIVATE ${S}/poly ${_strata_ggml_root}/ggml/include)
+  target_link_libraries(poly_mm_bench PRIVATE strata_poly_metal_kernels ggml-base)
   foreach(t attention quantized recurrent operations)
     add_executable(poly_${t}_parity poly_tests/${t}_parity.cpp)
-    target_include_directories(poly_${t}_parity PRIVATE ${S}/poly)
-    target_link_libraries(poly_${t}_parity PRIVATE strata_poly_metal_kernels)
+    target_include_directories(poly_${t}_parity PRIVATE ${S}/poly ${_strata_ggml_root}/ggml/include)
+    target_link_libraries(poly_${t}_parity PRIVATE strata_poly_metal_kernels ggml-base)
     if(BUILD_TESTING)
       add_test(NAME poly_${t}_parity COMMAND poly_${t}_parity)
       set_tests_properties(poly_${t}_parity PROPERTIES LABELS "metal;gpu;poly" RESOURCE_LOCK metal_gpu TIMEOUT 120)
