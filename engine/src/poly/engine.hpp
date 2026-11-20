@@ -288,8 +288,19 @@ public:
     /// is its calls one by one, through one more call), with how many of how many that is.  False gives the read
     /// up: read() returns false, and what the engine holds from pos() on is spoiled, its recurrent state and a
     /// window layer's rows among it.  The caller goes back to a state saved before (load_state()) or resets.
+    ///
+    /// `co`: prompts of other sequences read in the same pass (Strata's BCO), each from its sequence's row 0 (reset
+    /// it first): their calls go through each layer beside the read's own, so the experts a layer copies through
+    /// VRAM serve them all, and through the routed experts together (layer_pack()).  Text only, one card, and a
+    /// read longer than a call (co_reads()).  Their sequences are at their n after it.
+    struct CoRead {
+        int seq;
+        const int32_t* tokens;
+        int n;
+    };
+    bool co_reads() const { return !next_ && !split_ && read_rows_ > rows_; }
     bool read(const int32_t* tokens, int n, const Mark* marks = nullptr, int n_marks = 0,
-              const std::function<bool(int, int)>* turn = nullptr);
+              const std::function<bool(int, int)>* turn = nullptr, const CoRead* co = nullptr, int n_co = 0);
     /// The prompt's reads are done: the expert cache takes back what Options::stage_read_mib lent the staging
     /// buffer.  window() and step() do it too, if the caller has not.
     void end_read() {
@@ -792,9 +803,20 @@ protected:
     // read()'s calls between two layers: r_ holds two calls' rows, and with more calls than that the others'
     // wait in host memory, copied out and in beside the card's work on the call between
     struct Call {
-        int at, m, mark;      ///< its first token, how many, and the mark it ends at or -1
+        int at, m, mark;      ///< its first row among the read's (co-reads' after its own), how many, the mark it ends at
+        int seq;              ///< its sequence (bound_ for the read's own)
+        int64_t pos;          ///< its first token's place in that sequence
+        const int32_t* tok;   ///< and its tokens
     };
     std::vector<Call> calls_;
+    // With co-reads, calls go through a layer's routed experts together while their rows fit the scratch
+    // (layer_pack()), and the calls are between two layers as a pack: calls first..first+n-1, its rows at..at+m-1
+    struct Pack {
+        int first, n, at, m;
+    };
+    std::vector<Pack> packs_;
+    std::vector<int32_t> pack_tok_;   ///< the read's tokens, co-reads' after its own: a pack's for the routing
+    void layer_pack(int il, const Pack& p, float* rows);
     float* h_res_ = nullptr;  ///< h_res_rows_ tokens' rows, pinned: as many as the longest read so far that needed it
     int h_res_rows_ = 0;
     void* rs_ = nullptr;      ///< the stream of those copies

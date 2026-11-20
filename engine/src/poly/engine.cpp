@@ -6477,6 +6477,43 @@ void Engine::layer(int il, int n) {
     layer_tail(L, il, n);
 }
 
+// A pack of read()'s calls through layer il, its rows at `rows`: each call's head at its rows of the buffers
+// (shift_rows()) with its sequence bound, as step() takes a row a sequence, and then the routed experts and the tail
+// of all the rows at once.  Sixteen co-reads of 100 tokens were 17 calls a layer of Qwen3.6, each its own router
+// wait and its own copies of the experts it routes to outside the cache: 1.2 s, where a prompt of 1,600 tokens takes
+// 0.3.  Leaves the last call's sequence bound and pos_ where that call starts.
+void Engine::layer_pack(int il, const Pack& p, float* rows) {
+    Layer& L = layers_[(size_t) il];
+    for (int c = p.first; c < p.first + p.n; ++c) {
+        const Call& call = calls_[(size_t) c];
+        const ptrdiff_t by = call.at - p.at;
+        if (call.seq != bound_) hold(call.seq);
+        r_ = rows;
+        tok_ = nullptr;
+        pos_ = call.pos - by;
+        shift_rows(by);
+        tok_ = call.tok;
+        layer_head(L, il, call.m);
+        tok_ = nullptr;
+        shift_rows(-by);
+    }
+    const Call& last = calls_[(size_t) (p.first + p.n - 1)];
+    r_ = rows;
+    pos_ = last.pos;
+    if (L.moe) {
+        tok_ = pack_tok_.data() + p.at;
+        if (batched(L, p.m)) {
+            moe_rows(L, il, p.m);
+        } else {
+            ck(cudaEventRecord((cudaEvent_t) ev_, cs(st_)), "router");
+            moe_shared(L, il, p.m);
+            if (moe(L, il, p.m)) moe_add(p.m);
+        }
+        layer_tail(L, il, p.m);
+    }
+    tok_ = last.tok;
+}
+
 // A prompt's tokens in the calls eval() would get, max_rows() at a time.  With experts outside the cache, each
 // call copies every layer's through the staging buffer, which is most of what reading a prompt takes.  So the
 // calls go through a layer one after the other before any goes on to the next, and the second one finds the
@@ -6494,9 +6531,20 @@ void Engine::layer(int il, int n) {
 // A checkpoint inside the read (a mark) is taken a layer at a time: when a layer has run the tokens before it,
 // the layer's state is what save_state() would find there, and it is copied before the next call changes it.
 bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
-                  const std::function<bool(int, int)>* turn) {
-    if (n < 1 || n > read_rows_) throw std::logic_error("read takes 1 to max_read() tokens");
-    if (n >= kStageRows) take_prompt();
+                  const std::function<bool(int, int)>* turn, const CoRead* co, int n_co) {
+    const int lead = bound_;
+    int all = n;   // the rows of the read and its co-reads
+    for (int j = 0; j < n_co; ++j) {
+        if (co[j].seq < 0 || co[j].seq >= sequences() || co[j].seq == lead || co[j].n < 1 ||
+            co[j].n > opt_.max_context)
+            throw std::logic_error("read: a co-read is of another sequence, 1 to max_context() tokens");
+        for (int i = 0; i < j; ++i)
+            if (co[i].seq == co[j].seq) throw std::logic_error("read: two co-reads of one sequence");
+        all += co[j].n;
+    }
+    if (n_co > 0 && !co_reads()) throw std::logic_error("read: co-reads are one card's, where a read is several calls");
+    if (n < 1 || all > read_rows_) throw std::logic_error("read takes 1 to max_read() tokens, co-reads among them");
+    if (all >= kStageRows) take_prompt();
     for (const Image& im : images_)
         if (im.at < pos_ + n && im.at + im.n > pos_)
             throw std::logic_error("read takes no rows of a picture: eval() does, a picture a call");
@@ -6504,17 +6552,67 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         if (marks[k].at <= (k ? marks[k - 1].at : 0) || marks[k].at >= n)
             throw std::logic_error("read: the marks rise, above 0 and below the tokens read");
 
-    // the calls: up to max_rows() tokens each, and none across a mark
+    // the calls: up to max_rows() tokens each, and none across a mark; then each co-read's, from its row 0
     calls_.clear();
     for (int at = 0, k = 0; at < n;) {
         const int m = std::min(rows_, (k < n_marks ? marks[k].at : n) - at);
         const bool ends = k < n_marks && at + m == marks[k].at;
-        calls_.push_back({at, m, ends ? k : -1});
+        calls_.push_back({at, m, ends ? k : -1, lead, pos_ + at, tokens + at});
         at += m;
         k += ends;
     }
+    for (int j = 0, row = n; j < n_co; row += co[j].n, ++j)
+        for (int at = 0; at < co[j].n;) {
+            const int m = std::min(rows_, co[j].n - at);
+            calls_.push_back({row + at, m, -1, co[j].seq, at, co[j].tokens + at});
+            at += m;
+        }
     const int n_calls = (int) calls_.size();
+    // Without co-reads a pack is a call, so the read's sums are split as before.  A call with a mark ends its pack:
+    // the layer's state is copied after the pack.
+    packs_.clear();
+    pack_tok_.clear();
+    for (const Call& call : calls_) {
+        Pack* p = packs_.empty() ? nullptr : &packs_.back();
+        if (n_co > 0 && p && p->m + call.m <= rows_ && calls_[(size_t) (p->first + p->n - 1)].mark < 0) {
+            ++p->n;
+            p->m += call.m;
+        } else {
+            packs_.push_back({(int) (&call - calls_.data()), 1, call.at, call.m});
+        }
+        if (n_co > 0) pack_tok_.insert(pack_tok_.end(), call.tok, call.tok + call.m);
+    }
+    const int n_packs = (int) packs_.size();
     OnCard here(device_, split_);
+    // the co-reads' sequences at the end of them, and the read's own bound again, however the read ends
+    struct Rebind {
+        Engine& e;
+        int lead;
+        const CoRead* co;
+        int n_co;
+        bool done = false;
+        void now(bool read) {
+            if (std::exchange(done, true)) return;
+            for (int j = 0; j < n_co && read; ++j) {
+                e.hold(co[j].seq);
+                e.pos_ = co[j].n;
+            }
+            if (n_co > 0) e.hold(lead);
+        }
+        ~Rebind() {
+            try {
+                now(false);
+            } catch (...) {
+            }
+        }
+    } rebind{*this, lead, co, n_co};
+    for (int j = 0; j < n_co; ++j) {   // each co-read's rows, from 0
+        hold(co[j].seq);
+        if (images_.size()) throw std::logic_error("read: a co-read's sequence holds a picture");
+        if (pos_ != 0) throw std::logic_error("read: a co-read's sequence is not at its start (reset it)");
+        cover(co[j].n);
+    }
+    hold(lead);
     cover(pos_ + n);
     // On several cards, each reads through its own layers and hands the rows on, and `turn` hears of a card's
     // turns as its share of the model's layers: [lo_, to).
@@ -6525,7 +6623,8 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         share = [&, to](int done, int of) { return (*asked)(lo_ * of + done * (to - lo_), n_layer_ * of); };
         return (const std::function<bool(int, int)>*) &share;
     };
-    if (n_calls == 1 || !mmq_ || all_cached() || n < opt_.stage_ahead) {
+    // co-reads go through the layers in packs whatever the experts: one by one their calls would wait as long
+    if (n_calls == 1 || (n_co == 0 && (!mmq_ || all_cached() || all < opt_.stage_ahead))) {
         turn = share_to(n_layer_);   // eval() takes the calls through the cards after this one
         // On several cards the next one takes a call on a thread of its own, while this one runs the call after
         // it.  Each card runs the calls as eval() does, in the same order.
@@ -6600,32 +6699,40 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     const size_t part = (size_t) std::max(streams(), draft_ ? 3 : 1) * rows_ * e_row;   // a call's rows of r_
     float* const r0 = r_;
     const int64_t pos0 = pos_;
-    const bool host = n_calls > 2;
-    if (host && h_res_rows_ < n) {   // for this read's tokens and some more, so that a longer one seldom asks again
+    const bool host = n_packs > 2;
+    if (host && h_res_rows_ < all) {   // for this read's tokens and some more, so that a longer one seldom asks again
         hfree(h_res_);
         h_res_ = nullptr;
-        h_res_rows_ = std::min(read_rows_, (n + 4095) / 4096 * 4096);
+        h_res_rows_ = std::min(read_rows_, (all + 4095) / 4096 * 4096);
         h_res_ = (float*) hmalloc((size_t) h_res_rows_ * r_bytes, "pinned memory");
     }
-    const auto home = [&](int c) { return h_res_ + (size_t) calls_[(size_t) c].at * r_row; };
-    const auto half = [&](int c) { return r0 + (size_t) (host ? c % 2 : c) * part; };
-    // call c's rows back into its half of r_, behind whatever the stream has there of the half's last call
-    const auto fetch = [&](int c) {
-        ck(cudaMemcpyAsync(half(c), home(c), (size_t) calls_[(size_t) c].m * r_bytes, cudaMemcpyHostToDevice,
+    const auto home = [&](int p) { return h_res_ + (size_t) packs_[(size_t) p].at * r_row; };
+    const auto half = [&](int p) { return r0 + (size_t) (host ? p % 2 : p) * part; };
+    // pack p's rows back into its half of r_, behind whatever the stream has there of the half's last pack
+    const auto fetch = [&](int p) {
+        ck(cudaMemcpyAsync(half(p), home(p), (size_t) packs_[(size_t) p].m * r_bytes, cudaMemcpyHostToDevice,
                            cs(rs_)),
            "read");
-        ck(cudaEventRecord((cudaEvent_t) ev_in_[c % 2], cs(rs_)), "read");
+        ck(cudaEventRecord((cudaEvent_t) ev_in_[p % 2], cs(rs_)), "read");
     };
-    for (int c = 0; c < n_calls; ++c) {
-        const Call& call = calls_[(size_t) c];
-        float* rows = host ? home(c) : h_r_;
-        if (pass_)
-            std::memcpy(rows, pass_ + (size_t) (pos0 + call.at - pass_at_) * r_row, (size_t) call.m * r_bytes);
-        if (!pass_) embed_rows(tokens + call.at, pos0 + call.at, call.m, rows);
+    for (int p = 0; p < n_packs; ++p) {
+        const Pack& pk = packs_[(size_t) p];
+        float* const rows = host ? home(p) : h_r_;
+        for (int c = pk.first; c < pk.first + pk.n; ++c) {
+            const Call& call = calls_[(size_t) c];
+            float* const at = rows + (size_t) (call.at - pk.at) * r_row;
+            if (pass_)
+                std::memcpy(at, pass_ + (size_t) (pos0 + call.at - pass_at_) * r_row, (size_t) call.m * r_bytes);
+            if (!pass_) {
+                if (call.seq != bound_) hold(call.seq);   // its pictures, none for a co-read
+                embed_rows(call.tok, call.pos, call.m, at);
+            }
+        }
         if (host) continue;
-        ck(cudaMemcpyAsync(half(c), h_r_, (size_t) call.m * r_bytes, cudaMemcpyHostToDevice, cs(st_)), "embed");
+        ck(cudaMemcpyAsync(half(p), h_r_, (size_t) pk.m * r_bytes, cudaMemcpyHostToDevice, cs(st_)), "embed");
         ck(cudaStreamSynchronize(cs(st_)), "embed");   // h_r_ is filled again
     }
+    if (bound_ != lead) hold(lead);
     if (host) {
         fetch(0);
         fetch(1);
@@ -6639,7 +6746,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     std::vector<uint8_t*> staged((size_t) n_marks, nullptr);
     for (int m = 0, used = 0; m < n_marks && used < 2; ++m)
         if (marks[m].state && h_state_bytes_ >= card_state_bytes()) staged[(size_t) m] = used++ ? h_mark_ : h_state_;
-    shared_ahead_ = true;
+    shared_ahead_ = all >= opt_.stage_ahead;   // (co-reads of fewer tokens: one pack, its own experts)
     try {
         for (int k = 0; k < turns; ++k) {
             const int il = lo_ + k;
@@ -6649,23 +6756,33 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
                 if (host) ck(cudaStreamSynchronize(cs(rs_)), "read");
                 ck(cudaStreamSynchronize(cs(st_)), "read");
                 shared_ahead_ = false;
+                rebind.now(false);
                 r_ = r0;
                 pos_ = pos0;
                 return false;
             }
-            for (int c = 0; c < n_calls; ++c) {
-                const Call& call = calls_[(size_t) c];
-                r_ = half(c);
-                pos_ = pos0 + call.at;
-                tok_ = tokens + call.at;
-                if (host) ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) ev_in_[c % 2], 0), "read");
-                if (il < n_layer_) {
-                    layer(il, call.m);
+            for (int p = 0; p < n_packs; ++p) {
+                const Pack& pk = packs_[(size_t) p];
+                if (host) ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) ev_in_[p % 2], 0), "read");
+                if (il < n_layer_ && pk.n > 1) {
+                    layer_pack(il, pk, half(p));
                 } else {
-                    output_rows(0, call.m, hn_ + n_embd_);
-                    draft_rows(tokens + call.at, ahead_pos_ == pos_ && tokens[call.at] == ahead_tok_ ? 1 : 0, call.m);
-                    ++read_draft_calls_;
+                    for (int c = pk.first; c < pk.first + pk.n; ++c) {
+                        const Call& call = calls_[(size_t) c];
+                        if (call.seq != bound_) hold(call.seq);   // its caches, state and draft rows
+                        r_ = half(p) + (size_t) (call.at - pk.at) * r_row;
+                        pos_ = call.pos;
+                        tok_ = call.tok;
+                        if (il < n_layer_) {
+                            layer(il, call.m);
+                        } else {
+                            output_rows(0, call.m, hn_ + n_embd_);
+                            draft_rows(call.tok, ahead_pos_ == pos_ && call.tok[0] == ahead_tok_ ? 1 : 0, call.m);
+                            ++read_draft_calls_;
+                        }
+                    }
                 }
+                const Call& call = calls_[(size_t) (pk.first + pk.n - 1)];   // (a mark ends its pack)
                 if (uint8_t* state = call.mark >= 0 ? marks[call.mark].state : nullptr) {
                     uint8_t* const to = staged[(size_t) call.mark] ? staged[(size_t) call.mark] : state;
                     const int64_t pos = pos_ + call.m;
@@ -6675,28 +6792,28 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
                         save_last(to);
                     }
                 }
-                // The card's work on the next call starts now.  This call's rows leave beside it, unless this was
-                // the last turn, and the half is the next call's that uses it: the one two on, or the one with
+                // The card's work on the next pack starts now.  This pack's rows leave beside it, unless this was
+                // the last turn, and the half is the next pack's that uses it: the one two on, or the one with
                 // this half at the next turn.  After the last turn the next card reads them.
                 const bool last = k == turns - 1, out = last && next_;
-                if (!host || (last && c + 2 >= n_calls && !out)) continue;
-                ck(cudaEventRecord((cudaEvent_t) ev_out_[c % 2], cs(st_)), "read");
-                ck(cudaStreamWaitEvent(cs(rs_), (cudaEvent_t) ev_out_[c % 2], 0), "read");
+                if (!host || (last && p + 2 >= n_packs && !out)) continue;
+                ck(cudaEventRecord((cudaEvent_t) ev_out_[p % 2], cs(st_)), "read");
+                ck(cudaStreamWaitEvent(cs(rs_), (cudaEvent_t) ev_out_[p % 2], 0), "read");
                 if (!last || out)
-                    ck(cudaMemcpyAsync(home(c), half(c), (size_t) call.m * r_bytes, cudaMemcpyDeviceToHost,
+                    ck(cudaMemcpyAsync(home(p), half(p), (size_t) pk.m * r_bytes, cudaMemcpyDeviceToHost,
                                        cs(rs_)),
                        "read");
-                if (!last || c + 2 < n_calls) fetch(c + 2 < n_calls ? c + 2 : c % 2);
+                if (!last || p + 2 < n_packs) fetch(p + 2 < n_packs ? p + 2 : p % 2);
             }
         }
         if (host) ck(cudaStreamSynchronize(cs(rs_)), "read");
         ck(cudaStreamSynchronize(cs(st_)), "read");
         for (int m = 0; m < n_marks; ++m)
             if (staged[(size_t) m]) state_out(staged[(size_t) m], marks[m].state);
-        if (next_ && !host) {   // the rows are in r_, a call's in each half
+        if (next_ && !host) {   // the rows are in r_, a pack's in each half
             float* h = pass_rows(n);
-            for (int c = 0; c < n_calls; ++c)
-                ck(cudaMemcpyAsync(h + (size_t) calls_[(size_t) c].at * r_row, half(c), calls_[(size_t) c].m * r_bytes,
+            for (int p = 0; p < n_packs; ++p)
+                ck(cudaMemcpyAsync(h + (size_t) packs_[(size_t) p].at * r_row, half(p), packs_[(size_t) p].m * r_bytes,
                                    cudaMemcpyDeviceToHost, cs(st_)),
                    "the next card");
             ck(cudaStreamSynchronize(cs(st_)), "the next card");
@@ -6704,11 +6821,17 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     } catch (...) {
         if (host) cudaStreamSynchronize(cs(rs_));
         shared_ahead_ = false;
+        try {
+            rebind.now(false);
+        } catch (...) {
+        }
         r_ = r0;
         pos_ = pos0;
         throw;
     }
     shared_ahead_ = false;
+    rebind.now(true);   // each co-read's sequence at its end
+    for (int j = 0; j < n_co; ++j) stats_.tokens += co[j].n;
     r_ = r0;
     pos_ = pos0;
     if (next_) {
