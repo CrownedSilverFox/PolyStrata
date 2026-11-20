@@ -353,21 +353,40 @@ void flush(StreamImpl* s) {
     s->cb = nullptr;
     s->pending = 0;
 }
+constexpr unsigned kSpinSkipMax = 64;   // waits sent straight to the completion handler after failed spins, at most
+
 Error wait_value(const std::shared_ptr<Completion>& state, uint64_t v) {
     ++rt().stats.host_syncs;
     if (!state || !v) return rt().failed.load() ? fail(kErrorLaunchFailure) : kSuccess;
-    // The timeline is the GPU's own count, there as soon as the work is: read it a while before sleeping on the
-    // completion handler, which Metal runs on a thread of its own after the buffer completes and which then wakes this
-    // one.  A partly cached answer waits so for its router every layer.
+    // The timeline is the GPU's own count, there as soon as the work is: a short spin reads it before sleeping on the completion handler,
+    // which Metal runs on a thread of its own after the buffer completes and which then wakes this one (a partly cached answer waits so
+    // for its router every layer).  The spin pays only when the answer comes inside it.  Each waiting thread counts its spins: after two
+    // in a row that did not end (a prompt's chunks) the next `skip` waits go straight to the handler, the skip doubling up to
+    // kSpinSkipMax while spins keep failing; a spin that ends resets the count.  One long wait among short ones (a token's last) keeps
+    // the spin, and a wait that is over before it starts counts for nothing.
     if (state->timeline) {
-        const auto t0 = std::chrono::steady_clock::now();
-        while (state->timeline->signaledValue() < v && !rt().failed.load() &&
-               std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(2)) {
+        static thread_local unsigned skip = 0, backoff = 1, misses = 0;
+        bool done = state->timeline->signaledValue() >= v;
+        if (!done && skip > 0) {
+            --skip;
+        } else if (!done) {
+            const auto t0 = std::chrono::steady_clock::now();
+            while (state->timeline->signaledValue() < v && !rt().failed.load() &&
+                   std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(2)) {
 #if defined(__aarch64__)
-            __asm__ __volatile__("yield");
+                __asm__ __volatile__("yield");
 #endif
+            }
+            done = state->timeline->signaledValue() >= v;
+            if (done) {
+                misses = 0;
+                backoff = 1;
+            } else if (++misses >= 2) {
+                skip = backoff;
+                backoff = std::min(backoff * 2, kSpinSkipMax);
+            }
         }
-        if (state->timeline->signaledValue() >= v) {
+        if (done) {
             std::lock_guard<std::mutex> lock(state->mu);
             return state->failed || rt().failed.load() ? fail(kErrorLaunchFailure) : kSuccess;
         }
