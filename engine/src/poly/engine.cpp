@@ -5263,26 +5263,101 @@ void Engine::build_mirror() {
                              "locked all of it: pinned for the card, which the system does not page out%s\n",
                      n, (double) total / (1 << 30), memlock_note().c_str());
 
-    // card_far_: where the cached experts are the ones of nearly every pick the profile counted, an answer's few
-    // tokens route on the card as with every expert cached, and the card copies the rest from the mirror itself:
-    // a layer does not wait for the host, and a window is one recording.  The staging buffer holds a call's picks.
-    // Its answers are the ones every expert in VRAM gives.  STRATA_POLY_CARD_FAR=0 or 1 says no or yes.
+    // card_far_: an answer's few tokens route on the card as with every expert cached, and the card copies the
+    // picks it lacks from the mirror itself: a layer does not wait for the host, and a window is one recording.  The
+    // staging buffer holds a call's picks.  Its answers are the ones every expert in VRAM gives.
+    //
+    // A token routed on the card copies what the cache lacks of its picks over the bus; routed on the host, it costs
+    // each MoE layer a round trip: the router's scores to the host, the card waiting for the host's launches.  Both
+    // are measured here, the copy as far_pull() makes it, the round trip as moe_router() and moe() make it, and the
+    // way that takes less a token is the one taken.  The bytes are the profile's: each layer's picks times the share
+    // of its picks the cache lacks.  With no profile, nothing to say what an answer misses: on the host.  On lab-241's
+    // RTX 4090 D (PCIe 4.0 x8: 12.6 GB/s, round trips of 11-12 us) Qwen3.6 UD-Q3_K_M goes to the host with 95% and
+    // 97% of the profile's picks cached, where the card wrote 10-25% slower, and to the card with 99%, where it wrote
+    // as fast or faster.  STRATA_POLY_CARD_FAR=1 takes the card, any other value the host.
     ahead_stride_ = (slot_max_ + 4095) / 4096 * 4096;
     {
-        double held = 0, all = 0;
-        for (int il = 0; il < n_layer_ && !prior_.empty(); ++il)
-            for (int e = 0; e < n_expert_ && layers_[(size_t) il].moe; ++e) {
-                const double u = (double) prior_[(size_t) il * n_expert_ + e];
+        double far_bytes = 0;   // a token's, by the profile
+        int moe_layers = 0, il_moe = -1;
+        size_t bytes = 0;       // a far_pull() of the measure's: the largest slot's
+        for (int il = 0; il < n_layer_; ++il) {
+            const Layer& L = layers_[(size_t) il];
+            if (!L.moe) continue;
+            ++moe_layers;
+            if (il_moe < 0) il_moe = il;
+            bytes = std::max(bytes, (L.gu2() + L.d_bytes + 15) / 16 * 16);
+            double all = 0, lacks = 0;
+            for (int e = 0; e < n_expert_; ++e) {
+                const double u = prior_.empty() ? 0.0 : (double) prior_[(size_t) il * n_expert_ + e];
                 all += u;
-                if (layers_[(size_t) il].slot[(size_t) e]) held += u;
+                if (!L.slot[(size_t) e]) lacks += u;
             }
+            if (all > 0) far_bytes += n_used_ * lacks / all * (double) (L.gu2() + L.d_bytes);
+        }
+        // the copy's picks: experts of the mirror of that size, each once, so that no copy reads what one before it read
+        constexpr int kPicks = 4;   // a call's misses, as a layer of an answer has them
+        std::vector<FarFetch> fetch;
+        for (int il = 0; il < n_layer_ && (int) fetch.size() < card_rows(); ++il) {
+            const Layer& L = layers_[(size_t) il];
+            for (int e = 0; L.moe && (L.gu2() + L.d_bytes + 15) / 16 * 16 == bytes && e < n_expert_ &&
+                            (int) fetch.size() < card_rows(); ++e)
+                if (const uint8_t* m = !L.slot[(size_t) e] ? mirror(il, e) : nullptr)
+                    fetch.push_back({m, stage_ + (fetch.size() % kPicks) * ahead_stride_});
+        }
         const char* cf = std::getenv("STRATA_POLY_CARD_FAR");
         const bool fits = d_far_ && opt_.batch == 0 && (size_t) card_rows() * ahead_stride_ <= stage_narrow_;
-        card_far_ = fits && (cf ? cf[0] == '1' : all > 0 && held >= kCardFarShare * all);
-        if (card_far_)
-            std::fprintf(stderr, "strata-poly: experts the card lacks: copied by the card from the mirror (%.1f%% of "
-                                 "the profile's picks cached)\n",
-                         all > 0 ? 100.0 * held / all : 0.0);
+        const int groups = (int) fetch.size() / kPicks;
+        if (fits && !cf && !prior_.empty() && groups >= 2) {
+            // each group of kPicks timed on its own, after one that wakes the bus; the median
+            ck(cudaMemcpy(d_fetch_, fetch.data(), fetch.size() * sizeof(fetch[0]), cudaMemcpyHostToDevice), "far copy");
+            ck(cudaMemcpy(d_nfetch_, &kPicks, sizeof(int), cudaMemcpyHostToDevice), "far copy");
+            std::vector<cudaEvent_t> ev((size_t) groups);
+            for (cudaEvent_t& e : ev) ck(cudaEventCreate(&e), "cudaEventCreate");
+            far_pull(d_fetch_, d_nfetch_, kPicks, bytes, st_);
+            ck(cudaEventRecord(ev[0], cs(st_)), "far copy");
+            for (int g = 1; g < groups; ++g) {
+                far_pull(d_fetch_ + (size_t) g * kPicks, d_nfetch_, kPicks, bytes, st_);
+                ck(cudaEventRecord(ev[(size_t) g], cs(st_)), "far copy");
+            }
+            ck(cudaEventSynchronize(ev.back()), "far copy");
+            std::vector<float> copy;
+            for (int g = 1; g < groups; ++g) {
+                float ms = 0.f;
+                ck(cudaEventElapsedTime(&ms, ev[(size_t) g - 1], ev[(size_t) g]), "far copy");
+                copy.push_back(ms);
+            }
+            std::sort(copy.begin(), copy.end());
+            const float copy_ms = copy[copy.size() / 2];
+            // the round trip: the router's copy to the host, the host waiting for it, routing the token, and on to the
+            // next launch
+            ck(cudaMemsetAsync(rl_, 0, (size_t) n_expert_ * sizeof(float), cs(st_)), "round trip");
+            std::vector<float> tmp(2 * (size_t) n_expert_);
+            int ids[kMaxUsed];
+            float w[kMaxUsed];
+            std::vector<double> trip;
+            for (int k = 0; k < 36; ++k) {
+                const Clock::time_point t0 = Clock::now();
+                copy2(rl_, h_rl_, n_expert_, xn_, h_x_, n_embd_, st_);
+                ck(cudaEventRecord(ev[0], cs(st_)), "round trip");
+                ck(cudaEventSynchronize(ev[0]), "round trip");
+                route(il_moe, h_rl_, -1, ids, w, tmp.data());
+                if (k >= 4) trip.push_back(ms_since(t0));
+            }
+            for (cudaEvent_t e : ev) cudaEventDestroy(e);
+            std::sort(trip.begin(), trip.end());
+            const double gbs = copy_ms > 0.f ? (double) kPicks * (double) bytes / copy_ms / 1e6 : 0.0;
+            const double far_ms = gbs > 0 ? far_bytes / gbs / 1e6 : 0.0, host_ms = moe_layers * trip[trip.size() / 2];
+            card_far_ = gbs > 0 && far_ms < host_ms;
+            std::fprintf(stderr, "strata-poly: a token's experts the card lacks: %.1f MiB by the profile, %.2f ms at "
+                                 "%.1f GB/s; routed on the host, %d round trips of %.0f us, %.2f ms: routed on the %s\n",
+                         far_bytes / (1 << 20), far_ms, gbs, moe_layers, 1000.0 * trip[trip.size() / 2], host_ms,
+                         card_far_ ? "card" : "host");
+        } else {
+            card_far_ = fits && cf && cf[0] == '1';
+            if (card_far_)
+                std::fprintf(stderr, "strata-poly: experts the card lacks: copied by the card from the mirror "
+                                     "(STRATA_POLY_CARD_FAR=1)\n");
+        }
     }
 
     // vram_ahead(): one sequence's answer (step() mixes the staging buffer with other sequences' prompt reads).
