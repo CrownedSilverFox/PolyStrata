@@ -2339,14 +2339,14 @@ template <int ahead> __device__ __forceinline__ void flash_wait() {
 #endif
 
 // attend_batch() for heads of 64 values in groups of 4 (LFM2's), the way FlashAttention-2 goes: a launch block takes
-// FLASH_TOKENS tokens of a group, 64 rows of queries with a token's 4 heads side by side, a warp 16 of them, and walks
+// FLASH_TOKENS tokens of a group, 128 rows of queries with a token's 4 heads side by side, a warp 16 of them, and walks
 // the keys FLASH_KEYS at a time on the tensor cores, keeping each row's softmax as it goes, so no score leaves the
 // registers.  The queries and the weights are rounded to halves and the products sum floats, as with the cuBLAS
 // products.  Fragment layouts are PTX's for mma.m16n8k16: a thread holds rows gid and gid + 8, columns 2 tig and
 // 2 tig + 1 of each block of 8.  The next block of keys and values is copied in while one is worked on, two buffers
 // in turn.
-constexpr int FLASH_TOKENS = 16;
-__global__ void __launch_bounds__(4 * WARP)
+constexpr int FLASH_TOKENS = 32;
+__global__ void __launch_bounds__(FLASH_TOKENS / 4 * WARP)
 attn_flash64_kernel(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
                     float* __restrict__ out, int rows, int n_head, int kv_heads, long long pos, float scale_log2) {
 #if STRATA_POLY_MMA
@@ -2376,7 +2376,7 @@ attn_flash64_kernel(const float* __restrict__ q, const half* __restrict__ kcache
     for (int n = 0; n < 8; ++n) o[n][0] = o[n][1] = o[n][2] = o[n][3] = 0.0f;
     const int n_keys = int(pos) + min(t0 + FLASH_TOKENS, rows);   // the block's last token attends rows [0, n_keys)
     const auto fetch = [&](int buf, int k0) {
-        for (int i = threadIdx.x; i < FLASH_KEYS * DIM / 8; i += 4 * WARP) {
+        for (int i = threadIdx.x; i < FLASH_KEYS * DIM / 8; i += FLASH_TOKENS / 4 * WARP) {
             const int r = i / (DIM / 8), c = 8 * (i % (DIM / 8));
             const bool whole = k0 + r < n_keys;
             const size_t at = whole ? (size_t(k0 + r) * kv_heads + g) * DIM + c : 0;
@@ -2455,15 +2455,15 @@ attn_flash64_kernel(const float* __restrict__ q, const half* __restrict__ kcache
 }
 
 // attend_batch() for heads of 128 values in groups of 8 (Flint's), the way attn_flash64_kernel goes, with a window
-// over a ring of rows and a sink a head: a launch block takes FLASH128_TOKENS tokens of a group, 64 rows of queries
+// over a ring of rows and a sink a head: a launch block takes FLASH128_TOKENS tokens of a group, 128 rows of queries
 // with a token's 8 heads side by side, a warp two tokens, and walks the keys 64 at a time.  The walk starts at a
 // multiple of 64, so a token's keys go in the same blocks whatever tokens the call has beside it: a block it attends
 // none of changes none of its sums.  The two buffers of keys and values take 68 KiB, past the 48 a block has without
 // asking: the launch asks for them (attend_batch()).
-constexpr int FLASH128_TOKENS = 8, FLASH128_KEYS = 64, FLASH128_ROW = 128 + 8;
+constexpr int FLASH128_TOKENS = 16, FLASH128_KEYS = 64, FLASH128_ROW = 128 + 8;
 constexpr int FLASH128_SMEM = 2 * 2 * FLASH128_KEYS * FLASH128_ROW * int(sizeof(half));
 
-__global__ void __launch_bounds__(4 * WARP)
+__global__ void __launch_bounds__(FLASH128_TOKENS / 2 * WARP)
 attn_flash128_kernel(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
                      float* __restrict__ out, int rows, int n_head, int kv_heads, long long pos, float scale_log2,
                      int window, int ring, const float* __restrict__ sinks) {
@@ -2491,7 +2491,7 @@ attn_flash128_kernel(const float* __restrict__ q, const half* __restrict__ kcach
     const long long hi = pos + min(t0 + FLASH128_TOKENS, rows);
     const long long lo = window > 0 ? max(0LL, pos + t0 - window + 1) : 0;
     const auto fetch = [&](int buf, long long k0) {
-        for (int i = threadIdx.x; i < KEYS * DIM / 8; i += 4 * WARP) {
+        for (int i = threadIdx.x; i < KEYS * DIM / 8; i += FLASH128_TOKENS / 2 * WARP) {
             const int r = i / (DIM / 8), c = 8 * (i % (DIM / 8));
             const long long key = k0 + r;
             const bool whole = key >= lo && key < hi;   // the others are zeros, which no weight reads
@@ -4788,7 +4788,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
     if (dim == 64 && per == 4 && window == 0 && ring == 0 && !whole && !sinks && !ml_out && kq8.codes == nullptr &&
         vq8.codes == nullptr &&
         tensor_cores()) {
-        attn_flash64_kernel<<<dim3(grid(rows, FLASH_TOKENS), kv_heads), 4 * WARP, 0, cs(stream)>>>(
+        attn_flash64_kernel<<<dim3(grid(rows, FLASH_TOKENS), kv_heads), FLASH_TOKENS / 4 * WARP, 0, cs(stream)>>>(
             q, (const half*) kcache, (const half*) vcache, out, rows, n_head, kv_heads, (long long) pos,
             scale * 1.44269504f);
         return;
@@ -4799,7 +4799,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
             cudaFuncSetAttribute(attn_flash128_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, FLASH128_SMEM);
         if (e != cudaSuccess)
             throw std::runtime_error(std::string("attend_batch: shared memory: ") + cudaGetErrorString(e));
-        attn_flash128_kernel<<<dim3(grid(rows, FLASH128_TOKENS), kv_heads), 4 * WARP, FLASH128_SMEM, cs(stream)>>>(
+        attn_flash128_kernel<<<dim3(grid(rows, FLASH128_TOKENS), kv_heads), FLASH128_TOKENS / 2 * WARP, FLASH128_SMEM, cs(stream)>>>(
             q, (const half*) kcache, (const half*) vcache, out, rows, n_head, kv_heads, (long long) pos,
             scale * 1.44269504f, window, ring, sinks);
         return;
