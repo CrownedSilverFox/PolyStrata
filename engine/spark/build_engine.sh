@@ -9,7 +9,7 @@
 #   SHAPE=q4_lite engine/spark/build_engine.sh      # the engine of a model shape (tools/packaging/shape_build.sh)
 #   STRATA_CMAKE_EXTRA="-DSTRATA_GEOMETRY_FILE=/abs/path/geometry.hpp"   more configure arguments for the engine build
 #
-# The result is the folder setup.py keeps a ready-made engine in: copy it to PolyStrata/engine on the Spark and run
+# The result is the folder setup.py keeps a ready-made engine in: copy it to PolyStrata/terminal/engine on the Spark and run
 # ./setup.sh there (docs/DGX_SPARK_LINUX.md).  tools/packaging/build_cuda_linux_aarch64.sh runs this and then makes the engine
 # package for the signed feed.  The flags are tools/packaging/build_cuda_linux.sh's (the release build), for arm64:
 # STRATA_PORTABLE makes ggml-cpu a baseline Armv8.2 build (dotprod + fp16 + i8mm, what a Grace CPU has) instead of the build
