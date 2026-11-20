@@ -3176,6 +3176,11 @@ void Engine::load(const Options& o) {
     // kOwnHeadroom for the rest of it (the process took 1.5 GB besides its pool under an 8 GiB limit), and holds no
     // more than the experts outside VRAM.  Under 8 GiB the 4 GiB left 3.6 GiB for the pool, and the experts it did not
     // hold were read from the disk: Qwen3.6 at 8 GB of VRAM wrote 70 tokens/s where 6,000 MiB wrote 91.
+    {
+        bool own = false;
+        ram_available(&own);
+        pool_uncached_ = own;   // read_file()
+    }
     if (opt_.ram_experts_mib < -1) {
         constexpr size_t kRamHeadroom = size_t(4) << 30, kOwnHeadroom = size_t(3) << 29;
         bool own = false;
@@ -3965,9 +3970,11 @@ bool Engine::read_file(uint8_t* dst, const uint8_t* src, size_t n) const {
         }
     };
     thread_local Fds mine;
-    // Under a RAM budget (pool_) the experts it leaves out are read past the file cache: their pages there took the
-    // budget's RAM a second time, and the system made room for them by dropping the pages of the ones it keeps.
-    if (pool_) {
+    // Under a RAM budget (pool_) inside a cgroup's limit, the experts it leaves out are read past the file cache: the
+    // cgroup is charged for those pages too, so they took the budget's RAM a second time, and the system made room for
+    // them by dropping the pages of the ones it keeps.  With no such limit the cache is the machine's free RAM, not
+    // this process's: the pages it has room for stay there, and a miss found there is no disk read.
+    if (pool_ && pool_uncached_) {
         thread_local Fds raw;
         auto it = raw.fd.find(v->path);
         if (it == raw.fd.end()) it = raw.fd.emplace(v->path, open_uncached(v->path.c_str())).first;
