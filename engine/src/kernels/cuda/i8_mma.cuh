@@ -48,11 +48,16 @@ __host__ __device__ constexpr bool i8m_raw_type(int t) { return i8m_raw_bytes(t)
 // Threads of a block: 512 for the widest tile, 16 warps on a multiprocessor where 8 left the products waiting on their
 // operands, but for Q4_K and Q5_K (RTX PRO 6000, 2,048 rows: Q3_K experts 620 -> 578 us, IQ4_XS 293 -> 246, Q8_0 [2048
 // -> 8192] 309 -> 297; Q4_K [2048 -> 6144] 265 -> 280, Q5_K experts 357 -> 370); 256 otherwise.
-__host__ __device__ constexpr int i8m_threads(int t, int nj) { return nj == 8 && t != 12 && t != 13 ? 512 : 256; }
+__host__ __device__ constexpr int i8m_threads(int t, int nj, int wr = 64) { return wr == 128 || (nj == 8 && t != 12 && t != 13) ? 512 : 256; }
+// Weight rows of a block: 128 for IQ3_XXS in the widest tile, each activation row it reads going into twice the
+// products (RTX PRO 6000, Qwen3.6's experts' gate|up, 2,048 rows: 472 -> 401 us); 64 otherwise (Q4_K [2048 -> 6144]
+// 253 -> 298, Q3_K experts 579 -> 711, Q8_0 [2048 -> 2048] 82 -> 106 with 128).  The block of 128 has 512 threads,
+// each warp two tiles of 16 weight rows.
+__host__ __device__ constexpr int i8m_rows(int t, int nj) { return nj == 8 && t == 18 ? 128 : 64; }
 // Tiles of 16 weight rows a warp multiplies: two for Q8_0, Q4_K and Q5_K in the widest tile (RTX PRO 6000, 2,048 rows:
 // Q4_K [2048 -> 6144] 265 -> 253 us, LFM2.5's Q4_K experts 647 -> 632, Q8_0 [2048 -> 8192] 297 -> 287), one otherwise
 // (Q3_K experts 578 -> 642, IQ3_XXS 473 -> 498, Q6_K 345 -> 363 with two).
-__host__ __device__ constexpr int i8m_tiles_a(int t, int nj) { return nj == 8 && (t == 8 || t == 12 || t == 13) ? 2 : 1; }
+__host__ __device__ constexpr int i8m_tiles_a(int t, int nj, int wr = 64) { return wr == 128 || (nj == 8 && (t == 8 || t == 12 || t == 13)) ? 2 : 1; }
 
 template <int T, int NJ, int WR, bool RAW = false>
 struct I8mSmem {
@@ -306,7 +311,7 @@ __global__ void __launch_bounds__(I8M_NT) i8m_quantize4_kernel(const float* __re
 }
 
 template <int T, int NJ, int WR, bool RAW>
-__global__ void __launch_bounds__(i8m_threads(T, NJ)) i8m_kernel(const uint8_t* __restrict__ W, size_t mat_bytes, size_t row_bytes,
+__global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8_t* __restrict__ W, size_t mat_bytes, size_t row_bytes,
                                                                   int n_out, int K,
                                                     const uint8_t* __restrict__ X, const float* __restrict__ XD,
                                                     const float* __restrict__ XS, const int32_t* __restrict__ bounds, int ch_per_e,
@@ -318,7 +323,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ)) i8m_kernel(const uint8_t* 
     // NT threads.  A warp multiplies NA tiles of 16 weight rows (two where the activation rows are many: each piece of
     // them read out of shared memory goes into two products) with NJW tiles of 8 activation rows; RG warps side by
     // side down the weight rows, CG across the activation rows.
-    constexpr int NT = i8m_threads(T, NJ), NA = i8m_tiles_a(T, NJ), RG = WR / (16 * NA), CG = NT / 32 / RG;
+    constexpr int NT = i8m_threads(T, NJ, WR), NA = i8m_tiles_a(T, NJ, WR), RG = WR / (16 * NA), CG = NT / 32 / RG;
     constexpr int NJW = 2 * NJ / CG, NX = MT * 16 / NT;
     constexpr int RT = NT / WR;   // threads of a weight row: each decodes 8 / RT of its 8 sub-blocks a stage
     constexpr bool TWO = i8m_two(T), HAS_MIN = i8_min_type(T), MIN16 = i8m_min16(T);
@@ -741,14 +746,14 @@ bool i8m_launch(int dev, dim3 grid, cudaStream_t s, const uint8_t* W, size_t mat
         cudaFuncSetAttribute(i8m_kernel<T, NJ, WR, RAW>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) bytes);
         attr[dev] = true;
     }
-    i8m_kernel<T, NJ, WR, RAW><<<grid, i8m_threads(T, NJ), bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch,
+    i8m_kernel<T, NJ, WR, RAW><<<grid, i8m_threads(T, NJ, WR), bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch,
                                                                        ids, from, Y, ldy);
     return cudaGetLastError() == cudaSuccess;
 }
 
 // 64 weight rows a block: 128 measured slower on an RTX PRO 6000 (a dense Q8_0 [2048 -> 8192] times 2,048 rows 0.61 ms
 // against 0.46, the experts no faster), so only 64 is built
-#define STRATA_I8M_TILES(X) X(1, 64) X(2, 64) X(4, 64) X(8, 64)
+#define STRATA_I8M_TILES(X) X(1, 64) X(2, 64) X(4, 64) X(8, 64) X(8, 128)
 
 template <int T>
 size_t i8m_tile_bytes(int nj, int wr, bool raw) {
@@ -765,7 +770,7 @@ bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t
                      const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int n_mats, int max_rows,
                      const int32_t* ids, const int32_t* from, float* Y, long long ldy) {
     int nj = max_rows <= 16 ? 1 : max_rows <= 32 ? 2 : max_rows <= 64 ? 4 : 8;
-    const int wr = 64;
+    const int wr = i8m_rows(T, nj) == 128 && n_out >= 128 && i8m_tile_bytes<T>(8, 128, false) <= card.shared ? 128 : 64;
     // The raw stage: whole stages, no piece before the matrices' start, rows of whole pieces for a type read so; and as
     // many blocks a multiprocessor as without it (its shared memory took Qwen3.6's experts, 64 rows of activations, from
     // two blocks to one: 6% slower).  (The blocks a multiprocessor by shared memory, 1 KB of it the system's a block.)
