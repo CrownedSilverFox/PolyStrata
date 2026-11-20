@@ -455,8 +455,13 @@ protected:
     virtual size_t card_row_bytes() const = 0;
     virtual void save_card_rows(int64_t first, int64_t n, uint8_t* dst) = 0;
     virtual void load_card_rows(const uint8_t* src, int64_t from, int64_t count, int64_t first, int64_t n) = 0;
-    /// The scratch of the architecture's own kernels, a fbuf() each.  Called twice: the first time only counts.
+    /// The scratch of the architecture's own kernels, a fbuf() each, for buf_rows_ tokens.  Called twice: the first
+    /// time only counts.  With two layouts (scratch_layouts()) it is called again at each change of layout, and must
+    /// do nothing but give the buffers their places.
     virtual void assign_scratch() = 0;
+    /// Whether assign_scratch() may be called again with other buf_rows_, so that the scratch has a layout for a
+    /// few tokens and one for a prompt's batch (use_scratch()).
+    virtual bool scratch_layouts() const { return false; }
     /// The widest input lin() gets, beside the model's width and the FFNs'.
     virtual int widest() const = 0;
     /// The copies of a token's embedding a layer's input starts from.
@@ -669,6 +674,14 @@ protected:
     bool prompt_lends_ = false, prompt_lent_ = false;
     void take_prompt();
     void lend_prompt();
+    /// The scratch in two layouts (scratch_layouts()): one for a call of fewer than kStageRows tokens, which stays,
+    /// and one for a prompt's batch, which is part of prompt_map_ and lent with it.  use_scratch(true) gives the
+    /// buffers their places in the prompt's, use_scratch(false) in the other.  Recordings are made and replayed
+    /// with the few tokens' layout only.
+    bool two_scratch_ = false, prompt_scratch_ = false;
+    float* scratch_few_ = nullptr;
+    float* scratch_batch_ = nullptr;
+    void use_scratch(bool batch);
     void fill_now();
     void widen_stage();
     void narrow_stage();
@@ -865,6 +878,7 @@ protected:
     size_t full_bytes_ = 0;
     float* scratch_ = nullptr;
     size_t scratch_at_ = 0;
+    int buf_rows_ = 1;           ///< the tokens the scratch's layout is for: rows_, or fewer (use_scratch())
     float* state_ = nullptr;     ///< every recurrent layer's state; with a draft block, hn_'s first row
     size_t state_n_ = 0, rec_n_ = 0;   ///< all of it, and the recurrent layers' part
     // The draft block reads the model's output for the token before each of its tokens.  Row 0 is the output of

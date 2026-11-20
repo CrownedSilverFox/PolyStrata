@@ -192,13 +192,18 @@ void Qwen35::alloc_caches() {
     const size_t fewest = mask_ >= 0 ? std::min(opt_.window, rows_) : 1;
     chunk_ = (int) std::clamp<size_t>(kScoreFloats / ((size_t) n_head_ * opt_.max_context), fewest, (size_t) rows_);
     if (axes_) return;   // bind(): a call's scratch is every sequence's
+#if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+    // The attention's scores, sized for the context and not for a call's tokens: apart from the scratch, so that its
+    // two layouts (scratch_layouts()) share them.  In each they were 64 MB of Qwen3.6's at 131,072 tokens.
+    score_ = (float*) dmalloc((size_t) chunk_ * n_head_ * opt_.max_context * sizeof(float), "the attention's scores");
+#endif
     axes_ = (int32_t*) dmalloc((size_t) rows_ * 3 * sizeof(int32_t), "a call's rotary positions");
     h_axes_.resize((size_t) rows_ * 3);
 }
 
-// Per-token buffers hold rows_ tokens, row after row.
+// Per-token buffers hold buf_rows_ tokens, row after row.
 void Qwen35::assign_scratch() {
-    const size_t n = (size_t) rows_, heads = n * n_head_ * head_dim_, kv = n * n_kv_ * head_dim_;
+    const size_t n = (size_t) buf_rows_, heads = n * n_head_ * head_dim_, kv = n * n_kv_ * head_dim_;
     // Recurrent and full-attention layers consume these temporary families in
     // separate phases on the same compute stream. Keep members within a family
     // disjoint, and keep score_/q8w_/persistent state outside this arena.
@@ -213,7 +218,7 @@ void Qwen35::assign_scratch() {
             n * conv_dim_, n * conv_dim_, n * d_inner_, n * v_heads_, n * v_heads_, n * d_inner_};
         const std::array<size_t, 7> attention = {
             2 * heads, heads, kv, kv, kv, heads,
-            rows_ >= kStageRows ? heads + heads / 2 + 1 + 3 * n * n_head_ : 0};
+            buf_rows_ >= kStageRows ? heads + heads / 2 + 1 + 3 * n * n_head_ : 0};
         const auto layout = poly_scratch::plan(recurrent, attention);
         float* arena = fbuf(layout.total);
         auto at = [&](size_t offset) { return arena != nullptr ? arena + offset : nullptr; };
@@ -229,7 +234,7 @@ void Qwen35::assign_scratch() {
         k_ = at(layout.b[3]);
         v_ = at(layout.b[4]);
         att_ = at(layout.b[5]);
-        if (rows_ >= kStageRows) awork_ = at(layout.b[6]);
+        if (buf_rows_ >= kStageRows) awork_ = at(layout.b[6]);
     } else {
         proj_ = fbuf(n * conv_dim_);
         qkv_ = fbuf(n * conv_dim_);
@@ -249,9 +254,11 @@ void Qwen35::assign_scratch() {
     if (!opt_.metal_balanced)
 #endif
     {
-        score_ = fbuf((size_t) chunk_ * n_head_ * opt_.max_context);
-        if (!scratch_alias && rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
-        if (rows_ >= kStageRows && opt_.kv_format == KvFmt::kQ8_0) {
+#if defined(STRATA_GPU_METAL) || defined(STRATA_USE_HIP)
+        score_ = fbuf((size_t) chunk_ * n_head_ * opt_.max_context);   // else alloc_caches()'s
+#endif
+        if (!scratch_alias && buf_rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
+        if (buf_rows_ >= kStageRows && opt_.kv_format == KvFmt::kQ8_0) {
             // the K and V blocks a q8 prompt batch dequantizes, side by side; work_halves_ halves each
             work_halves_ = kQ8WorkRows * (size_t) n_kv_ * head_dim_;
             q8w_ = fbuf((2 * work_halves_ + 1) / 2);
@@ -278,8 +285,8 @@ void Qwen35::assign_scratch() {
     // read 8,210 tokens/s instead of 5,837; the answers part from the old path's at near-ties.  A card it does not fit
     // keeps the old path without a word, unless STRATA_FATTN=1 asked for it.
     const char* fa = std::getenv("STRATA_FATTN");
-    if (rows_ >= kStageRows && !(fa && std::atoi(fa) == 0) && !fattn_) {   // assign_scratch() runs twice: say it once
-        fattn_ = fattn_fits(head_dim_, n_head_, n_kv_, rows_, (size_t) chunk_ * n_head_ * opt_.max_context);
+    if (buf_rows_ >= kStageRows && !(fa && std::atoi(fa) == 0) && !fattn_) {   // assign_scratch() runs twice: say it once
+        fattn_ = fattn_fits(head_dim_, n_head_, n_kv_, buf_rows_, (size_t) chunk_ * n_head_ * opt_.max_context);
         if (fattn_ || (fa && std::atoi(fa) == 1))
             std::fprintf(stderr, "strata-poly: STRATA_FATTN: prompt attention %s\n",
                          fattn_ ? "through llama.cpp's flash-attention kernel (STRATA_FATTN=0 turns it off)"

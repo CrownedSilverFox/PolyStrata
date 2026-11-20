@@ -2278,7 +2278,10 @@ bool Engine::mind_card_vram() {
 // A call of kStageRows rows or more needs the buffers lend_prompt() gave the expert cache: it takes the VRAM back,
 // the cache's least used experts first, and maps them again.
 void Engine::take_prompt() {
-    if (!prompt_lent_) return;
+    if (!prompt_lent_) {
+        if (two_scratch_ && !prompt_scratch_) use_scratch(true);
+        return;
+    }
     if (up_) ck(cudaStreamSynchronize(cs(up_)), "a prompt's buffers");
     ck(cudaStreamSynchronize(cs(st_)), "a prompt's buffers");
     const size_t want = up_to(prompt_bytes_, pool_on_ ? pg_ : grain_);
@@ -2290,10 +2293,13 @@ void Engine::take_prompt() {
     if (!pool_on_) budget_ -= std::min(budget_, want);
     vmm_map(prompt_map_, prompt_bytes_, SIZE_MAX, "a prompt's buffers");
     prompt_lent_ = false;
+    if (two_scratch_) use_scratch(true);
 }
 
-// Between prompts, the expert cache has the VRAM of the buffers only a prompt's calls use (alloc()).
+// Between prompts, the expert cache has the VRAM of the buffers only a prompt's calls use (alloc()), the scratch's
+// layout for a prompt's batch among them: a call of a few tokens has its own.
 void Engine::lend_prompt() {
+    if (two_scratch_ && prompt_scratch_) use_scratch(false);
     if (prompt_lent_ || !prompt_lends_ || freeze_experts_ || !exp_ || all_cached()) return;
     ck(cudaStreamSynchronize(cs(st_)), "a prompt's buffers");
     vmm_unmap(prompt_map_, 0);
@@ -3213,12 +3219,12 @@ void Engine::load_drafter() {
                   : out_norm_;
 }
 
-// Per-token buffers hold rows_ tokens, row after row.
+// Per-token buffers hold buf_rows_ tokens, row after row.
 void Engine::shared_scratch() {
-    const size_t n = (size_t) rows_, e = n * n_embd_;
+    const size_t n = (size_t) buf_rows_, e = n * n_embd_;
     const size_t ff = n * std::max({n_ff_, n_ff_shexp_, 2 * n_ff_exp_});
     // the draft block works in it too (draft_input()); read() keeps two calls' rows in it
-    r_ = fbuf(std::max(streams(), draft_ ? 3 : 1) * (size_t) (read_rows_ > rows_ ? 2 : 1) * rows_ * n_embd_);
+    r_ = fbuf(std::max(streams(), draft_ ? 3 : 1) * (size_t) (read_rows_ > rows_ ? 2 : 1) * n * n_embd_);
     cur_ = fbuf(e);
     xn_ = fbuf(e);
     ao_ = fbuf(e);
@@ -3229,7 +3235,16 @@ void Engine::shared_scratch() {
     d_ = fbuf((size_t) card_rows() * n_embd_);   // the routed experts of a few tokens, until they are added up
     rl_ = fbuf(n * n_expert_);
     logits_ = fbuf((size_t) n_vocab_);
-    if (rows_ >= kStageRows && bf16_max_ > 0) wf_ = fbuf(bf16_max_);   // a BF16 matrix as floats, for lin()
+    if (buf_rows_ >= kStageRows && bf16_max_ > 0) wf_ = fbuf(bf16_max_);   // a BF16 matrix as floats, for lin()
+}
+
+void Engine::use_scratch(bool batch) {
+    scratch_ = batch ? scratch_batch_ : scratch_few_;
+    buf_rows_ = batch ? rows_ : kStageRows - 1;
+    scratch_at_ = 0;
+    shared_scratch();
+    assign_scratch();
+    prompt_scratch_ = batch;
 }
 
 // The sequence's state, the caches and every buffer, once the weights are known.
@@ -3301,12 +3316,28 @@ void Engine::alloc() {
     }
     if (tiles) mmq_ = std::make_unique<Mmq>();
 
+    buf_rows_ = rows_;
     shared_scratch();   // the first pass only counts
     assign_scratch();
-    scratch_ = (float*) dmalloc(scratch_at_ * sizeof(float), "scratch");
-    scratch_at_ = 0;
-    shared_scratch();
-    assign_scratch();
+    const size_t batch_floats = scratch_at_;
+    // The scratch in two layouts where the prompt's buffers are lent (below) and the architecture can: the one for
+    // a prompt's batch is lent with them, and a call of a few tokens has a layout of its own.  At a prompt batch of
+    // 2,048 Qwen3.6's scratch is 450 MB, of which the few tokens' layout keeps some 70 (the attention's scores).
+    const int most_step = (opt_.batch + 1) * (opt_.batch_mtp ? 2 : 1);
+    two_scratch_ = scratch_layouts() && mmq_ && vmm_ && !split_ && rows_ >= kStageRows &&
+                   std::max(opt_.window, most_step) < kStageRows;
+    if (two_scratch_) {
+        buf_rows_ = kStageRows - 1;
+        scratch_at_ = 0;
+        shared_scratch();   // counts the few tokens' layout
+        assign_scratch();
+        scratch_few_ = (float*) dmalloc(scratch_at_ * sizeof(float), "scratch");
+    } else {
+        scratch_ = (float*) dmalloc(batch_floats * sizeof(float), "scratch");
+        scratch_at_ = 0;
+        shared_scratch();
+        assign_scratch();
+    }
 
     const int q_max = std::max({n_embd_, n_ff_, n_ff_exp_, n_ff_shexp_, widest(), 256});
     xq_ = dmalloc(n * kernels::native_q8_1_bytes(n_embd_), "scratch");
@@ -3331,13 +3362,13 @@ void Engine::alloc() {
         const size_t sizes[] = {rr * 2 * n_ff_exp_ * sizeof(float), rr * n_ff_exp_ * sizeof(float),
                                 rr * n_embd_ * sizeof(float), rr * sizeof(float),
                                 Mmq::q8_bytes((int64_t) rr, n_embd_), Mmq::q8_bytes((int64_t) rr, n_ff_exp_),
-                                mixed_tiles ? Mmq::q8_bytes((int64_t) rr, n_embd_) : 0, Mmq::q8_bytes(rows_, q_max)};
-        size_t at[8], total = 0;
-        for (int i = 0; i < 8; ++i) {
+                                mixed_tiles ? Mmq::q8_bytes((int64_t) rr, n_embd_) : 0, Mmq::q8_bytes(rows_, q_max),
+                                two_scratch_ ? batch_floats * sizeof(float) : 0};
+        size_t at[9], total = 0;
+        for (int i = 0; i < 9; ++i) {
             at[i] = total;
             total += (sizes[i] + 255) / 256 * 256;
         }
-        const int most_step = (opt_.batch + 1) * (opt_.batch_mtp ? 2 : 1);
         prompt_lends_ = vmm_ && !split_ && std::max(opt_.window, most_step) < kStageRows;
         uint8_t* base = nullptr;
         if (prompt_lends_) {
@@ -3356,6 +3387,10 @@ void Engine::alloc() {
         mq2_ = base + at[5];
         if (mixed_tiles) mqu_ = base + at[6];
         mqx_ = base + at[7];
+        if (two_scratch_) {
+            scratch_batch_ = (float*) (base + at[8]);
+            use_scratch(false);
+        }
         d_ids_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         d_wts_ = (float*) dmalloc(rr * sizeof(float), "scratch");
         h_ids_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");
@@ -5657,7 +5692,9 @@ void Engine::run(const int32_t* tokens, int n) {
     // What a launch needs of the position it reads at at_; an attention over the rows so far is recorded again
     // when the rows outgrow what it was sized for (head_key()).  A prompt's few tokens are not a window: they
     // leave no snapshots of the recurrent state, so their launches are others.
-    bool replay = opt_.graphs && n <= opt_.window && (windowed_ || block_pass_ || n == 1) && !opt_.dump;
+    // (never with the scratch in a prompt batch's layout: the recordings hold the few tokens' buffers)
+    bool replay = opt_.graphs && n <= opt_.window && (windowed_ || block_pass_ || n == 1) && !opt_.dump &&
+                  !prompt_scratch_;
     for (int t = 0; t < n && replay; ++t) replay = !image_at(pos_ + t);
     const auto replayed = [&](std::vector<void*>& made, size_t key, auto&& work) {
         if (made.size() <= key) made.resize(key + 1, nullptr);
@@ -5895,7 +5932,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
     copy2(h_at_, at_, R * 2 * (int) (sizeof(long long) / 4), nullptr, nullptr, 0, st_);
 
     const size_t wn = (size_t) opt_.window, recs = 3 * wn + (size_t) opt_.batch + 1, rec = (size_t) R - 1;
-    const bool replay = opt_.graphs && !opt_.dump;
+    const bool replay = opt_.graphs && !opt_.dump && !prompt_scratch_;
     const auto replayed = [&](std::vector<void*>& made, size_t key, auto&& work) {
         if (made.size() <= key) made.resize(key + 1, nullptr);
         if (!made[key]) made[key] = record(work);
@@ -6311,7 +6348,7 @@ void Engine::eval(const int32_t* tokens, int n, bool want_logits) {
     }
     // The model's output: the last token's for the logits, and every token's for the draft block.
     if (want_logits || draft_) {
-        const bool replay = opt_.graphs && n == 1 && want_logits && !opt_.dump;
+        const bool replay = opt_.graphs && n == 1 && want_logits && !opt_.dump && !prompt_scratch_;
         const int m = draft_ ? n : 1;
         float* h = draft_ ? hn_ + n_embd_ : xn_;
         const auto tail = [&] {
