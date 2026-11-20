@@ -35,6 +35,7 @@ KEEP = "|".join((
     r"(?:Niko1221|eddoursul)/Strata",                   # their repositories, in an address or by name
     r"[Tt]he\s+Strata project|Strata 项目|Strata maintainers",
     r"Strata-Paper",                                    # the paper's file
+    r"Strata-(?=\S*?(?:windows-x64-setup|linux-x86_64\\?\.AppImage|macos-arm64))",   # the Strata app's installers (docs/data/release.json)
     r"Strata\.Example",                                 # a host name a test spells in capitals
     r"class Strata\b|: Strata(?=[,)])|\bStrata\(|(?<=\w)\.Strata\b",   # the MCP server's class
     r"needs a newer Strata engine: update Strata to use it",   # the update feed's words (terminal/strata_control, not renamed)
