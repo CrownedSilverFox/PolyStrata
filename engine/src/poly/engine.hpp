@@ -92,8 +92,9 @@ struct Options {
                                   ///< to the file cache, which gives them to whatever needs the memory, and come back
                                   ///< from it or the disk when a token routes to them.  -1: all of them; below
                                   ///< that, all of them when they fit in the RAM that is free, else a budget
-    bool lock_experts = false;    ///< the experts outside VRAM locked into RAM, so the system cannot drop them from
-                                  ///< the file cache when another program wants the memory (Linux: up to ulimit -l)
+    bool lock_experts = false;    ///< the experts outside VRAM kept in RAM, so the system cannot give it to another
+                                  ///< program: copied into the pinned mirror (Engine::build_mirror()), or where there
+                                  ///< is none, their pages in the file locked (Linux: up to ulimit -l)
     bool stay_near = true;       ///< with several NUMA nodes, keep the CPU threads on the one that holds the experts
     bool graphs = true;           ///< a token's fixed launches are recorded once, a CUDA graph a layer, and replayed
     bool kv_grow = true;          ///< the attention caches get VRAM as the sequence grows, where the card can map it
@@ -628,6 +629,12 @@ protected:
         return mirror_of_.empty() ? nullptr : mirror_of_[(size_t) il * (size_t) n_expert_ + (size_t) e];
     }
     uint8_t* mirror_take(int il);             ///< a spare slot of the layer's size, or null
+    bool mirror_grow(int c);                  ///< Options::lock_experts: more spare slots of trade class c
+    /// Options::lock_experts: an expert grow_cache() brings back keeps its copy in the mirror.  Those are mostly the
+    /// experts the next long read takes from the cache again (widen_stage(), take_prompt()), which then go with no copy
+    /// back from the card: given back, the copies held every 4,833-token read of Qwen3.6 UD-Q3_K_M on a 4090 2-3%
+    /// under the default's.
+    bool refills_mirror() const { return opt_.lock_experts; }
     void mirror_give(int il, int e);          ///< the expert is on the card: its slot is a spare again
     void mirror_keep(int il, int e, const uint8_t* vram);   ///< the expert leaves the card: its slot copied back
     GatherPiece* gather_slot();
@@ -746,6 +753,10 @@ protected:
     std::vector<MirrorPiece> mirror_blocks_;        ///< the mirror's pinned memory
     std::vector<uint8_t*> mirror_of_;               ///< per (layer, expert): its slot in the mirror, or null
     std::vector<std::vector<uint8_t*>> mirror_spare_;   ///< per trade class: free slots
+    std::vector<size_t> mirror_stride_;             ///< per trade class: a slot's bytes
+    bool mirror_registered_ = false;                ///< the pieces are cudaHostRegister()'s, not cudaMallocHost()'s
+    size_t mirror_grown_ = 0;                       ///< bytes mirror_grow() added
+    bool mirror_grow_failed_ = false;
     GatherPiece* gather_ring_ = nullptr;            ///< pinned piece lists of the gathers, taking turns
     void* gather_ev_[8] = {};                       ///< per list: marks the card's read of it
     int gather_at_ = 0;
@@ -768,8 +779,8 @@ protected:
     int ahead_turn_ = 0, ahead_slots_ = 0;
     size_t ahead_stride_ = 0;
     std::atomic<bool> map_quit_{false};
-    /// Options::lock_experts: the experts whose pages are locked (layer * n_expert + expert), first by mapper_, then
-    /// by relock() between requests once mapper_ is done (locks_ready_)
+    /// Options::lock_experts without the mirror: the experts whose pages are locked (layer * n_expert + expert), first
+    /// by mapper_, then by relock() between requests once mapper_ is done (locks_ready_)
     std::vector<uint8_t> locked_;
     std::atomic<bool> locks_ready_{false};
     void lock_outside(const std::vector<std::pair<int, int>>& outside);

@@ -374,7 +374,25 @@ bool lock_pages(const uint8_t* p, size_t n, bool lock) {
 #endif
 }
 
+// `ulimit -l` as the shell prints it (KiB) for the --lock-experts lines: "" where there is none, or no limit.
+std::string memlock_kib() {
+#ifdef _WIN32
+    return {};
+#else
+    rlimit r{};
+    if (getrlimit(RLIMIT_MEMLOCK, &r) != 0 || r.rlim_cur == RLIM_INFINITY) return {};
+    return std::to_string((unsigned long long) (r.rlim_cur >> 10));
+#endif
+}
+
 #if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+// The mirror's lock line: the NVIDIA driver pins past RLIMIT_MEMLOCK (under `ulimit -l 8192` it pinned 3.3 GiB of
+// Qwen3.6's experts, driver 580 on Linux).
+std::string memlock_note() {
+    const std::string kib = memlock_kib();
+    return kib.empty() ? std::string() : "; `ulimit -l` (" + kib + " here) does not limit it";
+}
+
 // Host memory for the pinned mirror, aligned to 2 MiB.  Not asked for in huge pages (MADV_HUGEPAGE): on
 // lab-pro6000, whose memory others had fragmented, the kernel compacted memory for each fault, the mirror took
 // minutes and an answer meanwhile came at 4 tokens/s.
@@ -2453,6 +2471,7 @@ size_t Engine::other_rows() const {
 // fill_expert_cache() chooses), side by side by layer.  VRAM the card does not give is not an error: the cache
 // keeps what was mapped.  Returns the experts it took.  `later`: the follower uploads them while the answer is
 // written (follow()), in place of a wait here: 57 ms for the 148 experts Gemma 4 lent a read's staging buffer.
+// Options::lock_experts: an expert that comes back this way keeps its slot in the mirror (refills_mirror()).
 int Engine::grow_cache(size_t bytes, bool later) {
     if (!vmm_ || !exp_) return 0;
     // As shrink_cache(): a frozen answer's cache does not change under it.
@@ -2507,7 +2526,7 @@ int Engine::grow_cache(size_t bytes, bool later) {
         const size_t e = (size_t) c.e;
         if (const uint8_t* m = mirror(c.il, c.e)) {
             h2d(s, m, L.gu2() + L.d_bytes);
-            mirror_give(c.il, c.e);
+            if (!refills_mirror()) mirror_give(c.il, c.e);
         } else {
             h2d(s, L.exp_gate + e * L.gu_stride, L.gu_bytes);
             h2d(s + L.gu_bytes, L.exp_up + e * L.u_stride, L.u_bytes);
@@ -2529,7 +2548,7 @@ void Engine::fill_now() {
         const size_t e = (size_t) r.e;
         if (const uint8_t* m = mirror(r.il, r.e)) {
             h2d(r.slot, m, L.gu2() + L.d_bytes);
-            mirror_give(r.il, r.e);
+            if (!refills_mirror()) mirror_give(r.il, r.e);
         } else {
             h2d(r.slot, L.exp_gate + e * L.gu_stride, L.gu_bytes);
             h2d(r.slot + L.gu_bytes, L.exp_up + e * L.u_stride, L.u_bytes);
@@ -2678,7 +2697,7 @@ void Engine::follow(int written) {
             ck(arrived, "expert upload");
             layers_[(size_t) s.il].slot[(size_t) s.e] = s.slot;
             coming_[(size_t) s.il * ne + (size_t) s.e] = 0;
-            if (s.mirror) mirror_give(s.il, s.e);
+            if (s.mirror && !(s.adds && refills_mirror())) mirror_give(s.il, s.e);
             if (s.spare) mirror_of_[(size_t) s.out] = s.spare;
             s.mirror = nullptr;
             s.spare = nullptr;
@@ -3220,7 +3239,7 @@ void Engine::load(const Options& o) {
     reset();
     build_mirror();
     std::vector<std::pair<int, int>> outside;
-    if (opt_.lock_experts) {
+    if (opt_.lock_experts && mirror_of_.empty()) {   // the mirror's pages are pinned already
         locked_.assign(layers_.size() * (size_t) n_expert_, 0);
         for (size_t il = 0; il < layers_.size(); ++il)
             for (int e = 0; layers_[il].moe && e < n_expert_; ++e)
@@ -3712,19 +3731,18 @@ void Engine::lock_outside(const std::vector<std::pair<int, int>>& outside) {
                      want * gib);
     } else {
 #ifdef _WIN32
-        char why[64];
-        std::snprintf(why, sizeof why, "VirtualLock refused the rest (error %lu)", GetLastError());
+        const unsigned long err = GetLastError();
+        const std::string why = "VirtualLock refused the rest (error " + std::to_string(err) + ")";
 #else
-        char why[96];
-        rlimit r{};
-        if (getrlimit(RLIMIT_MEMLOCK, &r) == 0 && r.rlim_cur != RLIM_INFINITY)
-            std::snprintf(why, sizeof why, "mlock refused the rest: ulimit -l is %llu MiB",
-                          (unsigned long long) (r.rlim_cur >> 20));
-        else
-            std::snprintf(why, sizeof why, "mlock refused the rest");
+        const std::string kib = memlock_kib();
+        const std::string why = kib.empty() ? std::string("mlock refused the rest")
+                                            : "mlock refused the rest: `ulimit -l` is " + kib +
+                                                  " (KiB); raise it before strata-poly starts, with `ulimit -l "
+                                                  "unlimited` where `ulimit -Hl` allows it, else a memlock line in "
+                                                  "/etc/security/limits.conf";
 #endif
         std::fprintf(stderr, "strata-poly: --lock-experts locked %.1f of the %.1f GiB of experts outside VRAM; %s, "
-                             "so they stay in the file cache\n", got * gib, want * gib, why);
+                             "so the rest stays in the file cache\n", got * gib, want * gib, why.c_str());
     }
     locks_ready_.store(true, std::memory_order_release);
 }
@@ -5095,6 +5113,12 @@ GatherPiece* Engine::gather_slot() {
 // An expert that leaves the card (shrink_cache(), a swap's outgoing one) is copied back into a spare slot, so that it
 // needs no read of the file; one that comes onto it gives its slot back.  64 spares, for the swaps; one a wider
 // staging buffer takes from the cache goes back to the mapping.  STRATA_POLY_MIRROR=0 makes none.
+//
+// Options::lock_experts takes the mirror as its copy of the experts outside VRAM: pinned pages are never paged out
+// or dropped, and the NVIDIA driver pins them past RLIMIT_MEMLOCK, which is 8 MiB on many Linux desktops and kept
+// mlock() of the mapping (lock_outside()) from holding anything there (issue #79).  An expert that leaves the card
+// with no spare left gets one (mirror_grow()), so it stays in RAM too.  Where there is no mirror, the mapping's pages
+// are locked as before.
 void Engine::build_mirror() {
 #if defined(STRATA_GPU_METAL) || defined(STRATA_USE_HIP)
     return;
@@ -5102,9 +5126,13 @@ void Engine::build_mirror() {
     const char* asked = std::getenv("STRATA_POLY_MIRROR");
     int unified = 0;   // the card reads host memory at the host's addresses (the gather)
     cudaDeviceGetAttribute(&unified, cudaDevAttrUnifiedAddressing, device_);
-    if ((asked && asked[0] == '0') || !unified || opt_.ram_experts_mib != -1 || pool_ || opt_.lock_experts || !mmq_ ||
-        !stage_ || all_cached() || split_ || n_trade_ < 1)
+    if ((asked && asked[0] == '0') || !unified || opt_.ram_experts_mib != -1 || pool_ || !mmq_ || !stage_ ||
+        all_cached() || split_ || n_trade_ < 1) {
+        if (opt_.lock_experts && !all_cached())
+            std::fprintf(stderr, "strata-poly: --lock-experts: no pinned copy of the experts outside VRAM in this setup, "
+                                 "so their pages in the model file are locked\n");
         return;
+    }
     const size_t ne = (size_t) n_expert_;
     struct Want {
         int il, e;
@@ -5135,8 +5163,9 @@ void Engine::build_mirror() {
     const size_t avail = ram_available();
     if (!avail || total + kHeadroom > avail) {
         std::fprintf(stderr, "strata-poly: %.1f GiB of RAM available for a %.1f GiB pinned copy of the experts outside VRAM: "
-                             "prompts are staged from the mapped files\n",
-                     (double) avail / (1 << 30), (double) total / (1 << 30));
+                             "prompts are staged from the mapped files%s\n",
+                     (double) avail / (1 << 30), (double) total / (1 << 30),
+                     opt_.lock_experts ? ", and --lock-experts locks their pages in the model file" : "");
         return;
     }
     // the copies are read from the files (read_file()), through the file cache: through the mapping every page of
@@ -5200,7 +5229,8 @@ void Engine::build_mirror() {
     if (failed.load()) {
         cudaGetLastError();
         free_pieces(got);
-        std::fprintf(stderr, "strata-poly: no pinned copy of the experts outside VRAM: no memory for it\n");
+        std::fprintf(stderr, "strata-poly: no pinned copy of the experts outside VRAM: no memory for it%s\n",
+                     opt_.lock_experts ? ", so --lock-experts locks their pages in the model file" : "");
         return;
     }
     std::vector<uint8_t*> table(layers_.size() * ne, nullptr);
@@ -5224,8 +5254,14 @@ void Engine::build_mirror() {
     mirror_blocks_ = std::move(got);
     mirror_of_ = std::move(table);
     mirror_spare_ = std::move(spare);
+    mirror_stride_ = std::move(stride);
+    mirror_registered_ = same != 0;
     std::fprintf(stderr, "strata-poly: the %zu experts outside VRAM in %.1f GiB of pinned memory in %.1f s\n", n,
                  (double) total / (1 << 30), ms_since(t0) / 1000.0);
+    if (opt_.lock_experts)
+        std::fprintf(stderr, "strata-poly: --lock-experts: copied the %zu experts outside VRAM into %.1f GiB of RAM and "
+                             "locked all of it: pinned for the card, which the system does not page out%s\n",
+                     n, (double) total / (1 << 30), memlock_note().c_str());
 
     // card_far_: where the cached experts are the ones of nearly every pick the profile counted, an answer's few
     // tokens route on the card as with every expert cached, and the card copies the rest from the mirror itself:
@@ -5278,10 +5314,50 @@ void Engine::build_mirror() {
 
 uint8_t* Engine::mirror_take(int il) {
     const int c = layers_[(size_t) il].trade;
-    if (mirror_spare_.empty() || c < 0 || mirror_spare_[(size_t) c].empty()) return nullptr;
+    if (mirror_spare_.empty() || c < 0) return nullptr;
+    if (mirror_spare_[(size_t) c].empty() && !(opt_.lock_experts && mirror_grow(c))) return nullptr;
     uint8_t* s = mirror_spare_[(size_t) c].back();
     mirror_spare_[(size_t) c].pop_back();
     return s;
+}
+
+// Options::lock_experts: class c has no spare left for an expert that leaves the card, so the mirror takes a piece of
+// 256 MiB more slots, pinned as its own pieces are.  Then the expert stays in RAM, where without the option it goes
+// back to the mapping.  The slots stay the mirror's.  (Qwen3.6 UD-Q3_K_M on a 4090 held to 12 GiB: 1 GiB more over
+// the first two reads of a 4,833-token prompt, then none; those reads were 5-20% slower than the default's, the ones
+// after as fast.)
+bool Engine::mirror_grow(int c) {
+#if defined(STRATA_GPU_METAL) || defined(STRATA_USE_HIP)
+    (void) c;
+    return false;
+#else
+    if (mirror_grow_failed_) return false;
+    const size_t stride = mirror_stride_[(size_t) c];
+    const size_t n = std::max<size_t>(1, (size_t(256) << 20) / stride);
+    MirrorPiece m{nullptr, n * stride, mirror_registered_};
+    if (m.registered) {
+        m.base = host_alloc(m.bytes);
+        if (m.base && cudaHostRegister(m.base, m.bytes, cudaHostRegisterPortable | cudaHostRegisterMapped) != cudaSuccess) {
+            host_free(m.base);
+            m.base = nullptr;
+        }
+    } else if (cudaMallocHost((void**) &m.base, m.bytes) != cudaSuccess) {
+        m.base = nullptr;
+    }
+    if (!m.base) {
+        cudaGetLastError();
+        std::fprintf(stderr, "strata-poly: --lock-experts: no more pinned memory for the experts that leave VRAM: "
+                             "they go back to the model file\n");
+        mirror_grow_failed_ = true;
+        return false;
+    }
+    mirror_blocks_.push_back(m);
+    for (size_t i = 0; i < n; ++i) mirror_spare_[(size_t) c].push_back(m.base + i * stride);
+    mirror_grown_ += m.bytes;
+    std::fprintf(stderr, "strata-poly: --lock-experts: %.0f MiB more of locked RAM for experts that left VRAM (%.1f GiB "
+                         "more in all)\n", (double) m.bytes / (1 << 20), (double) mirror_grown_ / (1 << 30));
+    return true;
+#endif
 }
 
 void Engine::mirror_give(int il, int e) {
