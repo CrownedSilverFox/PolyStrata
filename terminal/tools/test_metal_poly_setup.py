@@ -34,6 +34,9 @@ def header(draft=True):
 
 
 class Options(unittest.TestCase):
+    def setUp(self):
+        H.no_feed(self)               # the installer runs below call test_setup_mac's tests directly, without their setUp
+
     def test_defaults_enable_optimization_and_balanced_memory(self):
         a = args('--family', 'tiel')
         self.assertFalse(P.requested(a))
