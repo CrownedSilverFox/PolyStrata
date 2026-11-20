@@ -25,7 +25,8 @@ SKIP = ("engine/src/", "engine/include/", "engine/tests/", "engine/cmake/", "eng
         "app/", "terminal/strata_cli/", "terminal/strata_control/", "terminal/tests/", "terminal/tools/gen_quant_header.py",
         "tools/packaging/", "tools/research/", "tools/nix/", "tools/layout/", "tools/check/",
         "docs/paper/", "docs/bench-results/", "docs/history/", "docs/release-notes-", "docs/COMMUNITY_BENCHMARKS.md",
-        "docs/FAQ.md")
+        "docs/FAQ.md",
+        "terminal/serve/web/components.css")    # the app's own file, copied byte for byte (app/host/tests/kit-copy.test.mjs)
 KINDS = (".md", ".py", ".html", ".js", ".css", ".bat", ".sh", ".yml", ".yaml")
 NAMES = ("Dockerfile",)
 CATALOGS = "terminal/serve/web/locales/"                # the web page's text in each language (.json)
