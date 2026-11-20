@@ -1857,9 +1857,10 @@ attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_
         ml_out[2 * out_row + 1] = sum;
     }
     float* y = out + out_row * DIM;
-    const float inv = sum > 0.0f ? 1.0f / sum : 0.0f;
+    // a streamed piece's token may attend none of its rows (sum 0); every other token divides as before, so the
+    // bits of a call that is not streamed stay what they were
 #pragma unroll
-    for (int u = 0; u < VALS; ++u) y[VALS * lane + u] = s[u] * inv;
+    for (int u = 0; u < VALS; ++u) y[VALS * lane + u] = sum > 0.0f ? s[u] / sum : 0.0f;
 }
 
 // attn_value_kernel with the weights as attn_softmax_kernel leaves them with `wt`: a row's queries side by side,
