@@ -356,6 +356,22 @@ void flush(StreamImpl* s) {
 Error wait_value(const std::shared_ptr<Completion>& state, uint64_t v) {
     ++rt().stats.host_syncs;
     if (!state || !v) return rt().failed.load() ? fail(kErrorLaunchFailure) : kSuccess;
+    // The timeline is the GPU's own count, there as soon as the work is: read it a while before sleeping on the
+    // completion handler, which Metal runs on a thread of its own after the buffer completes and which then wakes this
+    // one.  A partly cached answer waits so for its router every layer.
+    if (state->timeline) {
+        const auto t0 = std::chrono::steady_clock::now();
+        while (state->timeline->signaledValue() < v && !rt().failed.load() &&
+               std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(2)) {
+#if defined(__aarch64__)
+            __asm__ __volatile__("yield");
+#endif
+        }
+        if (state->timeline->signaledValue() >= v) {
+            std::lock_guard<std::mutex> lock(state->mu);
+            return state->failed || rt().failed.load() ? fail(kErrorLaunchFailure) : kSuccess;
+        }
+    }
     std::unique_lock<std::mutex> lock(state->mu);
     // Notification handles normal completion. Poll only to notice a failure on a
     // different queue whose event this queue may be waiting for.
