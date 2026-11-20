@@ -430,6 +430,163 @@ void fa_wmma_launch(int bk, dim3 grid, const __half* q, const __half* k, const _
     if (bk == 64) k_attn_fa_wmma<HDP, 64><<<grid, 32 * kFaWarps, fa_wmma_smem<HDP, 64>()>>>(q, k, v, out, N, D, hd);
     else k_attn_fa_wmma<HDP, 32><<<grid, 32 * kFaWarps, fa_wmma_smem<HDP, 32>()>>>(q, k, v, out, N, D, hd);
 }
+
+// The same attention for compute capability 8.0 and newer with mma.sync (m16n8k16, F16 in, float32 sums) and every running value in registers: a
+// warp's scores, its 16 context rows and its softmax state never go through shared memory, and the scores' accumulators are the probabilities' A
+// operand as they are (the C layout of two neighbouring 8-key tiles is the A layout of one 16-key step).  Same numbers as k_attn_fa_wmma: float32
+// scores and sums, F16 probabilities.  Shared memory is a 64-key tile of k and one of v (the query tile goes through the k buffer first), rows of
+// HDP + 8 values, under the 48 KiB every card gives without asking.
+__device__ __forceinline__ void fa_ldsm_x4(uint32_t (&r)[4], const void* p) {
+    const uint32_t a = (uint32_t) __cvta_generic_to_shared(p);
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+}
+__device__ __forceinline__ void fa_ldsm_x2(uint32_t (&r)[2], const void* p) {
+    const uint32_t a = (uint32_t) __cvta_generic_to_shared(p);
+    asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];\n" : "=r"(r[0]), "=r"(r[1]) : "r"(a));
+}
+__device__ __forceinline__ void fa_ldsm_x4_t(uint32_t (&r)[4], const void* p) {
+    const uint32_t a = (uint32_t) __cvta_generic_to_shared(p);
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+}
+__device__ __forceinline__ void fa_mma(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
+    asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
+                 : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
+                 : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
+}
+__device__ __forceinline__ uint32_t fa_pack(float x, float y) {
+    const __half2 h = __floats2half2_rn(x, y);
+    return *(const uint32_t*) &h;
+}
+
+constexpr int kFaMmaBK = 64;
+
+template <int HDP>
+constexpr size_t fa_mma_smem() {
+    return (size_t) 2 * kFaMmaBK * (HDP + 8) * 2;
+}
+
+template <int HDP>
+__global__ void __launch_bounds__(32 * kFaWarps) k_attn_fa_mma(const __half* __restrict__ q, const __half* __restrict__ k, const __half* __restrict__ v,
+                                                                float* __restrict__ out, int N, int D, int hd) {
+#if __CUDA_ARCH__ >= 800
+    constexpr int BK = kFaMmaBK, HDS = HDP + 8, PIECES = HDS / 8, KS = HDP / 16, NT = HDP / 8;
+    static_assert(kFaBQ == BK, "the query tile goes through the key buffer");
+    extern __shared__ __align__(16) unsigned char fa_sm[];
+    __half* Ks = (__half*) fa_sm;     // [BK][HDS]: the query tile first
+    __half* Vs = Ks + BK * HDS;       // [BK][HDS]
+    const int warp = threadIdx.x / 32, lane = threadIdx.x % 32, g = lane / 4, t4 = lane % 4, h = blockIdx.y, q0 = blockIdx.x * kFaBQ, vec = hd / 8;
+    const uint4 zero4 = make_uint4(0u, 0u, 0u, 0u);
+    // the padding columns are zero here for q and stay zero for k and v: the tiles below only write the first vec pieces of a row
+    for (int i = threadIdx.x; i < BK * PIECES; i += blockDim.x) {
+        const int r = i / PIECES, c = i % PIECES;
+        *(uint4*) (Ks + r * HDS + c * 8) = c < vec && q0 + r < N ? *(const uint4*) (q + (size_t) (q0 + r) * D + (size_t) h * hd + c * 8) : zero4;
+        if (c >= vec) *(uint4*) (Vs + r * HDS + c * 8) = zero4;
+    }
+    __syncthreads();
+    uint32_t qf[KS][4];
+#pragma unroll
+    for (int kk = 0; kk < KS; ++kk)
+        fa_ldsm_x4(qf[kk], Ks + (warp * 16 + (lane & 7) + ((lane >> 3) & 1) * 8) * HDS + kk * 16 + (lane >> 4) * 8);
+    float o[NT][4];
+#pragma unroll
+    for (int n = 0; n < NT; ++n) o[n][0] = o[n][1] = o[n][2] = o[n][3] = 0.0f;
+    float m1 = -FLT_MAX, m2 = -FLT_MAX, l1 = 0.0f, l2 = 0.0f;   // rows g and g + 8 of the warp: running max (base 2), sum
+    for (int k0 = 0; k0 < N; k0 += BK) {
+        __syncthreads();      // every warp is done with the tile before (the first time: with its query fragments)
+        for (int i = threadIdx.x; i < BK * vec; i += blockDim.x) {
+            const int r = i / vec, c = i % vec;
+            uint4 kx = zero4, vx = zero4;
+            if (k0 + r < N) {
+                const size_t at = (size_t) (k0 + r) * D + (size_t) h * hd + c * 8;
+                kx = *(const uint4*) (k + at);
+                vx = *(const uint4*) (v + at);
+            }
+            *(uint4*) (Ks + r * HDS + c * 8) = kx;
+            *(uint4*) (Vs + r * HDS + c * 8) = vx;
+        }
+        __syncthreads();
+        float s[BK / 8][4];
+#pragma unroll
+        for (int nt = 0; nt < BK / 8; ++nt) {     // S = Q K^T, 8 keys a tile
+            s[nt][0] = s[nt][1] = s[nt][2] = s[nt][3] = 0.0f;
+#pragma unroll
+            for (int kk = 0; kk < KS; ++kk) {
+                uint32_t b[2];
+                fa_ldsm_x2(b, Ks + (nt * 8 + (lane & 7)) * HDS + kk * 16 + ((lane >> 3) & 1) * 8);
+                fa_mma(s[nt], qf[kk], b[0], b[1]);
+            }
+        }
+        float mx1 = -FLT_MAX, mx2 = -FLT_MAX;
+#pragma unroll
+        for (int nt = 0; nt < BK / 8; ++nt) {
+            const int c = k0 + nt * 8 + t4 * 2;
+            s[nt][0] = c < N ? s[nt][0] * kFaLog2e : -FLT_MAX;
+            s[nt][1] = c + 1 < N ? s[nt][1] * kFaLog2e : -FLT_MAX;
+            s[nt][2] = c < N ? s[nt][2] * kFaLog2e : -FLT_MAX;
+            s[nt][3] = c + 1 < N ? s[nt][3] * kFaLog2e : -FLT_MAX;
+            mx1 = fmaxf(mx1, fmaxf(s[nt][0], s[nt][1]));
+            mx2 = fmaxf(mx2, fmaxf(s[nt][2], s[nt][3]));
+        }
+        mx1 = fmaxf(mx1, VIT_SHFL_XOR(mx1, 1));
+        mx1 = fmaxf(mx1, VIT_SHFL_XOR(mx1, 2));
+        mx2 = fmaxf(mx2, VIT_SHFL_XOR(mx2, 1));
+        mx2 = fmaxf(mx2, VIT_SHFL_XOR(mx2, 2));
+        const float n1 = fmaxf(m1, mx1), n2 = fmaxf(m2, mx2), a1 = exp2f(m1 - n1), a2 = exp2f(m2 - n2);
+        float sum1 = 0.0f, sum2 = 0.0f;
+#pragma unroll
+        for (int nt = 0; nt < BK / 8; ++nt) {
+            s[nt][0] = exp2f(s[nt][0] - n1);
+            s[nt][1] = exp2f(s[nt][1] - n1);
+            s[nt][2] = exp2f(s[nt][2] - n2);
+            s[nt][3] = exp2f(s[nt][3] - n2);
+            sum1 += s[nt][0] + s[nt][1];
+            sum2 += s[nt][2] + s[nt][3];
+        }
+        sum1 += VIT_SHFL_XOR(sum1, 1);
+        sum1 += VIT_SHFL_XOR(sum1, 2);
+        sum2 += VIT_SHFL_XOR(sum2, 1);
+        sum2 += VIT_SHFL_XOR(sum2, 2);
+        l1 = l1 * a1 + sum1;
+        l2 = l2 * a2 + sum2;
+        m1 = n1;
+        m2 = n2;
+#pragma unroll
+        for (int n = 0; n < NT; ++n) {
+            o[n][0] *= a1;
+            o[n][1] *= a1;
+            o[n][2] *= a2;
+            o[n][3] *= a2;
+        }
+#pragma unroll
+        for (int kk = 0; kk < BK / 16; ++kk) {     // O += P V, 16 keys a step
+            const uint32_t pa[4] = {fa_pack(s[2 * kk][0], s[2 * kk][1]), fa_pack(s[2 * kk][2], s[2 * kk][3]), fa_pack(s[2 * kk + 1][0], s[2 * kk + 1][1]),
+                                    fa_pack(s[2 * kk + 1][2], s[2 * kk + 1][3])};
+#pragma unroll
+            for (int np = 0; np < NT / 2; ++np) {
+                uint32_t b[4];
+                fa_ldsm_x4_t(b, Vs + (kk * 16 + (lane & 7) + ((lane >> 3) & 1) * 8) * HDS + np * 16 + (lane >> 4) * 8);
+                fa_mma(o[2 * np], pa, b[0], b[1]);
+                fa_mma(o[2 * np + 1], pa, b[2], b[3]);
+            }
+        }
+    }
+    const int r1 = q0 + warp * 16 + g, r2 = r1 + 8;
+    const float i1 = 1.0f / l1, i2 = 1.0f / l2;
+#pragma unroll
+    for (int n = 0; n < NT; ++n) {
+        const int c = n * 8 + t4 * 2;
+        if (c < hd) {
+            if (r1 < N) *(float2*) (out + (size_t) r1 * D + (size_t) h * hd + c) = make_float2(o[n][0] * i1, o[n][1] * i1);
+            if (r2 < N) *(float2*) (out + (size_t) r2 * D + (size_t) h * hd + c) = make_float2(o[n][2] * i2, o[n][3] * i2);
+        }
+    }
+#endif
+}
+
+template <int HDP>
+void fa_mma_launch(dim3 grid, const __half* q, const __half* k, const __half* v, float* out, int N, int D, int hd) {
+    k_attn_fa_mma<HDP><<<grid, 32 * kFaWarps, fa_mma_smem<HDP>()>>>(q, k, v, out, N, D, hd);
+}
 #endif
 
 // The same for a row too long to hold in registers (more than 16,384 patches: a picture of 4,096 image tokens or more): three passes over the row in memory.
@@ -762,18 +919,24 @@ struct VitGpuImpl {
     DevW proj;                       // gemma4v: mm.input_projection
     bool gemma() const { return g.projector == "gemma4v"; }
 #if !defined(STRATA_VIT_HIP)
-    int fa_wmma_hdp = -1, fa_wmma_bk = 0;   // k_attn_fa_wmma: -1 not asked yet; else the padded head size and key tile set up (0: not here; STRATA_VIT_FA_WMMA=0: never)
+    // the fused attention: fa_wmma_hdp -1 not asked yet, else the padded head size set up (0: not here; STRATA_VIT_FA_WMMA=0: never); fa_mma
+    // k_attn_fa_mma (8.0 and newer; STRATA_VIT_FA_MMA=0: k_attn_fa_wmma there too), else fa_wmma_bk the key tile of k_attn_fa_wmma
+    int fa_wmma_hdp = -1, fa_wmma_bk = 0;
+    bool fa_mma = false;
     // the fused attention of every head into d_ctx; false: not here (the caller takes the batched products)
     bool attend_fa_wmma(int N, int D, int H, int HD) {
         const int hdp = (HD + 15) / 16 * 16;
         if (fa_wmma_hdp < 0) {
             fa_wmma_hdp = 0;
             const char* e = std::getenv("STRATA_VIT_FA_WMMA");
+            const char* em = std::getenv("STRATA_VIT_FA_MMA");
             int major = 0, optin = 0;
             if (!(e && std::atoi(e) == 0) && HD % 8 == 0 && hdp >= 64 && hdp <= 128 &&
                 cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
                 cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, device) == cudaSuccess && major >= 7) {
-                switch (hdp) {
+                fa_mma = major >= 8 && !(em && std::atoi(em) == 0);
+                if (fa_mma) fa_wmma_bk = kFaMmaBK;
+                else switch (hdp) {
                     case 64: fa_wmma_bk = fa_wmma_pick<64>(optin); break;
                     case 80: fa_wmma_bk = fa_wmma_pick<80>(optin); break;
                     case 96: fa_wmma_bk = fa_wmma_pick<96>(optin); break;
@@ -789,7 +952,14 @@ struct VitGpuImpl {
         const __half* q = (const __half*) d_q16;
         const __half* k = (const __half*) d_k16;
         const __half* v = (const __half*) d_v16;
-        switch (hdp) {
+        if (fa_mma) switch (hdp) {
+            case 64: fa_mma_launch<64>(grid, q, k, v, d_ctx, N, D, HD); break;
+            case 80: fa_mma_launch<80>(grid, q, k, v, d_ctx, N, D, HD); break;
+            case 96: fa_mma_launch<96>(grid, q, k, v, d_ctx, N, D, HD); break;
+            case 112: fa_mma_launch<112>(grid, q, k, v, d_ctx, N, D, HD); break;
+            default: fa_mma_launch<128>(grid, q, k, v, d_ctx, N, D, HD); break;
+        }
+        else switch (hdp) {
             case 64: fa_wmma_launch<64>(fa_wmma_bk, grid, q, k, v, d_ctx, N, D, HD); break;
             case 80: fa_wmma_launch<80>(fa_wmma_bk, grid, q, k, v, d_ctx, N, D, HD); break;
             case 96: fa_wmma_launch<96>(fa_wmma_bk, grid, q, k, v, d_ctx, N, D, HD); break;
