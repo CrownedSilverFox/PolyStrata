@@ -10637,7 +10637,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
     pack = find_in([data, *elsewhere], f"packs/{tag.lower()}") or data / "packs" / tag.lower()
     if not (pack / "tokenizer" / "vocab.json").exists():
         run([sys.executable, str(ROOT / "tools" / "strata_tokenizer.py"), "--gguf", str(gguf), "--out", str(pack)],
-            env=dict(os.environ, STRATA_GGUF_PY=str(llama / "gguf-py")))   # writes <pack>/tokenizer/
+            env=dict(os.environ, **gguf_py_env()))   # writes <pack>/tokenizer/
     # a file without a chat template gets the model's own from the model's repository, pinned like the files
     tpl = pack / "tokenizer" / "chat_template.jinja"
     if fam.get("template") and not tpl.exists():
