@@ -1775,14 +1775,14 @@ __global__ void attn_value_kernel(const float* __restrict__ score, const half* _
 constexpr int SPLIT_KEYS = 64;
 
 template <int DIM, int G>
-__global__ void __launch_bounds__(G * WARP)
-attn_split_kernel(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
-                  float* __restrict__ part, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
-                  int blocks, const long long* __restrict__ at) {
+__device__ __forceinline__ void
+attn_split_body(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
+                float* __restrict__ part, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
+                int blocks, const long long* __restrict__ at, int t) {
     constexpr int ROW = DIM / SCORE_VALUES, ROWS = WARP / ROW, WARPS = G, VALS = DIM / WARP;
     static_assert(ROW * ROWS == WARP && ROW % G == 0 && VALS % 2 == 0, "a row is half a warp or a warp, a warp a head");
     __shared__ float e[G][SPLIT_KEYS];
-    const int g = blockIdx.y, b = blockIdx.x, t = blockIdx.z, lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
+    const int g = blockIdx.y, b = blockIdx.x, lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
     const int side = lane / ROW, rl = lane % ROW;
     const long long p = (at ? *at : pos) + first;
     const int k0 = b * SPLIT_KEYS, span = int(p) + tokens;   // the call's tokens attend rows [0, span)
@@ -1871,6 +1871,15 @@ attn_split_kernel(const float* __restrict__ q, const half* __restrict__ kcache, 
     }
 }
 
+template <int DIM, int G>
+__global__ void __launch_bounds__(G * WARP)
+attn_split_kernel(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
+                  float* __restrict__ part, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
+                  int blocks, const long long* __restrict__ at) {
+    attn_split_body<DIM, G>(q, kcache, vcache, part, n_head, kv_heads, pos, first, tokens, scale, blocks, at,
+                            blockIdx.z);
+}
+
 // The blocks of attn_split_kernel added up for a head of a token: each block's sums scaled to the largest score.  A
 // warp takes every JOIN_WARPS-th block, a lane DIM / 32 values, and the warps' sums are added in their order; a block
 // past the token's own rows has none it attends and is skipped, so the sums are the same whatever tokens the call
@@ -1878,13 +1887,13 @@ attn_split_kernel(const float* __restrict__ q, const half* __restrict__ kcache, 
 constexpr int JOIN_WARPS = 16;
 
 template <int DIM>
-__global__ void __launch_bounds__(JOIN_WARPS * WARP)
-attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_head, long long pos, int first,
-                 int tokens, int blocks, const long long* __restrict__ at, const float* __restrict__ sinks,
-                 float* __restrict__ ml_out = nullptr) {
+__device__ __forceinline__ void
+attn_join_body(const float* __restrict__ part, float* __restrict__ out, int n_head, long long pos, int first,
+               int tokens, int blocks, const long long* __restrict__ at, const float* __restrict__ sinks, int t,
+               float* __restrict__ ml_out = nullptr) {
     constexpr int VALS = DIM / WARP;
     __shared__ float top[JOIN_WARPS], sl[JOIN_WARPS], so[JOIN_WARPS][DIM];
-    const int h = blockIdx.x, t = blockIdx.y, lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
+    const int h = blockIdx.x, lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
     const long long p = (at ? *at : pos) + first;
     const int used = int((p + tokens + SPLIT_KEYS - 1) / SPLIT_KEYS);   // the blocks the split kernel wrote
     const float* pb = part + (size_t(t) * n_head + h) * blocks * (DIM + 2);
@@ -1928,6 +1937,38 @@ attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_
     // bits of a call that is not streamed stay what they were
 #pragma unroll
     for (int u = 0; u < VALS; ++u) y[VALS * lane + u] = sum > 0.0f ? s[u] / sum : 0.0f;
+}
+
+template <int DIM>
+__global__ void __launch_bounds__(JOIN_WARPS * WARP)
+attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_head, long long pos, int first,
+                 int tokens, int blocks, const long long* __restrict__ at, const float* __restrict__ sinks,
+                 float* __restrict__ ml_out = nullptr) {
+    attn_join_body<DIM>(part, out, n_head, pos, first, tokens, blocks, at, sinks, blockIdx.y, ml_out);
+}
+
+// The split kernels for a step's sequences of an fp16 cache, sequence k's token t at blockIdx.z = 2 * k + t (the
+// split kernel) and blockIdx.z = k, blockIdx.y = t (the join): a sequence's blocks are those of its own call.
+constexpr int SPLIT_SEQ_TOKENS = 2;
+
+__device__ __forceinline__ int split_blocks(int keys) { return (keys + SPLIT_KEYS - 1) / SPLIT_KEYS; }
+
+template <int DIM, int G>
+__global__ void __launch_bounds__(G * WARP)
+attn_split_seqs_kernel(const AttnSeqs a, int n_head, int kv_heads, float scale) {
+    const int k = blockIdx.z / SPLIT_SEQ_TOKENS, t = blockIdx.z % SPLIT_SEQ_TOKENS, blocks = split_blocks(a.keys[k]);
+    if (t >= a.tokens[k] || int(blockIdx.x) >= blocks) return;
+    attn_split_body<DIM, G>(a.q[k], (const half*) a.kc[k], (const half*) a.vc[k], a.score[k], n_head, kv_heads, 0, 0,
+                            a.tokens[k], scale, blocks, a.at[k], t);
+}
+
+template <int DIM>
+__global__ void __launch_bounds__(JOIN_WARPS * WARP)
+attn_join_seqs_kernel(const AttnSeqs a, int n_head) {
+    const int k = blockIdx.z;
+    if (int(blockIdx.y) >= a.tokens[k]) return;
+    attn_join_body<DIM>(a.score[k], a.out[k], n_head, 0, 0, a.tokens[k], split_blocks(a.keys[k]), a.at[k], nullptr,
+                        blockIdx.y);
 }
 
 // attn_value_kernel with the weights as attn_softmax_kernel leaves them with `wt`: a row's queries side by side,
@@ -2664,6 +2705,8 @@ __global__ void softcap_kernel(float* x, size_t n, float cap) {
 // One block reads a vocabulary's scores twice.  Four values a load and four loads in flight a thread: with a load
 // at a time each thread waited out the memory's latency 128 times a pass, 62 us for Qwen3.6's 131,072 guesses.
 __global__ void likeliest_kernel(const float* __restrict__ x, int n, Likeliest* __restrict__ out) {
+    x += size_t(blockIdx.x) * n;   // likeliest_rows(): a block a row
+    out += blockIdx.x;
     __shared__ float part[32];
     __shared__ int first[32];
     const int n4 = ((uintptr_t) x & 15) == 0 ? n / 4 : 0;   // the rest one at a time
@@ -2831,6 +2874,26 @@ __global__ void shortconv_rows_kernel(const float* __restrict__ bcx, const float
     };
     const float y = bx(row - 2) * wc[0] + bx(row - 1) * wc[1] + bx(row) * wc[2];
     out[size_t(row) * channels + c] = bcx[size_t(row) * 3 * channels + channels + c] * y;
+}
+
+// shortconv_kernel for a step's sequences, blockIdx.y the sequence: its rows from seqs.first, its own state.
+__global__ void shortconv_seqs_kernel(const float* __restrict__ bcx, const SeqStates seqs, const float* __restrict__ w,
+                                      float* __restrict__ out, int channels) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x, k = blockIdx.y;
+    if (c >= channels) return;
+    const float* wc = w + 3 * size_t(c);
+    float* st = seqs.state[k] + size_t(c) * 2;
+    float s0 = st[0], s1 = st[1];
+    for (int row = seqs.first[k]; row < seqs.first[k] + seqs.rows[k]; ++row) {
+        const float* in = bcx + size_t(row) * 3 * channels;
+        const float bx = in[c] * in[2 * channels + c];
+        const float y = s0 * wc[0] + s1 * wc[1] + bx * wc[2];
+        s0 = s1;
+        s1 = bx;
+        out[size_t(row) * channels + c] = in[channels + c] * y;
+    }
+    st[0] = s0;
+    st[1] = s1;
 }
 
 // The short convolution's state after the call: its last two B * x, the state's own where the call has fewer.
@@ -3971,9 +4034,22 @@ int attend_value_tiles(int c, int chunk, int dim, int n_head, int kv_heads) {
 
 bool attend_seqs_plan(AttnSeqs& a, float* score, size_t score_floats, int chunk, int dim, int n_head, int kv_heads) {
     const int per = n_head / kv_heads;
-    if (a.n < 1 || a.n > AttnSeqs::kMax || attend_score_kind(dim, per) == 0) return false;
-    // attend() reads an fp16 cache of these shapes through its split kernels, which have no launch here
-    if (a.f16 && ((dim == 64 && per == 4) || (dim == 128 && per == 8))) return false;
+    if (a.n < 1 || a.n > AttnSeqs::kMax) return false;
+    // attend() reads an fp16 cache of these shapes through its split kernels where `score` holds a call's
+    // blocks (its fit): so do the sequences here, each its blocks in score[k]
+    if (a.f16 && ((dim == 64 && per == 4) || (dim == 128 && per == 8))) {
+        size_t at = 0;
+        for (int k = 0; k < a.n; ++k) {
+            const int c = a.tokens[k], keys = a.keys[k];
+            if (c < 1 || c > SPLIT_SEQ_TOKENS || c > chunk || keys < 1 || !a.kc[k] || !a.vc[k] || !a.at[k]) return false;
+            const size_t mine = size_t(c) * n_head * grid(size_t(keys), SPLIT_KEYS) * (dim + 2);
+            if (at + mine > score_floats) return false;
+            a.score[k] = score + at;
+            at += (mine + 3) / 4 * 4;
+        }
+        return true;
+    }
+    if (attend_score_kind(dim, per) == 0) return false;
     if (dim % SCORE_VALUES || uintptr_t(score) % 16) return false;
     int tiles = -1;
     size_t at = 0;
@@ -3996,6 +4072,19 @@ bool attend_seqs_plan(AttnSeqs& a, float* score, size_t score_floats, int chunk,
 
 void attend_seqs(const AttnSeqs& a, int dim, int n_head, int kv_heads, float scale, void* stream) {
     const int per = n_head / kv_heads, dims = grid(dim, VALUE_DIMS);
+    if (a.f16 && ((dim == 64 && per == 4) || (dim == 128 && per == 8))) {
+        int most = 0;
+        for (int k = 0; k < a.n; ++k) most = std::max(most, (int) grid(size_t(a.keys[k]), SPLIT_KEYS));
+        const dim3 split(most, kv_heads, SPLIT_SEQ_TOKENS * a.n), join(n_head, SPLIT_SEQ_TOKENS, a.n);
+        if (dim == 64) {
+            attn_split_seqs_kernel<64, 4><<<split, 4 * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+            attn_join_seqs_kernel<64><<<join, JOIN_WARPS * WARP, 0, cs(stream)>>>(a, n_head);
+        } else {
+            attn_split_seqs_kernel<128, 8><<<split, 8 * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+            attn_join_seqs_kernel<128><<<join, JOIN_WARPS * WARP, 0, cs(stream)>>>(a, n_head);
+        }
+        return;
+    }
     int most_units = 0, most_rows = 0, most_blocks = 0;
     for (int k = 0; k < a.n; ++k) {
         most_units = std::max(most_units, (int) grid(size_t(a.keys[k]), SCORE_KEYS) * kv_heads);
@@ -4892,6 +4981,10 @@ void likeliest(const float* logits, int n, Likeliest* out, void* stream) {
     likeliest_kernel<<<1, 1024, 0, cs(stream)>>>(logits, n, out);
 }
 
+void likeliest_rows(const float* logits, int n, int rows, Likeliest* out, void* stream) {
+    likeliest_kernel<<<rows, 1024, 0, cs(stream)>>>(logits, n, out);
+}
+
 void mul_sigmoid(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream) {
     for (int r = 0; r < rows; r += 65535)   // a grid has at most 65535 rows, and 4,096 tokens have 16 heads each
         mul_sigmoid_kernel<<<dim3(grid(n, 256), std::min(65535, rows - r)), 256, 0, cs(stream)>>>(
@@ -4992,6 +5085,11 @@ void gdn_step(float* qkv, float* alpha, float* beta, const float* dt, const floa
 // A step's sequences one launch a kernel.  Of gdn_step()'s four kernels only the state's update reads a sequence's
 // own state: the norm, the gates and the output's norm are a row's alone and go over every row at once.  With a
 // launch a sequence, 16 sequences of Qwen3.6 on lab-pro6000 spent 4.3 ms a step in 470 GDN launches of 1-4 us.
+void shortconv_seqs(const float* bcx, const SeqStates& seqs, const float* w, float* out, int channels, void* stream) {
+    if (seqs.n < 1 || seqs.n > SeqStates::kMax) throw std::invalid_argument("shortconv_seqs: 1 to 32 sequences");
+    shortconv_seqs_kernel<<<dim3(grid(channels, 256), seqs.n), 256, 0, cs(stream)>>>(bcx, seqs, w, out, channels);
+}
+
 void conv4_silu_seqs(const float* x, const SeqStates& seqs, const float* w, float* out, int channels, void* stream) {
     if (seqs.n < 1 || seqs.n > SeqStates::kMax) throw std::invalid_argument("conv4_silu_seqs: 1 to 32 sequences");
     conv4_silu_seqs_kernel<<<dim3(grid(channels, 256), seqs.n), 256, 0, cs(stream)>>>(x, seqs, w, out, channels);
