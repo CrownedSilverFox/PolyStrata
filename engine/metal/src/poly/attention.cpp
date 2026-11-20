@@ -102,6 +102,22 @@ void attend_batch(void*,const float* q,const uint16_t* k,const uint16_t* v,int64
     Args a;a.p[0]=q;a.p[1]=k;a.p[2]=v;a.p[3]=out;
     a.p[5]=kq.codes;a.p[6]=kq.scales;a.p[7]=vq.codes;a.p[8]=vq.scales;
     a.dim=dim;a.heads=heads;a.kv=kv;a.pos=pos;a.rows=rows;a.scale=scale;a.window=window;a.ring=ring;a.whole=whole;
+    // A q8 cache or a ring: poly_flash_kv copies the call's keys and values in fp16 for poly_flash to read as tensors,
+    // into a buffer grown to the largest call and kept (as attend()'s scratch, its address stays)
+    if(kq.codes || ring) {
+        static void* kv16=nullptr;
+        static size_t kv16_bytes=0;
+        const int64_t first=window>0?std::max<int64_t>(0,pos-window+1):0;
+        const size_t n=size_t(pos+rows-first)*size_t(kv)*size_t(dim),need=4*n;
+        if(need>kv16_bytes) {
+            if(kv16) { gpu::stream_synchronize(static_cast<gpu::Stream>(s)); gpu::free_device(kv16); }
+            kv16=nullptr;kv16_bytes=0;
+            if(gpu::malloc_device_raw(&kv16,need)!=gpu::kSuccess) throw std::runtime_error("Metal attention: fp16 keys");
+            kv16_bytes=need;
+        }
+        a.p[9]=kv16;a.p[4]=static_cast<uint16_t*>(kv16)+n;
+        metal_detail::dispatch("poly_flash",source,"poly_flash_kv",a,s,{uint32_t((n+255)/256),1,1},256);
+    }
     const std::string name="poly_flash_"+std::to_string(dim);
     metal_detail::dispatch("poly_flash",source,name.c_str(),a,s,{uint32_t(heads),uint32_t((rows+15)/16),1},
                            uint32_t(32*(dim/64)));
