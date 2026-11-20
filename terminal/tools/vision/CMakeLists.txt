@@ -130,6 +130,13 @@ if(STRATA_VISION_ORACLES)
   if(STRATA_VISION_ORACLES_CUDA)
     set(GGML_CUDA ON CACHE BOOL "" FORCE)
   endif()
+  # STRATA_VISION_ORACLES_METAL=ON (a Mac): the same with ggml's Metal backend, poly.10's Metal reader (strata-vision-mtmd-oracle --gpu).  Without it
+  # --gpu finds no GPU backend and mtmd runs on the CPU.
+  option(STRATA_VISION_ORACLES_METAL "the test oracles with ggml's Metal backend (a Mac)" OFF)
+  if(STRATA_VISION_ORACLES_METAL)
+    set(GGML_METAL ON CACHE BOOL "" FORCE)
+    set(GGML_METAL_EMBED_LIBRARY ON CACHE BOOL "" FORCE)
+  endif()
   set(LLAMA_BUILD_MTMD ON CACHE BOOL "" FORCE)
   add_subdirectory(${LLAMA_DIR} llama EXCLUDE_FROM_ALL)
   add_executable(strata-vision-prep-oracle EXCLUDE_FROM_ALL own/oracle_prep.cpp)

@@ -780,12 +780,14 @@ class SmallerModelSetup(unittest.TestCase):
                 def patch(obj, name, **kw):
                     return stack.enter_context(mock.patch.object(obj, name, **kw))
                 patch(M, "ROOT", new=root)
+                patch(setup, "_CONTROL_HOME", new=root)         # setup.home(): where the run config goes
+                patch(setup, "feed_models_setup")               # (the signed feed's models: no network in these tests)
                 patch(M, "mac_configs", return_value=[])
                 patch(M, "mac_info", return_value={"chip":"M1 Pro", "ram_gb":32, "macos":"27.0", "arm64":True, "clt":"/tools", "perf_cores":8})
                 patch(setup, "data_folder", return_value=(root, []))
                 patch(setup, "free_gb", return_value=1000)
                 patch(setup, "pip_install")
-                patch(setup, "llama_override", return_value=root / "llama")
+                patch(setup, "llama_override", return_value=root / "llama")     # (STRATA_GGML_DIR's checkout, passed on to the build)
                 build = patch(M, "build_engine", return_value=root / "strata-poly")
                 patch(setup, "download", side_effect=AssertionError("model download"))
                 patch(setup, "done", return_value=True)
@@ -810,6 +812,12 @@ class SmallerModelSetup(unittest.TestCase):
                 saved.write_text(json.dumps(cfg))
                 choice = setup.choices_from_config(saved)
                 self.assertEqual((choice["family"], choice["model"]), (family, model))
+                # in setup.home() (terminal/), where the server, `polystrata.py --list-models` / --model and the next ./setup.sh
+                # find it: not beside setup_mac.py in engine/; its log beside it
+                from serve import models as registry
+                self.assertEqual(saved.parent, setup.home())
+                self.assertEqual(Path(cfg["log"]).parent, setup.home())
+                self.assertEqual(registry.find(registry.discover(setup.home()), cfg["model_name"])["config"], str(saved))
                 self.assertEqual(Path(cfg["exe"]).name, "strata-poly")
                 self.assertEqual(cfg["parallel"], 3)
                 self.assertIn("--conversation-cache-mib", cfg["args"])
@@ -887,12 +895,12 @@ class FullCatalog(unittest.TestCase):
                     (root/"metal").mkdir();(root/"metal"/f"{tag.lower()}-metal.gguf").write_bytes(b"fixture")
                     (root/"mtp").mkdir();(root/"mtp"/"mtp-q2_0.gguf").write_bytes(b"fixture")
                     def patch(obj,name,**kw): return stack.enter_context(mock.patch.object(obj,name,**kw))
-                    patch(M,"ROOT",new=root);patch(M,"mac_configs",return_value=[])
+                    patch(M,"ROOT",new=root);patch(setup,"_CONTROL_HOME",new=root);patch(M,"mac_configs",return_value=[])
                     patch(M,"mac_info",return_value={"chip":"M5 Max","ram_gb":128,"macos":"27.0","arm64":True,"clt":"/tools","perf_cores":12})
                     patch(setup,"data_folder",return_value=(root,[]));patch(setup,"free_gb",return_value=1000)
-                    patch(setup,"get_llama_cpp",return_value=root/"llama");patch(setup,"find_in",return_value=None)
+                    patch(setup,"llama_override",return_value=root/"llama");patch(setup,"find_in",return_value=None)
                     patch(M,"build_engine",return_value=root/"strata");patch(M,"engine_pids",return_value=[])
-                    patch(drafting_fetch,"ensure_for",return_value=None)     # the DFlash2 drafter of the sets whose Mac default it is: not here
+                    patch(M,"fetch_drafter",return_value=None)      # (the DFlash2 drafter's download: no network in these tests)
                     patch(M,"ple_shard",side_effect=lambda files: files[0] if family=="swift" else files[-1])
                     patch(setup,"download",side_effect=AssertionError("download"));patch(setup,"ready_fetch",side_effect=AssertionError("ready download"))
                     for name in ("pip_install","check_shards","run","refresh_draft_vocab","say","ok","warn","step"):
@@ -933,7 +941,7 @@ class FullCatalog(unittest.TestCase):
                     gguf_dir=tmp, vision="no", update=False, no_download_models=True, build=False,
                     vram_reserve_mib=None, parallel=2, host=None, api_key=None, browser=False, no_start=True, port=8090)
                 def patch(obj, name, **kw): return stack.enter_context(mock.patch.object(obj,name,**kw))
-                patch(M,"ROOT",new=root)
+                patch(M,"ROOT",new=root);patch(setup,"_CONTROL_HOME",new=root)
                 for name in ("pip_install", "run", "say", "ok", "warn"):
                     patch(setup,name)
                 patch(setup,"llama_override",return_value=root / "llama")

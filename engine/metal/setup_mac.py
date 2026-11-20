@@ -256,8 +256,8 @@ VISION_EXE = ROOT / "build-vision" / "bin" / "strata-vision"
 
 
 def build_vision(llama: Path) -> Path:
-    """strata-vision (tools/vision: llama.cpp's mtmd at the pinned commit), with ggml's Metal backend: the encoder
-    runs on the GPU."""
+    """strata-vision (terminal/tools/vision: Strata's own vision towers, no llama.cpp or ggml), with the towers' Metal
+    kernels: --gpu reads the picture on the GPU, and without it the same program reads on the CPU."""
     stamp = ROOT / "build-vision" / "BUILD.json"
     src = source_digest()
     try:
@@ -329,9 +329,15 @@ def experts_file(native: Path) -> None:
     S.ok(f"the experts' streaming copy: {out.name}")
 
 
+def config_path(tag: str) -> Path:
+    """A model's run config: in setup.home() (terminal/), where setup.py writes the PC's and where the server, polystrata.py
+    and the next setup look for them, not beside this file in engine/."""
+    return S.home() / f"strata-{tag.lower()}.json"
+
+
 def mac_config(exe: Path, args: list, pack: Path, model_name: str, tag: str, port: int) -> dict:
     return {"exe": str(exe), "args": args, "cwd": str(ROOT), "tokenizer": str(pack / "tokenizer"),
-            "model_name": model_name, "log": str(ROOT / f"strata-{tag.lower()}.log"), "lib_dirs": [], "port": port,
+            "model_name": model_name, "log": str(S.home() / f"strata-{tag.lower()}.log"), "lib_dirs": [], "port": port,
             "backend": "metal"}
 
 
@@ -533,7 +539,7 @@ def setup_poly(a, info: dict, data: Path, elsewhere: list) -> int:
         cfg["vision"] = {"exe": str(vexe), "mmproj": str(mmproj), "model": str(files[0]),
                          "gpu": True, "max_tokens": a.vision_tokens or fam.get("vision_most", 1024)}
     S.poly_kv_whole(cfg)
-    cfg_path = ROOT / f"strata-{tag.lower()}.json"
+    cfg_path = config_path(tag)
     previous = P.read_config(cfg_path)
     P.apply_options(cfg["args"], a, previous)
     headers, why = P.read_headers([*files, *([draft] if draft else [])])
@@ -615,7 +621,7 @@ def setup_q36(a, info: dict, data: Path, elsewhere: list) -> int:
         cfg["args"].append("--vision")
         cfg["vision"] = {"exe": str(build_vision(llama)), "mmproj": str(folder / fam["mmproj"]),
                          "model": str(gguf), "gpu": True, "max_tokens": a.vision_tokens or 1024}
-    cfg_path = ROOT / f"strata-{tag.lower()}.json"
+    cfg_path = config_path(tag)
     S.write_setup_config(cfg_path, cfg)
     script = S.write_run_script(tag, cfg_path, cfg["port"], cfg.get("open_browser") is not False)
     S.ok(f"start script: {script.name}")
@@ -959,7 +965,7 @@ def main(argv=None) -> int:
         cfg["draft_vocab"] = a.draft_vocab
     if a.browser is not None:
         cfg["open_browser"] = a.browser
-    cfg_path = ROOT / f"strata-{tag.lower()}.json"
+    cfg_path = config_path(tag)
     S.write_config(cfg_path, cfg)
     script = S.write_run_script(tag, cfg_path, port, cfg.get("open_browser") is not False)
     S.ok(f"start script: {script.name}")

@@ -132,7 +132,7 @@ inline cudaError_t cudaDeviceGetAttribute(int* v, cudaDeviceAttr a, int d) {
 }
 inline cudaError_t cudaDeviceCanAccessPeer(int* v, int d, int p) { return strata::gpu::device_can_access_peer(v, d, p); }
 inline cudaError_t cudaDeviceEnablePeerAccess(int p, unsigned f) { return strata::gpu::device_enable_peer_access(p, f); }
-inline cudaError_t cudaDeviceDisablePeerAccess(int) { return cudaSuccess; }   // a Mac has one GPU: nothing to disable
+inline cudaError_t cudaDeviceDisablePeerAccess(int) { return strata::gpu::compat_detail::bad(); }   // a Mac has one GPU: no peer, as enabling says
 
 // ---- memory and copies
 template <class T> inline cudaError_t cudaMalloc(T** p, size_t n) { return strata::gpu::malloc_device(p, n); }
@@ -163,6 +163,7 @@ inline cudaError_t cudaMemcpyPeerAsync(void* d, int dd, const void* s, int sd, s
     return strata::gpu::memcpy_peer_async(d, dd, s, sd, n, st);
 }
 inline cudaError_t cudaMemcpyPeer(void* d, int dd, const void* s, int sd, size_t n) {
+    if (dd != 0 || sd != 0) return strata::gpu::compat_detail::bad();   // no other GPU; nor the runtime's sticky error a probe would leave
     const cudaError_t e = cudaMemcpyPeerAsync(d, dd, s, sd, n, nullptr);
     return e != cudaSuccess ? e : cudaDeviceSynchronize();
 }
@@ -170,7 +171,12 @@ inline cudaError_t cudaMemcpyPeer(void* d, int dd, const void* s, int sd, size_t
 // ---- streams, events, host functions
 inline cudaError_t cudaStreamCreate(cudaStream_t* s) { return strata::gpu::stream_create(s); }
 inline cudaError_t cudaStreamCreateWithFlags(cudaStream_t* s, unsigned f) { return strata::gpu::stream_create(s, f); }
-inline cudaError_t cudaDeviceGetStreamPriorityRange(int*, int*) { return strata::gpu::compat_detail::bad(); }   // no priorities: callers fall back to a plain stream
+// no priorities: the one level 0 (callers that compare the range take a plain stream; dflash2.cpp reads it unchecked)
+inline cudaError_t cudaDeviceGetStreamPriorityRange(int* least, int* greatest) {
+    if (least) *least = 0;
+    if (greatest) *greatest = 0;
+    return cudaSuccess;
+}
 inline cudaError_t cudaStreamCreateWithPriority(cudaStream_t* s, unsigned f, int) { return strata::gpu::stream_create(s, f); }
 inline cudaError_t cudaStreamDestroy(cudaStream_t s) { return strata::gpu::stream_destroy(s); }
 inline cudaError_t cudaStreamSynchronize(cudaStream_t s) { return strata::gpu::stream_synchronize(s); }

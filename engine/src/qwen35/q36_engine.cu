@@ -4024,6 +4024,11 @@ int strata::qwen35::run(int argc, char** argv) {
     }
     Engine E;
     E.use_graph = graph;
+#if defined(STRATA_GPU_METAL)
+    // auto on Metal: 8 tokens, the decode kernels.  A longer chunk takes the prompt GEMMs, which read slower there (M5 Ultra,
+    // UD-Q4_K_XL, 4,833 tokens: 19 tok/s at 8 tokens a chunk, under 12.1 at 512 and at 4096), and the warm-up reads one chunk.
+    if (chunk == 0) chunk = 8;
+#endif
     if (chunk == 0) {
         // auto: the largest chunk (4096 .. 1024) that fits beside every expert in VRAM; 2048 when they will not all fit (a prompt chunk streams every layer's
         // experts over PCIe once, so a bigger chunk pays that once for more tokens)

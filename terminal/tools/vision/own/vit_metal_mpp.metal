@@ -41,6 +41,8 @@ template [[host_name("vm_gemm_f16_128")]] kernel decltype(vm_gemm<128, 64, 4, ha
 template [[host_name("vm_gemm_f16_64")]] kernel decltype(vm_gemm<64, 64, 4, half, false, float>) vm_gemm<64, 64, 4, half, false, float>;
 template [[host_name("vm_gemm_bf16_128")]] kernel decltype(vm_gemm<128, 64, 4, bfloat, false, float>) vm_gemm<128, 64, 4, bfloat, false, float>;
 template [[host_name("vm_gemm_bf16_64")]] kernel decltype(vm_gemm<64, 64, 4, bfloat, false, float>) vm_gemm<64, 64, 4, bfloat, false, float>;
+// Gemma 4's attention scores from float32 q and k (float32 out)
+template [[host_name("vm_gemm_f32_64")]] kernel decltype(vm_gemm<64, 64, 4, float, false, float>) vm_gemm<64, 64, 4, float, false, float>;
 // attention: S = Q K^T (F16 out) and context = P V (V o-contiguous, float32 out)
 template [[host_name("vm_gemm_s")]] kernel decltype(vm_gemm<64, 64, 4, half, false, half>) vm_gemm<64, 64, 4, half, false, half>;
 template [[host_name("vm_gemm_pv")]] kernel decltype(vm_gemm<64, 64, 4, half, true, float>) vm_gemm<64, 64, 4, half, true, float>;

@@ -123,9 +123,10 @@ kernel void moe_plan(device const int* ids [[buffer(0)]], device const float* w 
 // probability (equal values: the lower expert index), weights = p / max(sum of the selected, 2^-14), the sum taken
 // by winning lane in selection order and reduced with the same xor tree.
 // One token's routing by one simdgroup: softmax over NL * 32 logits (512: NL 16; the 256-expert Coder: NL 8), top 10, weights.
-// `l` the token's logits, `ids` / `w` its 10 outputs.  NL = 16 is the original code token for token.
-template <int NL>
-static inline void route_tok(device const float* l, device int* ids, device float* w, ushort lane) {
+// `l` the token's logits (router_route passes a coherent(device) pointer), `ids` / `w` its 10 outputs.  NL = 16 is the
+// original code token for token.
+template <int NL, typename L>
+static inline void route_tok(L l, device int* ids, device float* w, ushort lane) {
     float v[NL];
     for (int i = 0; i < NL; ++i) v[i] = l[lane + 32 * i];
     float mx = -INFINITY;

@@ -4675,12 +4675,14 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         // rows (moe_rows()); --cache-bias's scores are in one buffer, so its rows go one by one here.
         int ids_of[kCpuRows][kMaxUsed];
         float w_of[kCpuRows][kMaxUsed];
+        // route_tmp_ has a share for each host thread: the workers' rows take a share each, rows on this thread the first
+        const bool spread = m > 1 && opt_.cache_bias <= 0.f && route_tmp_.size() >= (size_t) m * 2 * n_expert_;
         const auto route_row = [&](int t) {
             int* ids = ids_of[t];
             float* w = w_of[t];
             const float* scores = h_rl_ + (size_t) (at + t) * n_expert_;
             route(il, opt_.cache_bias > 0.f ? biased(L, scores) : scores, tok_ ? tok_[at + t] : -1, ids, w,
-                  route_tmp_.data() + (size_t) t * 2 * n_expert_);
+                  route_tmp_.data() + (size_t) (spread ? t : 0) * 2 * n_expert_);
             if (opt_.cache_bias > 0.f) {
                 // --cache-bias: the biased scores chose the experts; the weights are the router's own, a softmax of
                 // the scores it gave the chosen ones
@@ -4690,7 +4692,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                 for (int k = 0; k < n_used_; ++k) w[k] /= sum;
             }
         };
-        if (m > 1 && opt_.cache_bias <= 0.f && route_tmp_.size() >= (size_t) m * 2 * n_expert_)
+        if (spread)
             workers_->run(m, route_row);
         else
             for (int t = 0; t < m; ++t) route_row(t);
