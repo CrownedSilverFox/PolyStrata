@@ -49,8 +49,11 @@ constexpr int kSwapHalf = 128;
 // behind is timed again after kWayAgain windows of that size, then after twice as many each time it is still
 // behind, up to kWayAgainMost.  A time counts kWayWeight against the ones before, and one of the way behind
 // kWayBehind, since it has fewer and older ones.
-// card_far_ (Engine::build_mirror()): the share of the profile's picks the cached experts must have
-constexpr double kCardFarShare = 0.9;
+// card_far_ (Engine::build_mirror()): the share of the profile's picks the cached experts must have.  Each pick the
+// card lacks is copied over the bus: on lab-241's RTX 4090 D (PCIe 4.0) Qwen3.6 UD-Q3_K_M wrote 10-25% slower with
+// 95% and 97% of the picks cached than routed on the host, and as fast or faster with 99% (as at 99% on
+// lab-pro6000's PCIe 5).
+constexpr double kCardFarShare = 0.98;
 constexpr int kFarTrades = 4;   // card_far_: trades a window asks (Engine::follow())
 constexpr int kWayFirst = 3;
 constexpr int kWayAgain = 4, kWayAgainMost = 64;
