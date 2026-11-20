@@ -144,7 +144,9 @@ struct VitGpuImpl {
     bool gemma_qk32 = false;                  // Gemma 4 with the float32 tensor-op product: q and k float32 for its unscaled scores
     size_t sp_elems = 0, y_elems = 0, f16_elems = 0;     // the scores of a chunk, the floats d_y holds, the 16-bit values d_f16 holds
     int kRows = 512;
-    size_t kScoreElems = (size_t) 8 << 20;
+    // scores per attention chunk, 32M (64 MB of F16).  With 8M a 2,256-token picture (9,024 patches) ran 58 queries a chunk and its P V products 32 groups
+    // on the GPU: Qwen3.6 on the M5 Ultra 972 ms at 8M, 808 at 32M, 778 at 64M, 856 at 256M (1,900 tokens: 711, 585, 590, 594; 1,024 tokens 154, 140)
+    size_t kScoreElems = (size_t) 32 << 20;
     size_t kScoreElemsLarge = (size_t) 256 << 20;    // above 16,384 patches (512 MB of F16; the SYCL tower's choice; vit_gpu.cu takes 512M on CUDA / HIP)
     // f32_scores(): 128M (512 MB of float32 scores, 256 MB of F16 probabilities) when the picture has that many.  A chunk of P V products is the queries
     // of the chunk by a head's width (72): the 8M chunk's 64 queries left that product 32 groups on the GPU (Gemma 4, 8,928 patches on the M5 Ultra:
