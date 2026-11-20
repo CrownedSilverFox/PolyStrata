@@ -355,7 +355,8 @@ void flush(StreamImpl* s) {
 }
 constexpr unsigned kSpinSkipMax = 64;   // waits sent straight to the completion handler after failed spins, at most
 
-Error wait_value(const std::shared_ptr<Completion>& state, uint64_t v) {
+// handler: wait for the completion handler itself, which drops the buffer's holds on the allocations it used
+Error wait_value(const std::shared_ptr<Completion>& state, uint64_t v, bool handler = false) {
     ++rt().stats.host_syncs;
     if (!state || !v) return rt().failed.load() ? fail(kErrorLaunchFailure) : kSuccess;
     // The timeline is the GPU's own count, there as soon as the work is: a short spin reads it before sleeping on the completion handler,
@@ -364,7 +365,7 @@ Error wait_value(const std::shared_ptr<Completion>& state, uint64_t v) {
     // in a row that did not end (a prompt's chunks) the next `skip` waits go straight to the handler, the skip doubling up to
     // kSpinSkipMax while spins keep failing; a spin that ends resets the count.  One long wait among short ones (a token's last) keeps
     // the spin, and a wait that is over before it starts counts for nothing.
-    if (state->timeline) {
+    if (state->timeline && !handler) {
         static thread_local unsigned skip = 0, backoff = 1, misses = 0;
         bool done = state->timeline->signaledValue() >= v;
         if (!done && skip > 0) {
@@ -542,13 +543,32 @@ Error new_alloc(void** p, size_t bytes, bool host) {
     return kSuccess;
 }
 
+// Every stream's work complete.  handler: and every completion handler run, so the allocations that work used are no
+// longer held (free_alloc() disposes of a retired one at once, purge_device_allocations() sees all of them).
+Error synchronize_all(bool handler) {
+    Runtime& r = rt();
+    // Stream destruction uses this separate registry lock as well. Completion
+    // callbacks never acquire the registry lock. Resource cleanup may acquire
+    // the allocation mutex, which is never held here while waiting.
+    std::lock_guard<std::recursive_mutex> lock(r.streams_mu);
+    std::vector<std::pair<std::shared_ptr<Completion>, uint64_t>> submitted;
+    for (auto* s : r.streams) {
+        std::lock_guard<std::recursive_mutex> stream_lock(s->mu);
+        flush(s);
+        submitted.emplace_back(s->completion, s->submitted);
+    }
+    for (const auto& [completion,value] : submitted)
+        if (auto e = wait_value(completion, value, handler); e != kSuccess) return e;
+    return kSuccess;
+}
+
 Error free_alloc(void* p) {
     if (!p) return kSuccess;
     Runtime& r = rt();
     size_t off = 0;
     const Alloc* a = find(p, &off);
     if (!a || off != 0) return fail(kErrorInvalidValue);
-    if (auto e = device_synchronize(); e != kSuccess) return e;
+    if (auto e = synchronize_all(true); e != kSuccess) return e;
     std::lock_guard<std::mutex> lk(r.mu);
     auto it = r.by_gpu.find(a->gpu);
     it->second.retired = true;
@@ -571,7 +591,7 @@ void* host_view(const void* p) {
 // and dropped from the residency set.  Returns the bytes given back.
 uint64_t purge_device_allocations(size_t min_bytes) {
     Runtime& r = rt();
-    if (device_synchronize() != kSuccess) return 0;
+    if (synchronize_all(true) != kSuccess) return 0;
     std::lock_guard<std::mutex> lk(r.mu);
     uint64_t n = 0;
     for (auto& [gpu, a] : r.by_gpu) {
@@ -602,22 +622,7 @@ const char* error_string(Error e) {
 Error get_device(int* dev) { *dev = 0; return kSuccess; }
 Error set_device(int dev) { return dev == 0 ? kSuccess : fail(kErrorInvalidValue); }
 Error device_count(int* n) { *n = rt().dev ? 1 : 0; return kSuccess; }
-Error device_synchronize() {
-    Runtime& r = rt();
-    // Stream destruction uses this separate registry lock as well. Completion
-    // callbacks never acquire the registry lock. Resource cleanup may acquire
-    // the allocation mutex, which is never held here while waiting.
-    std::lock_guard<std::recursive_mutex> lock(r.streams_mu);
-    std::vector<std::pair<std::shared_ptr<Completion>, uint64_t>> submitted;
-    for (auto* s : r.streams) {
-        std::lock_guard<std::recursive_mutex> stream_lock(s->mu);
-        flush(s);
-        submitted.emplace_back(s->completion, s->submitted);
-    }
-    for (const auto& [completion,value] : submitted)
-        if (auto e = wait_value(completion, value); e != kSuccess) return e;
-    return kSuccess;
-}
+Error device_synchronize() { return synchronize_all(false); }
 
 Error mem_get_info(size_t* free_b, size_t* total_b) {
     // the GPU's budget is the working set the OS grants this process; what is free is that minus what is allocated
@@ -745,7 +750,7 @@ Error stream_destroy(Stream s) {
     std::lock_guard<std::recursive_mutex> lock(rt().streams_mu);
     std::unique_lock<std::recursive_mutex> stream_lock(s->mu);
     flush(s);
-    const auto result = wait_value(s->completion, s->submitted);
+    const auto result = wait_value(s->completion, s->submitted, true);   // synchronize_all() no longer waits for its handlers
     rt().streams.erase(s);
     delete s->rec;
     s->rec = nullptr;
