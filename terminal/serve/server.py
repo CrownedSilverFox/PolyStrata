@@ -6466,7 +6466,8 @@ class Service:
                                     parser = self.parser_cls(thinking=False, tools=with_history_tools(tools, sampling),
                                                              stream_tools=True, recover=self.tool_call_recovery,
                                                              declared_only=declared_only,
-                                                             deferred=deferred or self.undeclared_tool_calls == "call")
+                                                             deferred=deferred or self.undeclared_tool_calls == "call",
+                                                             call_format=self.call_format)
                                     detok, tail, parser_done, force, budget = Detokenizer(self.tok), "", False, None, None
                                     if forced_text:     # a forced call (tool_choice): its opening again, read as
                                         for ev in cut(parser.feed(forced_text)):     # if the model had written it

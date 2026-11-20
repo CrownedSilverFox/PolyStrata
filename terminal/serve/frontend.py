@@ -3312,12 +3312,18 @@ class JsonOutputParser(OutputParser):
     """The parser for a model whose chat template tells it to write each call as JSON inside the wrapper:
     `<tool_call>\n{"name": NAME, "arguments": {...}}\n</tool_call>` (Qwen3, Hermes).  OutputParser already reads that form, but only
     as a recovery for a model that drifted off the XML form; for a JSON template it is the form itself, so it is read whether or
-    not the server's tool_call_recovery is on.  Everything else (reasoning, code fences, declared-tool rules) is OutputParser's."""
+    not the server's tool_call_recovery is on.  Everything else (reasoning, code fences, declared-tool rules) is OutputParser's.
+
+    (PolyStrata) `call_format` and `opened` are OutputParser's and go to it as they come: the template's tool-call form picks this
+    class, the tokenizer picks the call format (Service._read_tokenizer).  GLM 5.3 Flash's and Flint's templates list their tools
+    with tojson beside `<tool_call>`, so they read as JSON here, but the models write GLM's <arg_key> calls (call_format "glm"),
+    where OutputParser leaves the recovery off."""
 
     def __init__(self, thinking: bool = True, tools: list[dict] | None = None, stream_tools: bool = False,
-                 recover: bool = False, declared_only: bool = False, deferred: bool = False):
+                 recover: bool = False, declared_only: bool = False, deferred: bool = False,
+                 call_format: str = "function", opened: bool = False):
         super().__init__(thinking=thinking, tools=tools, stream_tools=stream_tools, recover=True,
-                         declared_only=declared_only, deferred=deferred)
+                         declared_only=declared_only, deferred=deferred, call_format=call_format, opened=opened)
 
 
 def parser_for_template(source: str | None):
