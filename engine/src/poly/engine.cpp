@@ -5913,6 +5913,9 @@ void Engine::moe_rows(Layer& L, int il, int n) {
     const int gt = (int) L.gu_type, ut = (int) L.u_type, dt = (int) L.d_type;
     const bool guard = half_sum_guard_ && Mmq::half_sums(dt);   // the down rows keep their sums in halves
     const int64_t ff = n_ff_exp_, ff2 = 2 * ff;
+    // swiglu's rows quantized for down as they are made, where down takes them as int8 (the same numbers, and
+    // neither the floats between the two kernels nor a launch: a 2,048-token batch of LFM2.5 writes and reads 50 MB)
+    const bool fused = !gelu_ && !guard && Mmq::int8(dt, ff);
     // A mixed layer multiplies gate and up apart, n_ff rows each, up's into the second half of a row: its rows
     // quantized for up's type too, since quantize() writes them for the matrix type they meet.
     const int64_t gu_rows = L.mixed() ? ff : ff2;
@@ -5971,10 +5974,14 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             up_mul(slot_of(r.j), L.slot_bytes, r.m, d_cb + (size_t) r.c * cb_row + r.j, r.most);
         }
         if (rc > 0) {
-            if (gelu_) geglu_rows(gu_, hx_, n_ff_exp_, rc, st_, &es);
-            else swiglu_clamp_rows(gu_, hx_, n_ff_exp_, rc, limit, st_, &es);
-            if (guard) guard_half_sums(hx_, ff, n_ff_exp_, rc, hf_, st_);
-            Mmq::quantize(hx_, nullptr, mq2_, dt, ff, ff, rc, st_);
+            if (fused) {
+                swiglu_clamp_i8_rows(gu_, mq2_, n_ff_exp_, rc, limit, st_, &es);
+            } else {
+                if (gelu_) geglu_rows(gu_, hx_, n_ff_exp_, rc, st_, &es);
+                else swiglu_clamp_rows(gu_, hx_, n_ff_exp_, rc, limit, st_, &es);
+                if (guard) guard_half_sums(hx_, ff, n_ff_exp_, rc, hf_, st_);
+                Mmq::quantize(hx_, nullptr, mq2_, dt, ff, ff, rc, st_);
+            }
         }
         for (const Run& r : runs_)
             mmq_->mul(slot_of(r.j) + gu2, dt, n_embd_, ff, L.slot_bytes, r.m, mq2_, d_cb + (size_t) r.c * cb_row + r.j,
@@ -6023,10 +6030,14 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             });
             ExpertScales er = es;
             if (er.ids) er.ids += r0;
-            if (gelu_) geglu_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, st_, &er);
-            else swiglu_clamp_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, limit, st_, &er);
-            if (guard) guard_half_sums(hx_ + (size_t) r0 * ff, ff, n_ff_exp_, rows, hf_ + r0, st_);
-            Mmq::quantize(hx_ + (size_t) r0 * ff, nullptr, mq2_, dt, ff, ff, rows, st_);
+            if (fused) {
+                swiglu_clamp_i8_rows(gu_ + (size_t) r0 * ff2, mq2_, n_ff_exp_, rows, limit, st_, &er);
+            } else {
+                if (gelu_) geglu_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, st_, &er);
+                else swiglu_clamp_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, limit, st_, &er);
+                if (guard) guard_half_sums(hx_ + (size_t) r0 * ff, ff, n_ff_exp_, rows, hf_ + r0, st_);
+                Mmq::quantize(hx_ + (size_t) r0 * ff, nullptr, mq2_, dt, ff, ff, rows, st_);
+            }
             each_class([&](int k, int top) {
                 const int32_t* b = (n_tile == 1 ? d_rel + (g0 - n_cached + r)
                                                 : d_tb + (size_t) (n_tile + k) * tile_row + (size_t) (g0 - n_cached + r));

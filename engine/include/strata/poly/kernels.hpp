@@ -216,6 +216,10 @@ struct ExpertScales {
 /// swiglu_clamp for rows that each hold n gate values and then n up values; out has n values a row.
 void swiglu_clamp_rows(const float* gate_up, float* out, int n, int rows, float limit, void* stream,
                        const ExpertScales* scales = nullptr);
+/// swiglu_clamp_rows, its rows written straight into xq as gemm_iq_i8_quantize writes them (n a multiple of 32),
+/// the same numbers as the two calls one after the other, without the floats between them.
+void swiglu_clamp_i8_rows(const float* gate_up, void* xq, int n, int rows, float limit, void* stream,
+                          const ExpertScales* scales = nullptr);
 /// out = gelu(gate) * up, with the tanh form of GELU that ggml's CUDA backend computes.
 void geglu(const float* gate, const float* up, float* out, int n, void* stream);
 /// geglu for rows that each hold n gate values and then n up values; out has n values a row.

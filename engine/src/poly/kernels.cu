@@ -1151,6 +1151,40 @@ __global__ void swiglu_clamp_rows_kernel(const float* __restrict__ gate_up, floa
     out[size_t(blockIdx.y) * n + i] = g / (1.0f + expf(-g)) * u;
 }
 
+// swiglu_clamp_rows_kernel's values quantized where they are made, as gemm_iq_i8_quantize's kernel quantizes them
+// (i8_mma.cuh): a block a row, a warp 32 values at a time.  q: the rows' int8 codes, d: a scale a 32 values,
+// ds: scale * the codes' sum.
+__global__ void swiglu_clamp_i8_rows_kernel(const float* __restrict__ gate_up, uint32_t* __restrict__ q, float* __restrict__ d,
+                                            float* __restrict__ ds, int n, float limit, ExpertScales s) {
+    const size_t row = blockIdx.x;
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, nb = n / 32;
+    const float* src = gate_up + row * 2 * n;
+    const float2 sc = row_scales(s, (int) row);
+    for (int b = warp; b < nb; b += blockDim.x / 32) {
+        const int i = b * 32 + lane;
+        const float g = fminf(src[i] * sc.x, limit);
+        const float u = fminf(fmaxf(src[n + i] * sc.y, -limit), limit);
+        const float v = g / (1.0f + expf(-g)) * u;
+        float amax = fabsf(v);
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) amax = fmaxf(amax, __shfl_xor_sync(0xffffffffu, amax, o));
+        const float d_inv = 127.0f / amax;
+        const int code = amax == 0.0f ? 0 : (int) roundf(v * d_inv);
+        int sum = code;
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) sum += __shfl_xor_sync(0xffffffffu, sum, o);
+        uint32_t w = (uint32_t) (code & 255) << (8 * (lane & 3));
+        w |= __shfl_xor_sync(0xffffffffu, w, 1);
+        w |= __shfl_xor_sync(0xffffffffu, w, 2);
+        if ((lane & 3) == 0) q[(row * n + i) / 4] = w;
+        if (lane == 0) {
+            const float scale = amax == 0.0f ? 0.0f : 1.0f / d_inv;
+            d[row * nb + b] = scale;
+            ds[row * nb + b] = scale * (float) sum;
+        }
+    }
+}
+
 __global__ void expert_weights_kernel(float* __restrict__ w, const float* __restrict__ scale,
                                       const int32_t* __restrict__ ids, int rows) {
     const int r = blockIdx.x * blockDim.x + threadIdx.x;
@@ -3644,6 +3678,14 @@ void swiglu_clamp_rows(const float* gate_up, float* out, int n, int rows, float 
                        const ExpertScales* scales) {
     swiglu_clamp_rows_kernel<<<dim3(grid(n, 256), rows), 256, 0, cs(stream)>>>(gate_up, out, n, limit,
                                                                                 scales ? *scales : ExpertScales{});
+}
+
+void swiglu_clamp_i8_rows(const float* gate_up, void* xq, int n, int rows, float limit, void* stream,
+                          const ExpertScales* scales) {
+    if (rows <= 0) return;
+    float* d = (float*) ((char*) xq + (size_t) rows * n);
+    swiglu_clamp_i8_rows_kernel<<<rows, 256, 0, cs(stream)>>>(gate_up, (uint32_t*) xq, d, d + (size_t) rows * (n / 32), n, limit,
+                                                              scales ? *scales : ExpertScales{});
 }
 
 void expert_weights(float* w, const float* scale, const int32_t* ids, int rows, void* stream) {
