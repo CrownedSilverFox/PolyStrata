@@ -62,6 +62,7 @@ void dot_bf16(int n, float* s, const void* w, const void* a) {
 
 struct Rows {
     DotFn dot = nullptr;
+    Q::DotRowsFn dots = nullptr;   // the same products for several activation rows at once, where there is one
     ActFn act = nullptr;
     int blck = 1;          // values a block of the weights
     int act_blck = 1;      // values a block of the activations
@@ -86,6 +87,7 @@ Rows rows_of(int type) {
     const Q::ActKernel* act = Q::act_kernel(t->act, arith);
     if (dot == nullptr || act == nullptr) return r;
     r.dot = dot->fn;
+    r.dots = Q::dot_rows_kernel(t->type, arith);
     r.act = act->fn;
     r.blck = t->blck;
     r.act_blck = a->blck;
@@ -341,23 +343,33 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
         for (int r = r0; r < r1; ++r) {
             const uint8_t* gate = e.gate + (size_t) r * gu_row;
             const uint8_t* up = e.up + (size_t) r * u_row;
-            for (int i = i0; i < i1; ++i) {
-                const int j = byp[i];
-                const uint8_t* a = actp + (size_t) experts[j].row * a_bytes;
-                const uint8_t* au = actup + (size_t) experts[j].row * au_step;
-                float g = 0.f, u = 0.f;
-                tg.dot(n_embd, &g, gate, a);
-                tu.dot(n_embd, &u, up, au);
-                g *= e.gate_scale;
-                u *= e.up_scale;
-                if (gelu) {
-                    hp[(size_t) j * n_ff + r] =
-                        0.5f * g * (1.f + std::tanh(0.7978845608f * g * (1.f + 0.044715f * g * g))) * u;
-                    continue;
+            // The expert's uses kUses at a time: where the format has a kernel for several activation rows
+            // (Rows::dots), the weight row is decoded once for all of them, each product the bits of its own.
+            for (int i = i0; i < i1;) {
+                constexpr int kUses = 8;
+                const int m = std::min(kUses, i1 - i);
+                float gs[kUses], us[kUses];
+                const void *as[kUses], *aus[kUses];
+                for (int k = 0; k < m; ++k) {
+                    as[k] = actp + (size_t) experts[byp[i + k]].row * a_bytes;
+                    aus[k] = actup + (size_t) experts[byp[i + k]].row * au_step;
                 }
-                g = std::min(g, limit);
-                u = std::clamp(u, -limit, limit);
-                hp[(size_t) j * n_ff + r] = g / (1.f + std::exp(-g)) * u;
+                if (m > 1 && tg.dots) tg.dots(n_embd, m, gs, gate, as);
+                else for (int k = 0; k < m; ++k) tg.dot(n_embd, gs + k, gate, as[k]);
+                if (m > 1 && tu.dots) tu.dots(n_embd, m, us, up, aus);
+                else for (int k = 0; k < m; ++k) tu.dot(n_embd, us + k, up, aus[k]);
+                for (int k = 0; k < m; ++k, ++i) {
+                    const int j = byp[i];
+                    float g = gs[k] * e.gate_scale, u = us[k] * e.up_scale;
+                    if (gelu) {
+                        hp[(size_t) j * n_ff + r] =
+                            0.5f * g * (1.f + std::tanh(0.7978845608f * g * (1.f + 0.044715f * g * g))) * u;
+                        continue;
+                    }
+                    g = std::min(g, limit);
+                    u = std::clamp(u, -limit, limit);
+                    hp[(size_t) j * n_ff + r] = g / (1.f + std::exp(-g)) * u;
+                }
             }
         }
         // the last of the run's tasks sees every other one's rows (release by each, acquire by the last)
