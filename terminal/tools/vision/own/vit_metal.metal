@@ -1,4 +1,4 @@
-// tools/vision/own/vit_metal.metal - the Qwen vision tower's kernels on Metal (own-stack phase 3).  The counterparts of vit_gpu.cu's kernels, one for one,
+// tools/vision/own/vit_metal.metal - the vision towers' kernels on Metal (own-stack phase 3; Qwen, Gemma 4, MiniCPM-V 4.7).  The counterparts of vit_gpu.cu's kernels, one for one,
 // with the same arithmetic: float32 activations, 16-bit GEMM inputs of the weight's own type (F16 or BF16), q / k / v and the attention scores in F16,
 // float32 accumulation.  Embedded into strata-vision at build time and compiled when the reader starts (vit_metal.mm); the tensor-op products are in
 // vit_metal_mpp.metal (Metal 4 only).
@@ -292,3 +292,231 @@ template [[host_name("vk_gemm_bf16")]] kernel decltype(vk_gemm<ushort, float, fa
 // attention: S = Q K^T (F16 in, F16 out) and context = P V (F16 in, V o-contiguous, float32 out)
 template [[host_name("vk_gemm_s")]] kernel decltype(vk_gemm<half, half, false>) vk_gemm<half, half, false>;
 template [[host_name("vk_gemm_pv")]] kernel decltype(vk_gemm<half, float, true>) vk_gemm<half, float, true>;
+
+// ---- Gemma 4's tower (vit_gpu.cu's k_gemma_* kernels, one for one; VitCpu::encode_gemma4 has the maths step by step) ----
+struct RmsArgs { int D, kind, has_w; float eps; };
+// out = x / sqrt(mean(x^2) + eps) (* w when has_w), into `kind`.  One group a row.
+kernel void vk_rms_cast(device const float* x [[buffer(0)]], device const float* w [[buffer(1)]], device void* out [[buffer(2)]],
+                        constant RmsArgs& a [[buffer(15)]], uint row [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]],
+                        ushort nt [[threads_per_threadgroup]]) {
+    threadgroup float red[32];
+    const int D = a.D;
+    device const float* xr = x + (ulong) row * D;
+    float s = 0.0f;
+    for (int i = tid; i < D; i += nt) s += xr[i] * xr[i];
+    const float scale = rsqrt(tg_sum(s, red, tid, nt) / (float) D + a.eps);
+    for (int i = tid; i < D; i += nt) store_kind(out, (ulong) row * D + i, a.has_w ? xr[i] * scale * w[i] : xr[i] * scale, a.kind);
+}
+// x[r] += RMS norm of y[r] * w (the post norms).  One group a row.
+kernel void vk_rms_add(device float* x [[buffer(0)]], device const float* y [[buffer(1)]], device const float* w [[buffer(2)]],
+                       constant RmsArgs& a [[buffer(15)]], uint row [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]],
+                       ushort nt [[threads_per_threadgroup]]) {
+    threadgroup float red[32];
+    const int D = a.D;
+    device const float* yr = y + (ulong) row * D;
+    device float* xr = x + (ulong) row * D;
+    float s = 0.0f;
+    for (int i = tid; i < D; i += nt) s += yr[i] * yr[i];
+    const float scale = rsqrt(tg_sum(s, red, tid, nt) / (float) D + a.eps);
+    for (int i = tid; i < D; i += nt) xr[i] += yr[i] * scale * w[i];
+}
+struct GemmaPosArgs { int T, pw, D; };
+// x[t] += the x table's row of the token's column, then the y table's row of its row (T positions a table); tokens in reading order.  One group a token.
+kernel void vk_gemma_pos(device float* x [[buffer(0)]], device const float* pos [[buffer(1)]], constant GemmaPosArgs& a [[buffer(15)]],
+                         uint t [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    const int D = a.D, ti = int(t);
+    device const float* tx = pos + (ulong) (ti % a.pw) * D;
+    device const float* ty = pos + (ulong) (a.T + ti / a.pw) * D;
+    device float* xr = x + (ulong) t * D;
+    for (int i = tid; i < D; i += nt) {
+        const float v = xr[i] + tx[i];
+        xr[i] = v + ty[i];
+    }
+}
+struct GemmaQkvArgs { int row0, pw, heads, hd; float theta_scale, eps; };
+// The q, k, v products of the tokens row0 .. (three [rows][D] float32 blocks: yq, yk, yv) -> q, k in QT (float or half) and v F16, each [N][D].  Per head: an
+// RMS norm (q and k weighted by qn and kn, v not), then the rotary on q and k: the first half of a head turns by the token's column, the second half by its row
+// (NeoX pairs i, i + hd/4).  One group a row; H <= 32.
+template <typename QT>
+kernel void vk_gemma_qkv(device const float* yq [[buffer(0)]], device const float* yk [[buffer(1)]], device const float* yv [[buffer(2)]],
+                         device const float* qn [[buffer(3)]], device const float* kn [[buffer(4)]], device QT* q [[buffer(5)]],
+                         device QT* k [[buffer(6)]], device ushort* v [[buffer(7)]], constant GemmaQkvArgs& a [[buffer(15)]],
+                         uint gr [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    threadgroup float sc[3][32];
+    const int H = a.heads, hd = a.hd, D = H * hd, half_ = hd / 2, pairs = half_ / 2;
+    const int t = a.row0 + int(gr), col = t % a.pw, rowi = t / a.pw;
+    device const float* qr = yq + (ulong) gr * D;
+    device const float* kr = yk + (ulong) gr * D;
+    device const float* vr = yv + (ulong) gr * D;
+    for (int h = tid; h < H; h += nt) {
+        float sq = 0.0f, sk = 0.0f, sv = 0.0f;
+        for (int i = 0; i < hd; ++i) {
+            const float a0 = qr[h * hd + i], a1 = kr[h * hd + i], a2 = vr[h * hd + i];
+            sq += a0 * a0;
+            sk += a1 * a1;
+            sv += a2 * a2;
+        }
+        sc[0][h] = rsqrt(sq / (float) hd + a.eps);
+        sc[1][h] = rsqrt(sk / (float) hd + a.eps);
+        sc[2][h] = rsqrt(sv / (float) hd + a.eps);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (int e = tid; e < D; e += nt) v[(ulong) t * D + e] = f_to_f16bits(vr[e] * sc[2][e / hd]);
+    for (int p = tid; p < 2 * H * pairs; p += nt) {
+        const int part = p / (H * pairs), rem = p % (H * pairs), h = rem / pairs, i = rem % pairs;
+        const int A = part * half_ + i, B = A + pairs, base = h * hd;
+        float ang = float(part ? rowi : col);      // p theta^i grown by multiplication, as the CPU tower's and ggml's tables are
+        for (int j = 0; j < i; ++j) ang *= a.theta_scale;
+        const float sn = precise::sin(ang), cs = precise::cos(ang);
+        const float q0 = qr[base + A] * sc[0][h] * qn[A], q1 = qr[base + B] * sc[0][h] * qn[B];
+        const float k0 = kr[base + A] * sc[1][h] * kn[A], k1 = kr[base + B] * sc[1][h] * kn[B];
+        q[(ulong) t * D + base + A] = QT(q0 * cs - q1 * sn);
+        q[(ulong) t * D + base + B] = QT(q0 * sn + q1 * cs);
+        k[(ulong) t * D + base + A] = QT(k0 * cs - k1 * sn);
+        k[(ulong) t * D + base + B] = QT(k0 * sn + k1 * cs);
+    }
+}
+template [[host_name("vk_gemma_qkv")]] kernel decltype(vk_gemma_qkv<half>) vk_gemma_qkv<half>;
+template [[host_name("vk_gemma_qkv32")]] kernel decltype(vk_gemma_qkv<float>) vk_gemma_qkv<float>;
+// out = gate * sigmoid(1.702 gate) * up into `kind` (ggml's geglu_quick).  Grid-stride over n.
+kernel void vk_geglu_quick_cast(device const float* gate [[buffer(0)]], device const float* up [[buffer(1)]], device void* out [[buffer(2)]],
+                                constant EltArgs& a [[buffer(15)]], uint gid [[thread_position_in_grid]], uint gsz [[threads_per_grid]]) {
+    for (ulong i = gid; i < a.n; i += gsz) {
+        const float x = gate[i];
+        store_kind(out, i, x * (1.0f / (1.0f + exp(-1.702f * x))) * up[i], a.kind);
+    }
+}
+struct GemmaPoolArgs { int pw, pool, ox, t0, D, has_std, kind; float sq, eps; };
+// pooled token t0 + group: the mean of its pool x pool square of x, times sq, (- std_bias) * std_scale when has_std, then an RMS norm (no weight), into `kind`.
+// One group a pooled token; its D values wait in threadgroup memory (D <= 4096).
+kernel void vk_gemma_pool(device const float* x [[buffer(0)]], device const float* sb [[buffer(1)]], device const float* ss [[buffer(2)]],
+                          device void* out [[buffer(3)]], constant GemmaPoolArgs& a [[buffer(15)]], uint g [[threadgroup_position_in_grid]],
+                          ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    threadgroup float pv[4096];
+    threadgroup float red[32];
+    const int D = a.D, t = a.t0 + int(g), by = (t / a.ox) * a.pool, bx = (t % a.ox) * a.pool;
+    const float area = float(a.pool * a.pool);
+    float s2 = 0.0f;
+    for (int d = tid; d < D; d += nt) {
+        float s = 0.0f;
+        for (int ky = 0; ky < a.pool; ++ky)
+            for (int kx = 0; kx < a.pool; ++kx) s += x[((ulong) (by + ky) * a.pw + (ulong) (bx + kx)) * D + d];
+        float p = s / area * a.sq;
+        if (a.has_std) p = (p - sb[d]) * ss[d];
+        pv[d] = p;
+        s2 += p * p;
+    }
+    const float scale = rsqrt(tg_sum(s2, red, tid, nt) / (float) D + a.eps);
+    for (int d = tid; d < D; d += nt) store_kind(out, (ulong) g * D + d, pv[d] * scale, a.kind);
+}
+struct SoftmaxF32Args { int n, ld_in, ld_out; };
+// float32 scores S (row ld_in) -> probabilities into F16 P (row ld_out), exact float32 softmax (Gemma 4: no 1/sqrt(d) scale, so the scores are large and
+// F16 scores lose the softmax's precision).  One group a row, 256 threads; the row's three passes find it in the cache after the first.
+kernel void vk_softmax_f32_to16(device const float* S [[buffer(0)]], device ushort* P [[buffer(1)]], constant SoftmaxF32Args& a [[buffer(15)]],
+                                uint row [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    threadgroup float red[32];
+    device const float* s = S + (ulong) row * a.ld_in;
+    device ushort* p = P + (ulong) row * a.ld_out;
+    const int n = a.n;
+    float m = -FLT_MAX;
+    for (int j = tid; j < n; j += nt) m = fmax(m, s[j]);
+    m = tg_max(m, red, tid, nt);
+    float sum = 0.0f;
+    for (int j = tid; j < n; j += nt) sum += precise::exp(s[j] - m);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float inv = 1.0f / tg_sum(sum, red, tid, nt);
+    for (int j = tid; j < n; j += nt) p[j] = f_to_f16bits(precise::exp(s[j] - m) * inv);
+}
+
+// ---- MiniCPM-V 4.7's tower (vit_gpu.cu's k_mini_* and window kernels, one for one; VitCpu::encode_minicpmv has the maths step by step) ----
+struct MiniPosArgs { int T, pw, ph, D; };
+// x[t] = (x[t] + patch bias) + the position table's row of the patch's bucket: floor(T i / ph) * T + floor(T j / pw) (integer division: the same floor
+// as the CPU tower's in double).  Patches in reading order.  One group a patch.
+kernel void vk_mini_pos(device float* x [[buffer(0)]], device const float* bias [[buffer(1)]], device const float* pos [[buffer(2)]],
+                        constant MiniPosArgs& a [[buffer(15)]], uint t [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]],
+                        ushort nt [[threads_per_threadgroup]]) {
+    const int ti = int(t), bi = a.T * (ti / a.pw) / a.ph, bj = a.T * (ti % a.pw) / a.pw;
+    device const float* pr = pos + ((ulong) bi * a.T + (ulong) bj) * a.D;
+    device float* xr = x + (ulong) t * a.D;
+    for (int i = tid; i < a.D; i += nt) xr[i] = (xr[i] + bias[i]) + pr[i];
+}
+struct MiniQkvArgs { int row0, D; float qscale; };
+// The joined q, k, v product of the patches row0 .. (a row [q | k | v], 3D) plus its joined bias -> F16 [N][D] each, q times qscale.  One group a row.
+kernel void vk_mini_qkv(device const float* y [[buffer(0)]], device const float* bias [[buffer(1)]], device ushort* q [[buffer(2)]],
+                        device ushort* k [[buffer(3)]], device ushort* v [[buffer(4)]], constant MiniQkvArgs& a [[buffer(15)]],
+                        uint gr [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    const int D = a.D;
+    device const float* yr = y + (ulong) gr * 3 * D;
+    const ulong out = (ulong) (a.row0 + int(gr)) * D;
+    for (int i = tid; i < D; i += nt) {
+        q[out + i] = f_to_f16bits((yr[i] + bias[i]) * a.qscale);
+        k[out + i] = f_to_f16bits(yr[D + i] + bias[D + i]);
+        v[out + i] = f_to_f16bits(yr[2 * D + i] + bias[2 * D + i]);
+    }
+}
+struct WindowArgs { int pw, heads, hd; };
+// The window merger's attention: softmax(q k^T) v inside each 2x2 window of a pw-wide patch grid (q scaled), F16 [N][D] in, float32 ctx [N][D] out.
+// A group a window, a simdgroup a head (32 * heads threads).
+kernel void vk_window_attn(device const half* q [[buffer(0)]], device const half* k [[buffer(1)]], device const half* v [[buffer(2)]],
+                           device float* ctx [[buffer(3)]], constant WindowArgs& a [[buffer(15)]], uint w [[threadgroup_position_in_grid]],
+                           ushort h [[simdgroup_index_in_threadgroup]], ushort lane [[thread_index_in_simdgroup]]) {
+    if (int(h) >= a.heads) return;
+    const int hw = a.pw / 2, wi = int(w) / hw, wj = int(w) % hw, D = a.heads * a.hd;
+    const ulong at[4] = {(ulong) (2 * wi) * a.pw + 2 * wj, (ulong) (2 * wi) * a.pw + 2 * wj + 1, (ulong) (2 * wi + 1) * a.pw + 2 * wj,
+                         (ulong) (2 * wi + 1) * a.pw + 2 * wj + 1};
+    const ulong col = (ulong) h * a.hd;
+    for (int r = 0; r < 4; ++r) {
+        float s[4];
+        for (int b = 0; b < 4; ++b) {
+            float acc = 0.0f;
+            for (int d = lane; d < a.hd; d += 32) acc += float(q[at[r] * D + col + d]) * float(k[at[b] * D + col + d]);
+            s[b] = simd_sum(acc);
+        }
+        const float mx = fmax(fmax(s[0], s[1]), fmax(s[2], s[3]));
+        float sum = 0.0f;
+        for (int b = 0; b < 4; ++b) {
+            s[b] = precise::exp(s[b] - mx);
+            sum += s[b];
+        }
+        for (int d = lane; d < a.hd; d += 32) {
+            float acc = 0.0f;
+            for (int b = 0; b < 4; ++b) acc += s[b] * float(v[at[b] * D + col + d]);
+            ctx[at[r] * D + col + d] = acc / sum;
+        }
+    }
+}
+struct Gather4Args { int gw, D; };
+// The four rows of each 2x2 window of a gw-wide grid side by side (top left, top right, bottom left, bottom right): out [M][4D], window t in reading
+// order.  One group a window.
+kernel void vk_gather4(device const float* x [[buffer(0)]], device float* out [[buffer(1)]], constant Gather4Args& a [[buffer(15)]],
+                       uint t [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    const int qw = a.gw / 2, i = int(t) / qw, j = int(t) % qw, D = a.D;
+    const ulong at[4] = {(ulong) (2 * i) * a.gw + 2 * j, (ulong) (2 * i) * a.gw + 2 * j + 1, (ulong) (2 * i + 1) * a.gw + 2 * j,
+                         (ulong) (2 * i + 1) * a.gw + 2 * j + 1};
+    for (int e = tid; e < 4 * D; e += nt) out[(ulong) t * 4 * D + e] = x[at[e / D] * D + e % D];
+}
+// The downsample's output: x[r] = (y[r] + bias) + the mean of the four rows of cat[r] (((p0 + p1) + p2) + p3, then a quarter, as the graph adds them).
+// One group a row of D.
+kernel void vk_ds_out(device float* x [[buffer(0)]], device const float* y [[buffer(1)]], device const float* bias [[buffer(2)]],
+                      device const float* cat [[buffer(3)]], constant EltArgs& a [[buffer(15)]], uint r [[threadgroup_position_in_grid]],
+                      ushort tid [[thread_index_in_threadgroup]], ushort nt [[threads_per_threadgroup]]) {
+    const int D = a.D;
+    device const float* c = cat + (ulong) r * 4 * D;
+    for (int i = tid; i < D; i += nt) x[(ulong) r * D + i] = (y[(ulong) r * D + i] + bias[i]) + (((c[i] + c[D + i]) + c[2 * D + i]) + c[3 * D + i]) * 0.25f;
+}
+// erf for float, Abramowitz and Stegun 7.1.26 (absolute error under 1.5e-7, ggml-metal's erf): the MSL standard library has none
+inline float erf_as(float x) {
+    const float t = 1.0f / (1.0f + 0.3275911f * fabs(x));
+    const float y = 1.0f - (((((1.061405429f * t - 1.453152027f) * t) + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t * precise::exp(-x * x);
+    return copysign(y, x);
+}
+// out = gelu_erf(y + bias) into `kind` (ggml's FFN_GELU_ERF: 0.5 x (1 + erf(x / sqrt 2))).  One group a row of D.
+kernel void vk_bias_gelu_erf_cast(device const float* y [[buffer(0)]], device const float* bias [[buffer(1)]], device void* out [[buffer(2)]],
+                                  constant EltArgs& a [[buffer(15)]], uint row [[threadgroup_position_in_grid]], ushort tid [[thread_index_in_threadgroup]],
+                                  ushort nt [[threads_per_threadgroup]]) {
+    const ulong base = (ulong) row * a.D;
+    for (int i = tid; i < a.D; i += nt) {
+        const float x = y[base + i] + bias[i];
+        store_kind(out, base + i, 0.5f * x * (1.0f + erf_as(x * 0.70710678118654752f)), a.kind);
+    }
+}
