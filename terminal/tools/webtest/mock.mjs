@@ -5,7 +5,8 @@
 //   const mock = await startMock();           // { url, state, stop() }
 //
 // What the page asks and what it gets: GET /health /metrics /mcp /settings /config, POST /load /unload,
-// POST /v1/chat/completions (streamed). The reply depends on a word in the last user message:
+// POST /v1/chat/completions (streamed), and the 404 the server gives GET /api/expert-heat for a model that does not save its
+// expert profile (the page's Experts probe). The reply depends on a word in the last user message:
 //   #math   inline and display formulas, a price      #svg / #html  a fenced svg / html block     #think  reasoning first
 //   #long   a slow answer (about 6 s) to interrupt    #hold  never ends until the page stops it   #tool   an MCP tool call, then text
 //   #error  a 500                                      anything else: "Mock answer N."
@@ -19,8 +20,10 @@ export const WEB = path.resolve(here, "..", "..", "serve", "web");
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".json": "application/json; charset=utf-8", ".woff2": "font/woff2" };
 
-// the one header the real server puts on the page (serve/server.py, PAGE_CSP): read from the source so the two cannot drift
-const PAGE_CSP = (/^PAGE_CSP = "(.*)"$/m.exec(fs.readFileSync(path.join(here, "..", "..", "serve", "server.py"), "utf8")) || [])[1] || "";
+// the one header the real server puts on the page (PAGE_CSP in serve/server_parts/engines.py): read from the source so the two
+// cannot drift. Not finding it is an error: with no header the preview tests would check a page without its policy.
+const PAGE_CSP = (/^PAGE_CSP = "(.*)"$/m.exec(fs.readFileSync(path.join(here, "..", "..", "serve", "server_parts", "engines.py"), "utf8")) || [])[1];
+if (!PAGE_CSP) throw new Error("PAGE_CSP is not in serve/server_parts/engines.py");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lastUser = (messages) => {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -53,6 +56,7 @@ export async function startMock({ port = 0, root = WEB, loaded = true, csp = tru
       if (p === "/metrics") return json(200, metrics(state));
       if (p === "/mcp") return json(200, { servers: [], tools: 0 });
       if (p === "/settings") return json(200, { shared: false, defaults: null });
+      if (p === "/api/expert-heat") return json(404, { error: { message: "this model does not save its expert profile (expert_profile_save in its config)" } });
       return json(404, { error: { message: "not found" } });
     }
     let body = "";

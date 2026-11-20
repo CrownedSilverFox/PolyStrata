@@ -84,7 +84,6 @@ main { flex: 1; min-height: 0; display: flex; }
 
 /* ---------------------------------------------------------------- monitor */
 .view--monitor, .view--about, .view--experts, .view--requests { overflow-y: auto; }
-.requests-frame { flex: 1; width: 100%; border: 0; }
 /* #5723: the Experts view, a grid of the learned expert ranks (experts.js) */
 .experts { width: 100%; max-width: 1200px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
 .experts-card { display: flex; flex-direction: column; gap: 8px; }

@@ -4,7 +4,7 @@
 //   WEBTEST_MODULES=<folder with node_modules/puppeteer-core> [CHROME_BIN=<chrome>] node tools/webtest/browser_test.mjs [name]
 import assert from "node:assert/strict";
 import { startMock } from "./mock.mjs";
-import { launch, openPage, say, idle, sleep, runner } from "./lib.mjs";
+import { launch, openPage, say, idle, sleep, runner, pageErrors } from "./lib.mjs";
 
 const { test, run } = runner("web page browser tests");
 
@@ -335,7 +335,7 @@ htest("list: chats are kept, found, renamed, deleted with an Undo, and survive a
   assert.deepEqual(await texts(page), ["u:beta question", "a:Mock answer 2."]);
   await (await row("Garden plan")).click();
   assert.deepEqual(await texts(page), ["u:alpha question", "a:Mock answer 1."]);
-  assert.deepEqual(page.errors, []);
+  assert.deepEqual(pageErrors(page), []);
   await page.close();
 });
 
@@ -641,7 +641,7 @@ htest("language: /?lang= is for one visit, an unknown code stays English, every 
     assert.equal(await page.evaluate(() => StrataI18n.lang), lang);
     assert.notEqual(await page.$eval("#send-btn", (e) => e.getAttribute("aria-label")), "Send", lang);
     await ask(page, "hello " + lang);
-    assert.deepEqual(page.errors, [], lang);
+    assert.deepEqual(pageErrors(page), [], lang);
     await page.close();
   }
 });
@@ -687,7 +687,7 @@ htest("ime: the key that commits or cancels a conversion does not send, end a re
   await sleep(100);
   await page.keyboard.press("Escape");
   assert.equal(await page.$(".history-editor"), null);
-  assert.deepEqual(page.errors, []);
+  assert.deepEqual(pageErrors(page), []);
   await page.close();
 });
 
