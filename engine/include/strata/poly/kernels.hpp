@@ -141,6 +141,13 @@ struct RowCaches {
     size_t rs = 0;   ///< the codes from a cache's row to its next, as Kvq8::rs; 0: n
 };
 void store_q8_rows(const float* x, const RowCaches& caches, int n, const long long* at, int rows, void* stream);
+/// store_f16_at() for rows of different sequences: row r into the fp16 cache rows[r] at the row at[2 * r].  CUDA
+/// only.
+struct RowHalves {
+    static constexpr int kMax = 32;
+    uint16_t* rows[kMax] = {};
+};
+void store_f16_rows(const float* x, const RowHalves& caches, int n, const long long* at, int rows, void* stream);
 
 #pragma pack(push, 1)
 struct block_q4_0 {
@@ -298,7 +305,7 @@ void head_norm_rope(const float* x, int x_stride, const float* w, float* y, int 
                     float theta_scale, int64_t pos, int rows, float eps, void* stream, const float* freq = nullptr,
                     const int32_t* axes = nullptr, int sections = 1, const long long* at = nullptr);
 /// attend() for a step's sequences, each its own rows, cache and position: sequence k's queries q[k] (tokens[k]
-/// rows), its q8_0 caches, its position at[k] on the card and the room keys[k] its call is sized for, its output
+/// rows), its caches, its position at[k] on the card and the room keys[k] its call is sized for, its output
 /// out[k].  score[k] holds its scores and wt[k] its weights, apart from every other sequence's.  Each sequence gets
 /// the bits attend() gives it alone.  CUDA only.
 struct AttnSeqs {
@@ -315,9 +322,10 @@ struct AttnSeqs {
     const long long* at[kMax] = {};
     int keys[kMax] = {}, tokens[kMax] = {};
     size_t rs = 0;   ///< every cache's codes from a row to the next, as Kvq8::rs; 0: kv_heads * dim
+    bool f16 = false;   ///< kc[k] and vc[k] are fp16 caches (const half*), ks and vs unused, rs 0
 };
-/// Whether attend_seqs() takes these sequences: what attend() would run for each of them, a q8_0 cache with no
-/// window, no ring and no sinks, has a kernel here.  It fills in score[k] and wt[k] from `score` (score_floats).
+/// Whether attend_seqs() takes these sequences: what attend() would run for each of them, a q8_0 or fp16 cache
+/// with no window, no ring and no sinks, has a kernel here.  It fills in score[k] and wt[k] from `score` (score_floats).
 bool attend_seqs_plan(AttnSeqs& seqs, float* score, size_t score_floats, int chunk, int dim, int n_head, int kv_heads);
 void attend_seqs(const AttnSeqs& seqs, int dim, int n_head, int kv_heads, float scale, void* stream);
 /// head_norm_rope() for rows of different sequences: row r turns by turns[2 * r] (step()'s pairs of position and

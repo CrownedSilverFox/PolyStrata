@@ -823,6 +823,8 @@ protected:
     std::vector<void*> graphs_;   ///< every recorded graph, to destroy
     std::map<std::vector<int>, void*> passes_;   ///< a call's layers recorded as one (run()): by its tokens and
                                                  ///< every layer's head_key()
+    /// step()'s layers and logits recorded as one: by its rows, each row's sequence, guess and head_key()s
+    std::map<std::vector<int>, void*> step_passes_;
     void* tail_ = nullptr;        ///< one token's launches from the last layer to the logits, recorded
     // A recorded launch cannot be given the position as an argument: it reads it here when it runs.  eval() writes
     // the token's place in the sequence and its rotary position before it replays the layers.

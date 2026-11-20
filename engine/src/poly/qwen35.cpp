@@ -1365,6 +1365,49 @@ void Qwen35::attn_rows(Block& B, int il, int n) {
         lin(B.wo, att_, ao_, n);
         return;
     }
+    // The same for an fp16 cache, when attend_seqs() has the launches attend() would run for every sequence.
+    // Otherwise the loop below, a sequence at a time.
+    if (!codes && ring == 0 && n <= RowHalves::kMax) {
+        RowHalves keys, vals;
+        for (int r = 0; r < n; ++r) {
+            keys.rows[r] = (uint16_t*) seq_buf(rows_of_[r].seq, B.keys);
+            vals.rows[r] = (uint16_t*) seq_buf(rows_of_[r].seq, B.vals);
+        }
+        AttnSeqs seqs;
+        seqs.f16 = true;
+        bool all = true;
+        for (int i = 0, m; i < n && all; i += m) {
+            const Row& r = rows_of_[i];
+            m = i + 1 < n && rows_of_[i + 1].seq == r.seq ? 2 : 1;
+            if (fdec_ && r.pos >= fdec_from_) all = false;
+            const int64_t keep = pos_;
+            pos_ = r.pos;
+            const int sized = room(m);
+            pos_ = keep;
+            const int k = seqs.n++;
+            seqs.q[k] = q_ + i * hq;
+            seqs.out[k] = att_ + i * hq;
+            seqs.kc[k] = (const int8_t*) keys.rows[i];
+            seqs.vc[k] = (const int8_t*) vals.rows[i];
+            seqs.at[k] = at + 2 * i;
+            seqs.keys[k] = sized;
+            seqs.tokens[k] = m;
+            all = seqs.n < AttnSeqs::kMax || i + m >= n;
+        }
+        if (all && attend_seqs_plan(seqs, score_, (size_t) chunk_ * n_head_ * opt_.max_context, chunk_, head_dim_,
+                                    n_head_, n_kv_)) {
+            head_norm_rope_rows(qg_, 2 * head_dim_, fp(B.q_norm), q_, head_dim_, n_head_, n_rot_, theta_scale_, n,
+                                rms_eps_, st_, sections_, at + 1);
+            head_norm_rope_rows(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, n,
+                                rms_eps_, st_, sections_, at + 1);
+            store_f16_rows(k_, keys, (int) kv, at, n, st_);
+            store_f16_rows(v_, vals, (int) kv, at, n, st_);
+            attend_seqs(seqs, head_dim_, n_head_, n_kv_, scale, st_);
+            mul_sigmoid(att_, qg_ + head_dim_, head_dim_, n * n_head_, 2 * head_dim_, false, st_);
+            lin(B.wo, att_, ao_, n);
+            return;
+        }
+    }
 #endif
     for (int i = 0, m; i < n; i += m) {
         const Row& r = rows_of_[i];

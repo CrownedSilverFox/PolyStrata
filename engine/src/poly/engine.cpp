@@ -1184,6 +1184,7 @@ void Engine::metal_invalidate_graphs() {
         l.card = -1;
     }
     passes_.clear();
+    step_passes_.clear();
     tail_ = nullptr;
     for (Seq& q : seqs_) {
         q.heads.clear(); q.passes.clear(); q.tail = nullptr;
@@ -6435,6 +6436,45 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
             }
     };
     bool out_done[2] = {false, false};   // the halves whose logits are on their way
+    // Once every layer has shown it routes on the card, the step's layers and its logits are one recording, as
+    // run()'s are: the card waited 2 to 4 microseconds from one recording to the next, four of them a layer, and
+    // after the last for the host's launch of the logits.  The same launches as the layer by layer replays.
+    bool whole = replay && card && batch_heads() && !next_;
+    for (int il = lo_; il < hi_ && whole; ++il) {
+        const Layer& L = layers_[(size_t) il];
+        whole = L.fixed && (!L.moe || (L.card == 1 && !batched(L, R)));
+    }
+    if (whole) {
+        const int64_t keep = pos_;
+        std::vector<int> wkey{R};
+        for (int i = 0; i < R; ++i) {
+            pos_ = at[(size_t) i];
+            wkey.push_back(rseq[(size_t) i]);
+            wkey.push_back(rsnap[(size_t) i] ? 1 : 0);
+            wkey.push_back(guesses ? 1 : 0);
+            for (int il = lo_; il < hi_; ++il) wkey.push_back(head_key(il, 1));
+        }
+        pos_ = keep;
+        void*& pass = step_passes_[wkey];
+        if (!pass)
+            pass = record([&] {
+                for (int il = lo_; il < hi_; ++il) {
+                    Layer& L = layers_[(size_t) il];
+                    rows_of_ = rows.data();
+                    n_rows_of_ = R;
+                    layer_head(L, il, R);
+                    rows_of_ = nullptr;
+                    if (!L.moe) continue;
+                    moe_shared(L, il, R);
+                    moe_card(L, il, R);
+                    layer_tail(L, il, R);
+                }
+                logits_rows(0, R);
+            });
+        ck(cudaGraphLaunch((cudaGraphExec_t) pass, cs(st_)), "layer graph");
+        for (int il = lo_; il < hi_; ++il) stats_.gpu_experts += layers_[(size_t) il].moe ? R * n_used_ : 0;
+        out_done[0] = out_done[1] = true;
+    }
     // With experts on the CPU, the rows go through the layers in two halves, a sequence's rows in one, as a window's
     // tokens do (run()): this thread routes a half and computes its CPU experts, and meanwhile the thread that hands
     // the card its cached experts hands it first the other half's sum, the rest of its layer and the next layer up to
@@ -6545,7 +6585,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
         }
         back();
     }
-    for (int il = lo_; il < hi_ && !halved; ++il) {
+    for (int il = lo_; il < hi_ && !halved && !whole; ++il) {
         Layer& L = layers_[(size_t) il];
         if (batch_heads()) {
             const int64_t keep = pos_;
