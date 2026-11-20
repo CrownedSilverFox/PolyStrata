@@ -71,12 +71,12 @@ public:
 private:
     void loop();
 
-    std::thread th_;
     const std::function<void()>* fn_ = nullptr;
     std::exception_ptr failed_;
     alignas(64) std::atomic<uint32_t> posted_{0};
     alignas(64) std::atomic<uint32_t> done_{0};
     std::atomic<bool> sleeping_{false}, quit_{false};
+    std::thread th_;   ///< last: the constructor starts it, and loop() reads the members above
 };
 
 /// One routed expert of a token: its three matrices in the GGUF, its router weight, and which of the call's tokens
