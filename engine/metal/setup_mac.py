@@ -458,7 +458,7 @@ def setup_poly(a, info: dict, data: Path, elsewhere: list) -> int:
     S.pip_install(S.requirement_lines() if S.REQUIREMENTS.exists() else S.PY_PACKAGES,
                   "numpy, jinja2, regex, cmake, ninja and server packages")
     S.step(4, "the strata-poly engine (Metal)")
-    llama = S.get_llama_cpp()
+    llama = S.llama_override()                         # None: no llama.cpp (STRATA_GGML_DIR overrides)
     if a.build:
         (BUILD_DIR / "BUILD-poly.json").unlink(missing_ok=True)
     exe = build_engine(llama, poly=True)
@@ -501,7 +501,7 @@ def setup_poly(a, info: dict, data: Path, elsewhere: list) -> int:
     pack = S.find_in([data, *elsewhere], f"packs/{tag.lower()}") or data / "packs" / tag.lower()
     if not (pack / "tokenizer" / "vocab.json").exists():
         S.run([sys.executable, str(ROOT.parent / "terminal" / "tools" / "strata_tokenizer.py"), "--gguf", str(files[0]), "--out", str(pack)],
-              env=dict(os.environ, STRATA_GGUF_PY=str(llama / "gguf-py")))
+              env=dict(os.environ, **S.gguf_py_env()))
     profile = pack / "expert-profile.txt"
     shipped = d.get("profile", fam.get("profile"))
     if shipped and not profile.exists():
@@ -579,7 +579,7 @@ def setup_q36(a, info: dict, data: Path, elsewhere: list) -> int:
                 S.fail(f"missing local model asset: {path}")
     S.pip_install(S.requirement_lines() if S.REQUIREMENTS.exists() else S.PY_PACKAGES,
                   "numpy, jinja2, regex, cmake, ninja and server packages")
-    llama = S.get_llama_cpp()
+    llama = S.llama_override()                         # None: no llama.cpp (STRATA_GGML_DIR overrides)
     if a.build:
         (BUILD_DIR / "BUILD-q36.json").unlink(missing_ok=True)
     exe = build_engine(llama, engine="strata-q36")
@@ -593,7 +593,7 @@ def setup_q36(a, info: dict, data: Path, elsewhere: list) -> int:
     pack = S.find_in([data, *elsewhere], f"packs/{tag.lower()}") or data / "packs" / tag.lower()
     if not (pack / "tokenizer" / "vocab.json").is_file():
         S.run([sys.executable, str(ROOT.parent / "terminal" / "tools" / "strata_tokenizer.py"), "--gguf", str(gguf), "--out", str(pack)],
-              env=dict(os.environ, STRATA_GGUF_PY=str(llama / "gguf-py")))
+              env=dict(os.environ, **S.gguf_py_env()))
     args = ["--native", str(gguf), "--max-context", str(ctx), "--prefill", "auto", "--mtp", str(fam["mtp"])]
     if info.get("perf_cores"):
         args += ["--pool-workers", str(info["perf_cores"])]

@@ -10577,7 +10577,8 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
 
     step(4, "the strata-poly engine")
     llama = get_llama_cpp()
-    ok(f"llama.cpp {LLAMA_CPP_COMMIT[:7]} (gguf-py, ggml)")
+    if llama:
+        ok(f"llama.cpp checkout {llama} (STRATA_GGML_DIR)")
     if not a.build and not hip and cuda_tk != 12:
         get_poly_prebuilt(gpu)
     # --max-compatibility: the release build; a run without --build keeps the choice the installed engine records
