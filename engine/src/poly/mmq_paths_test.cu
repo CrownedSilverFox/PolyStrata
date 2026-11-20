@@ -3,9 +3,12 @@
 // uneven rows, an empty one, and their products scattered to other rows (bounds and ids, the bounds mirrored on the
 // host as the engine does).  The path is the card's (int8 tiles, fp16 tiles, or the BLAS path; STRATA_POLY_PROMPT_BLAS=1
 // forces the BLAS path), so a run prints that path's error: run it both ways to compare them.  The activations are
-// normal values with a few channels 30 times larger, and rows of different sizes, as a transformer's are.
+// normal values with a few channels 30 times larger, and rows of different sizes, as a transformer's are.  The int8
+// path is checked a second time against the same weights times the rows rounded as its quantizer rounds them, where
+// only the float rounding of its sums may differ.
 //
-// usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference; 77: no card)
+// usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference, and an int8 product within
+// 1e-5 RMS of its own numbers; 77: no card)
 #include "mmq.hpp"
 #include "ggml.h"
 
@@ -61,7 +64,7 @@ int main() {
     }
     const char* forced = std::getenv("STRATA_POLY_PROMPT_BLAS");
     std::printf("path: %s\n", forced && forced[0] == '1' ? "BLAS (STRATA_POLY_PROMPT_BLAS=1)" : "the card's");
-    const int types[] = {8, 12, 14, 16, 18, 22, 23};
+    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 20, 21, 22, 23, 29};   // the 32-value types, the K-quants, the i-quants
     constexpr int64_t kOut = 512, kIn = 2048, kTokens = 256, kExperts = 4;
     std::mt19937 rng(99);
     std::normal_distribution<float> normal(0.f, 1.f);
@@ -77,6 +80,16 @@ int main() {
     const int32_t bounds_h[kExperts + 1] = {0, 100, 100, 107, (int32_t) kTokens};
     std::vector<int32_t> perm((size_t) kTokens);
     for (int64_t i = 0; i < kTokens; ++i) perm[(size_t) i] = (int32_t) ((i * 37 + 11) % kTokens);
+    // the activations as the int8 path quantizes them (gemm_iq_i8_quantize: a block of 32 values, d_inv = 127 / max|x|,
+    // code = round(x d_inv), scale = 1 / d_inv), in double: its products are sums of these times the weights, so
+    // against them it is exact but for the float rounding of its sums
+    std::vector<double> xi8(x.size());
+    for (size_t b = 0; b < x.size(); b += 32) {
+        float amax = 0.f;
+        for (size_t j = 0; j < 32; ++j) amax = std::max(amax, std::fabs(x[b + j]));
+        const float d_inv = 127.0f / amax, scale = amax == 0.f ? 0.f : 1.0f / d_inv;
+        for (size_t j = 0; j < 32; ++j) xi8[b + j] = amax == 0.f ? 0.0 : (double) std::round(x[b + j] * d_inv) * scale;
+    }
     float* dx = upload(x);
     int32_t* dperm = upload(perm);
     int32_t* dbounds = upload(std::vector<int32_t>(bounds_h, bounds_h + kExperts + 1));
@@ -106,24 +119,30 @@ int main() {
         ggml_get_type_traits(ty)->to_float(wq.data(), wd.data(), (int64_t) wd.size());
         uint8_t* dw = upload(wq);
         if (!dw) return 1;
-        // row i of a launch times its expert's matrix, in double
-        auto reference = [&](int64_t row, int e, double* out) {
+        // row i of a launch times its expert's matrix, in double: the rows as they are, or as the int8 path has them
+        auto reference = [&](int64_t row, int e, bool as_int8, double* out) {
             const float* a = &x[(size_t) (row * kIn)];
+            const double* a8 = &xi8[(size_t) (row * kIn)];
             for (int64_t o = 0; o < kOut; ++o) {
                 const float* w = &wd[(size_t) ((e * kOut + o) * kIn)];
                 double s = 0;
-                for (int64_t k = 0; k < kIn; ++k) s += (double) a[k] * w[k];
+                for (int64_t k = 0; k < kIn; ++k) s += (as_int8 ? a8[k] : (double) a[k]) * w[k];
                 out[o] = s;
             }
         };
-        std::vector<double> ref((size_t) (kTokens * kOut));
+        const bool int8 = Mmq::reads_by_index(t, kIn);
+        std::vector<double> ref((size_t) (kTokens * kOut)), ref8(int8 ? ref.size() : 0);
         std::vector<float> y((size_t) (kTokens * kOut));
         // one dense matrix: every row, in place
         Mmq::quantize(dx, nullptr, xq, t, kIn, kIn, kTokens, nullptr);
         mmq.mul(dw, t, kOut, kIn, 0, 1, xq, nullptr, nullptr, kTokens, kTokens, dy, kOut, nullptr);
         if (!ok(cudaMemcpy(y.data(), dy, y.size() * sizeof(float), cudaMemcpyDeviceToHost), "dense product")) return 1;
-        for (int64_t r = 0; r < kTokens; ++r) reference(r, 0, &ref[(size_t) (r * kOut)]);
+        for (int64_t r = 0; r < kTokens; ++r) {
+            reference(r, 0, false, &ref[(size_t) (r * kOut)]);
+            if (int8) reference(r, 0, true, &ref8[(size_t) (r * kOut)]);
+        }
         const Err dense = compare(y, ref, kTokens, kOut, kOut);
+        const Err dense8 = int8 ? compare(y, ref8, kTokens, kOut, kOut) : Err{};
         // four experts: rows [bounds[e], bounds[e + 1]) of xq (row i of xq is row i of x), product of row i to row perm[i]
         cudaMemset(dy, 0, y.size() * sizeof(float));
         Mmq::quantize(dx, nullptr, xq, t, kIn, kIn, kTokens, nullptr);
@@ -132,13 +151,21 @@ int main() {
         std::vector<float> back((size_t) (kTokens * kOut));
         for (int e = 0; e < kExperts; ++e)
             for (int64_t r = bounds_h[e]; r < bounds_h[e + 1]; ++r) {
-                reference(r, e, &ref[(size_t) (r * kOut)]);
+                reference(r, e, false, &ref[(size_t) (r * kOut)]);
+                if (int8) reference(r, e, true, &ref8[(size_t) (r * kOut)]);
                 std::copy_n(&y[(size_t) perm[(size_t) r] * kOut], kOut, &back[(size_t) (r * kOut)]);
             }
         const Err experts = compare(back, ref, kTokens, kOut, kOut);
-        const bool fine = dense.rms < 0.02 && experts.rms < 0.02;
-        std::printf("%-8s dense: RMS error %.2e, largest %.2e   experts: RMS error %.2e, largest %.2e  %s\n", ggml_type_name(ty),
-                    dense.rms, dense.top, experts.rms, experts.top, fine ? "ok" : "WRONG");
+        const Err experts8 = int8 ? compare(back, ref8, kTokens, kOut, kOut) : Err{};
+        // The int8 path against its own numbers: a weight decoded wrong anywhere shows as an error of 1e-3 or more of
+        // the products' size; the float rounding of the sums is about 1e-7
+        const bool fine = dense.rms < 0.02 && experts.rms < 0.02 && dense8.rms < 1e-5 && experts8.rms < 1e-5;
+        std::printf("%-8s dense: RMS error %.2e, largest %.2e   experts: RMS error %.2e, largest %.2e", ggml_type_name(ty),
+                    dense.rms, dense.top, experts.rms, experts.top);
+        if (int8)
+            std::printf("   int8 numbers: RMS error %.2e / %.2e, largest %.2e / %.2e", dense8.rms, experts8.rms, dense8.top,
+                        experts8.top);
+        std::printf("  %s\n", fine ? "ok" : "WRONG");
         bad += !fine;
         cudaFree(dw);
     }
