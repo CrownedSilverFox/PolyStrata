@@ -3187,7 +3187,15 @@ void Engine::load(const Options& o) {
     if (opt_.ram_experts_mib < -1) {
         constexpr size_t kRamHeadroom = size_t(4) << 30, kOwnHeadroom = size_t(3) << 29;
         bool own = false;
-        const size_t avail = ram_available(&own);
+        size_t avail = ram_available(&own);
+#ifdef _WIN32
+        // fill_expert_cache() let the card's experts go from the working set to the standby list, which Windows
+        // counts as available: the budget would take for the CPU's experts the RAM the load just saved.  They are
+        // counted as used, as they were before they went.  On the laptop Qwen3.6 UD-Q3_K_M saw 11.0 GiB free with
+        // its 3.6 GiB of cached experts let go, and 7.3 GiB held.  Linux counts file pages as available either way.
+        const size_t held = cached_file_bytes();
+        if (avail) avail = avail > held ? avail - held : 1;   // 0 is "cannot tell"
+#endif
         opt_.ram_experts_mib = -1;
         if (avail && !opt_.lock_experts && outside_bytes_ + kRamHeadroom > avail) {
             const size_t keep = own ? kOwnHeadroom : kRamHeadroom;
@@ -3227,7 +3235,13 @@ void Engine::load(const Options& o) {
         // The whole budget, so that kept_ (ram_keep()) has none of it: an expert kept in the mapping is a page of the
         // file cache, which the system takes back when RAM runs short, and the CPU then faults it in a few pages at
         // a time.  pool_'s slots are the process's own memory and stay.
-        const size_t want = (size_t) opt_.ram_experts_mib << 20;
+        size_t want = (size_t) opt_.ram_experts_mib << 20;
+#ifdef _WIN32
+        // A quarter, and kept_ the rest.  Windows has no cgroup to charge the file cache to, and pool_'s slots are
+        // private memory committed for the run, where kept_'s pages are the file cache's: with the whole budget in
+        // pool_ the laptop's engine and server committed 11,678 MiB where poly.10's 9,476, at the same 3,072 MiB.
+        want /= 4;
+#endif
         size_t all = 0, slots = 0;
         for (size_t b : outside) all += b;
         for (size_t c = 0; c < pool_sizes_.size(); ++c) {
@@ -3885,6 +3899,15 @@ void Engine::relock() {
                 }
             }
         }
+}
+
+size_t Engine::cached_file_bytes() const {
+    size_t n = 0;
+    for (const Layer& L : layers_)
+        if (L.moe)
+            expert_runs(L, n_expert_, [&](int e) { return L.slot[(size_t) e] != nullptr; },
+                        [&](const uint8_t*, size_t b) { n += b; });
+    return n + (next_ ? next_->cached_file_bytes() : 0);
 }
 
 void Engine::trim() {
@@ -5290,7 +5313,10 @@ void Engine::build_mirror() {
         total += (want[c].size() + spares[c]) * stride[c];
     }
     constexpr size_t kHeadroom = size_t(4) << 30;   // as the RAM budget's (load())
-    const size_t avail = ram_available();
+    size_t avail = ram_available();
+#ifdef _WIN32
+    if (avail) avail -= std::min(avail, cached_file_bytes());   // as the budget counts them (load())
+#endif
     if (!avail || total + kHeadroom > avail) {
         std::fprintf(stderr, "strata-poly: %.1f GiB of RAM available for a %.1f GiB pinned copy of the experts outside VRAM: "
                              "prompts are staged from the mapped files%s\n",
