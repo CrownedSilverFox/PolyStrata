@@ -685,6 +685,11 @@ protected:
     Mapped prompt_map_;
     size_t prompt_bytes_ = 0;
     bool prompt_lends_ = false, prompt_lent_ = false;
+    /// The prompt products' work memory (Mmq::give()) where the prompt's buffers are lent: lent with them, and
+    /// from the start (alloc()).
+    Mapped work_map_;
+    size_t work_bytes_ = 0;
+    bool work_lent_ = false;
     void take_prompt();
     void lend_prompt();
     /// The scratch in two layouts (scratch_layouts()): one for a call of fewer than kStageRows tokens, which stays,
