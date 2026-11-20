@@ -991,6 +991,54 @@
    ]
   }
  },
+ "groot/Q4_K_M": {
+  "engine": "strata-poly",
+  "archs": [
+   "qwen35moe"
+  ],
+  "files": [
+   "GrootTeam_Groot-19B-A3B-261023-Q4_K_M.gguf"
+  ],
+  "repo": "bartowski/GrootTeam_Groot-19B-A3B-261023-GGUF",
+  "pins": {
+   "GrootTeam_Groot-19B-A3B-261023-Q4_K_M.gguf": [
+    12484339584,
+    "c941e12a231b40b8fb9f6ad7f6601878d72db39c2c62aefb185fbe5c7d0c2e29"
+   ]
+  }
+ },
+ "groot/Q6_K": {
+  "engine": "strata-poly",
+  "archs": [
+   "qwen35moe"
+  ],
+  "files": [
+   "GrootTeam_Groot-19B-A3B-261023-Q6_K.gguf"
+  ],
+  "repo": "bartowski/GrootTeam_Groot-19B-A3B-261023-GGUF",
+  "pins": {
+   "GrootTeam_Groot-19B-A3B-261023-Q6_K.gguf": [
+    16791324544,
+    "f784a74600c6a2986006909330aed5eeb1b931893c84505077f2595ad8e861fc"
+   ]
+  }
+ },
+ "groot/Q8_0": {
+  "engine": "strata-poly",
+  "archs": [
+   "qwen35moe"
+  ],
+  "files": [
+   "GrootTeam_Groot-19B-A3B-261023-Q8_0.gguf"
+  ],
+  "repo": "bartowski/GrootTeam_Groot-19B-A3B-261023-GGUF",
+  "pins": {
+   "GrootTeam_Groot-19B-A3B-261023-Q8_0.gguf": [
+    20230129536,
+    "7e414a5e4dbb5aa3074a69b36104b2c8cdc188432527956a6ed9c916906a1882"
+   ]
+  }
+ },
  "qwen36/UD-Q3_K_M": {
   "engine": "strata-poly",
   "archs": [
