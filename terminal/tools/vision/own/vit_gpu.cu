@@ -783,13 +783,13 @@ __global__ void k_add_bias(float* __restrict__ y, const float* __restrict__ bias
 
 // ---- Gemma 4's tower (gemma4v; the CPU tower's encode_gemma4 has the maths step by step) ----
 
-// the patch matrix [N][3 P P] of a planar picture (w wide), patches in reading order, the pixels as 2 v - 1
-__global__ void k_gemma_patches(const float* __restrict__ chw, int w, int h, int P, int pw, float* __restrict__ out) {
+// the patch matrix [N][3 P P] of a planar picture (w wide), patches in reading order, the pixels as mul v + add (Gemma 4: 2 v - 1)
+__global__ void k_patches(const float* __restrict__ chw, int w, int h, int P, int pw, float mul, float add, float* __restrict__ out) {
     const int t = blockIdx.x, py = t / pw, px = t % pw, K0 = 3 * P * P;
     const size_t plane = (size_t) w * h;
     for (int e = threadIdx.x; e < K0; e += blockDim.x) {
         const int c = e / (P * P), ky = (e / P) % P, kx = e % P;
-        out[(size_t) t * K0 + e] = chw[c * plane + (size_t) (py * P + ky) * w + (size_t) px * P + kx] * 2.0f - 1.0f;
+        out[(size_t) t * K0 + e] = chw[c * plane + (size_t) (py * P + ky) * w + (size_t) px * P + kx] * mul + add;
     }
 }
 
@@ -880,6 +880,82 @@ __global__ void k_gemma_pool(const float* __restrict__ x, int pw, int pool, int 
     for (int d = threadIdx.x; d < D; d += blockDim.x) store_kind(out, (size_t) blockIdx.x * D + d, pv[d] * scale, kind);
 }
 
+// ---- MiniCPM-V 4.7's tower (minicpmv4_7; the CPU tower's encode_minicpmv has the maths step by step) ----
+
+// x[t] = (x[t] + patch bias) + the position table's row of the patch's bucket: floor(T i / ph) * T + floor(T j / pw); patches in reading order
+__global__ void k_mini_pos(float* __restrict__ x, const float* __restrict__ bias, const float* __restrict__ pos, int T, int pw, int ph, int D) {
+    const int t = blockIdx.x, bi = (int) floor((double) T * (t / pw) / ph), bj = (int) floor((double) T * (t % pw) / pw);
+    const float* pr = pos + ((size_t) bi * T + (size_t) bj) * D;
+    float* xr = x + (size_t) t * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) xr[i] = (xr[i] + bias[i]) + pr[i];
+}
+
+// the joined q, k, v product of the tokens row0 .. (a row [q | k | v], 3D) plus its joined bias -> F16 [N][D] each, q times qscale
+__global__ void k_mini_qkv(const float* __restrict__ y, const float* __restrict__ bias, int row0, int D, float qscale, uint16_t* __restrict__ q,
+                           uint16_t* __restrict__ k, uint16_t* __restrict__ v) {
+    const float* yr = y + (size_t) blockIdx.x * 3 * D;
+    const size_t out = (size_t) (row0 + blockIdx.x) * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) {
+        q[out + i] = f_to_f16bits((yr[i] + bias[i]) * qscale);
+        k[out + i] = f_to_f16bits(yr[D + i] + bias[D + i]);
+        v[out + i] = f_to_f16bits(yr[2 * D + i] + bias[2 * D + i]);
+    }
+}
+
+__device__ __forceinline__ float h16(const uint16_t* p, size_t i) { return __half2float(__ushort_as_half(p[i])); }
+
+// the window merger's attention: softmax(q k^T) v inside each 2x2 window of a pw-wide patch grid (q scaled), F16 [N][D] in, float32 ctx [N][D] out.
+// A block a window, a warp a head (blockDim = 32 * heads).
+__global__ void k_window_attn(const uint16_t* __restrict__ q, const uint16_t* __restrict__ k, const uint16_t* __restrict__ v, int pw, int heads, int hd,
+                              float* __restrict__ ctx) {
+    const int h = threadIdx.x / 32, lane = threadIdx.x % 32;
+    if (h >= heads) return;
+    const int hw = pw / 2, wi = blockIdx.x / hw, wj = blockIdx.x % hw, D = heads * hd;
+    const size_t at[4] = {(size_t) (2 * wi) * pw + 2 * wj, (size_t) (2 * wi) * pw + 2 * wj + 1, (size_t) (2 * wi + 1) * pw + 2 * wj,
+                          (size_t) (2 * wi + 1) * pw + 2 * wj + 1};
+    const size_t col = (size_t) h * hd;
+    for (int a = 0; a < 4; ++a) {
+        float s[4];
+        for (int b = 0; b < 4; ++b) {
+            float acc = 0.0f;
+            for (int d = lane; d < hd; d += 32) acc += h16(q, at[a] * D + col + d) * h16(k, at[b] * D + col + d);
+            for (int o = 16; o > 0; o >>= 1) acc += VIT_SHFL_XOR(acc, o);
+            s[b] = acc;
+        }
+        const float mx = fmaxf(fmaxf(s[0], s[1]), fmaxf(s[2], s[3]));
+        float sum = 0.0f;
+        for (int b = 0; b < 4; ++b) { s[b] = expf(s[b] - mx); sum += s[b]; }
+        for (int d = lane; d < hd; d += 32) {
+            float acc = 0.0f;
+            for (int b = 0; b < 4; ++b) acc += s[b] * h16(v, at[b] * D + col + d);
+            ctx[at[a] * D + col + d] = acc / sum;
+        }
+    }
+}
+
+// the four rows of each 2x2 window of a gw-wide grid side by side (top left, top right, bottom left, bottom right): out [M][4D], window t in reading order
+__global__ void k_gather4(const float* __restrict__ x, int gw, int D, float* __restrict__ out) {
+    const int qw = gw / 2, t = blockIdx.x, i = t / qw, j = t % qw;
+    const size_t at[4] = {(size_t) (2 * i) * gw + 2 * j, (size_t) (2 * i) * gw + 2 * j + 1, (size_t) (2 * i + 1) * gw + 2 * j, (size_t) (2 * i + 1) * gw + 2 * j + 1};
+    for (int e = threadIdx.x; e < 4 * D; e += blockDim.x) out[(size_t) t * 4 * D + e] = x[at[e / D] * D + e % D];
+}
+
+// the downsample's output: x[r] = (y[r] + bias) + the mean of the four rows of cat[r] (((p0 + p1) + p2) + p3, then a quarter, as the graph adds them)
+__global__ void k_ds_out(float* __restrict__ x, const float* __restrict__ y, const float* __restrict__ bias, const float* __restrict__ cat, int D) {
+    const size_t r = blockIdx.x;
+    const float* c = cat + r * 4 * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) x[r * D + i] = (y[r * D + i] + bias[i]) + (((c[i] + c[D + i]) + c[2 * D + i]) + c[3 * D + i]) * 0.25f;
+}
+
+// out = gelu_erf(y + bias) into `kind` (ggml's FFN_GELU_ERF: 0.5 x (1 + erf(x / sqrt 2)))
+__global__ void k_bias_gelu_erf_cast(const float* __restrict__ y, const float* __restrict__ bias, int n, void* out, int kind) {
+    const size_t base = (size_t) blockIdx.x * n;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        const float x = y[base + i] + bias[i];
+        store_kind(out, base + i, 0.5f * x * (1.0f + erff(x * 0.70710678118654752f)), kind);
+    }
+}
+
 // ---- host side ----
 uint16_t host_f32_to_bf16(float f) {
     uint32_t u;
@@ -918,6 +994,11 @@ struct VitGpuImpl {
     float *std_bias = nullptr, *std_scale = nullptr;
     DevW proj;                       // gemma4v: mm.input_projection
     bool gemma() const { return g.projector == "gemma4v"; }
+    // minicpmv4_7: the layers are `layers` (q, k, v joined into qkv, their biases into qkv_b); wm the window merger's attention (ln1, qkv, o)
+    DevLayer wm;
+    float *ds_ln_w = nullptr, *ds_ln_b = nullptr, *ds_up_b = nullptr, *ds_down_b = nullptr, *mmn_w = nullptr, *mmn_b = nullptr, *mm_up_b = nullptr,
+          *mm_down_b = nullptr;
+    DevW ds_up, ds_down, mm_up, mm_down;
 #if !defined(STRATA_VIT_HIP)
     // the fused attention: fa_wmma_hdp -1 not asked yet, else the padded head size set up (0: not here; STRATA_VIT_FA_WMMA=0: never); fa_mma
     // k_attn_fa_mma (8.0 and newer; STRATA_VIT_FA_MMA=0: k_attn_fa_wmma there too), else fa_wmma_bk the key tile of k_attn_fa_wmma
@@ -969,8 +1050,11 @@ struct VitGpuImpl {
         return true;
     }
 #endif
+    bool attend(int N, std::string& err);
     bool load_gemma4(const Gguf& gg, std::string& err);
     bool encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
+    bool load_minicpmv(const Gguf& gg, std::string& err);
+    bool encode_minicpmv(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
 
     int cap_patches = 0;
     // Work buffers, sized for cap_patches patches N (D = width).  The GPU memory is what a reader costs next to the engine, so the matrix products run in
@@ -1215,6 +1299,19 @@ struct VitGpuImpl {
         if (!alloc(dst, h.size(), err, true)) return false;
         return cudaMemcpy(dst, h.data(), h.size() * 4, cudaMemcpyHostToDevice) == cudaSuccess || (err = "GPU copy failed", false);
     }
+    // vectors one after the other in one device array (MiniCPM-V's q, k, v biases, beside their joined matrix)
+    bool upload_f32(float*& dst, const Gguf& gg, const std::vector<std::string>& names, std::string& err) {
+        std::vector<float> h;
+        for (const std::string& nm : names) {
+            const GgufTensorInfo* t = gg.tensor(nm);
+            if (!t) { err = "the mmproj file lacks the tensor " + nm; return false; }
+            const size_t at = h.size();
+            h.resize(at + (size_t) t->nelem());
+            if (!gg.read_f32(*t, h.data() + at, err)) return false;
+        }
+        if (!alloc(dst, h.size(), err, true)) return false;
+        return cudaMemcpy(dst, h.data(), h.size() * 4, cudaMemcpyHostToDevice) == cudaSuccess || (err = "GPU copy failed", false);
+    }
     // matrices of one type and width, their rows one after the other in one device matrix (Gemma 4's q, k, v and its gate, up: one product each)
     bool upload_matrix(DevW& w, const Gguf& gg, const std::vector<std::string>& names, std::string& err) {
         std::vector<const GgufTensorInfo*> ts;
@@ -1343,6 +1440,7 @@ struct VitGpuImpl {
     bool round_out = false;           // STRATA_VIT_REF_ROUND=1 (a diagnostic, off by default): round every matrix product's result to its weight's 16-bit type
     static int blocks_for(size_t n, int per = 256) { return (int) std::min<size_t>((n + per - 1) / per, 65535); }
 
+    size_t y_elems = 0;               // floats d_y holds
     bool size_buffers(int patches, std::string& err) {
         if (patches <= cap_patches) return true;
         (void) cudaSetDevice(device);
@@ -1370,7 +1468,8 @@ struct VitGpuImpl {
         // d_ctx holds, one after the other: the patch matrix, the attention context, and at the end the projector's output rows (d_out)
         const size_t ctx_elems = std::max({N * D, N * K0, (N / 4) * (size_t) g.out_dim});
         // (Gemma 4: gate and up in one product, 2 ffn a row)
-        bool ok = alloc(d_x, N * D, err, false) && alloc(d_ctx, ctx_elems, err, false) && alloc(d_y, R * std::max<size_t>(3 * D, gemma() ? 2 * F : F), err, false) &&
+        y_elems = R * std::max<size_t>(3 * D, gemma() ? 2 * F : F);
+        bool ok = alloc(d_x, N * D, err, false) && alloc(d_ctx, ctx_elems, err, false) && alloc(d_y, y_elems, err, false) &&
                   alloc(d_a, R * D, err, false) && alloc(d_f16, R * F, err, false) &&
                   alloc(d_q16, N * D, err, false) && alloc(d_k16, N * D, err, false) && alloc(d_v16, N * D, err, false);
 #if defined(STRATA_VIT_HIP)
@@ -1447,7 +1546,7 @@ std::string VitGpu::arch_name() {
 bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patches, std::string& err) {
     VitGpuImpl& m = *impl_;
     std::string why;
-    if (!vit_geometry_supported(g, why) || (g.projector != "gemma4v" && !vit_geometry_qwen(g, why))) {
+    if (!vit_geometry_supported(g, why) || (g.projector != "gemma4v" && !g.minicpmv() && !vit_geometry_qwen(g, why))) {
         err = "this tower is not supported: " + why;
         return false;
     }
@@ -1511,6 +1610,8 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
 #endif
     if (m.gemma()) {
         if (!m.load_gemma4(gg, err)) return false;
+    } else if (g.minicpmv()) {
+        if (!m.load_minicpmv(gg, err)) return false;
     } else {
         // the patch embedding: the two temporal taps summed, kept in float32 (a small matrix)
         {
@@ -1572,6 +1673,7 @@ bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx,
     VitGpuImpl& m = *impl_;
     const VitGeometry& g = m.g;
     if (m.gemma()) return m.encode_gemma4(img, rows, nx, ny, err);
+    if (g.minicpmv()) return m.encode_minicpmv(img, rows, nx, ny, err);
     if (m.layers.empty()) { err = "the tower is not loaded"; return false; }
     if (img.w <= 0 || img.h <= 0 || img.w % g.align() != 0 || img.h % g.align() != 0) { err = "the picture size is not a multiple of patch * merge"; return false; }
     if (g.head_dim > 96 || g.head_dim % 4 != 0) { err = "this head size is not handled by the GPU attention kernel"; return false; }
@@ -1726,6 +1828,40 @@ bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx,
     return true;
 }
 
+// softmax(q k^T) v of every head over N tokens from d_q16 / d_k16 / d_v16 into d_ctx, the scale (if any) already in q.  The fused attention where the card
+// has it (no score matrix at all); else float32 scores (k_softmax_rows_f32), the probabilities F16 in place, as long as a row fits the registers, and past
+// 16,384 patches F16 scores as the Qwen tower has them.
+bool VitGpuImpl::attend(int N, std::string& err) {
+    const int D = g.width, H = g.heads, HD = g.head_dim;
+    bool fused = false;
+#if !defined(STRATA_VIT_HIP)
+    fused = attend_fa_wmma(N, D, H, HD);
+#endif
+    const bool f32 = N <= kSoftmaxThreads * kSoftmaxPer;
+    const int Np = (int) padded((size_t) N);
+    int QC = (int) std::max<size_t>(1, std::min<size_t>((size_t) N, sp_elems / ((f32 ? 2 : 1) * (size_t) H * Np)));
+    const int qa = align_for((size_t) N);
+    if (qa > 1 && QC < N && QC >= qa) QC -= QC % qa;
+    for (int q0 = 0; !fused && q0 < N; q0 += QC) {
+        const int qc = std::min(QC, N - q0);
+        if (f32) {
+            if (!bgemm(true, false, N, qc, HD, d_k16, CUDA_R_16F, D, HD, d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, d_S, CUDA_R_32F, Np, (long long) qc * Np, H, err))
+                return false;
+            softmax_rows_f32((float*) d_S, N, Np, H * qc);
+            if (!bgemm(false, false, HD, qc, N, d_v16, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, 2 * Np, 2LL * qc * Np, d_ctx + (size_t) q0 * D, CUDA_R_32F, D, HD, H,
+                       err))
+                return false;
+            continue;
+        }
+        if (!bgemm(true, false, N, qc, HD, d_k16, CUDA_R_16F, D, HD, d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, Np, (long long) qc * Np, H, err))
+            return false;
+        k_softmax_rows_long<<<H * qc, kSoftmaxThreads>>>(d_S, N, Np);
+        if (!bgemm(false, false, HD, qc, N, d_v16, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, Np, (long long) qc * Np, d_ctx + (size_t) q0 * D, CUDA_R_32F, D, HD, H, err))
+            return false;
+    }
+    return true;
+}
+
 bool VitGpuImpl::load_gemma4(const Gguf& gg, std::string& err) {
     if (!upload_f32(patch_w, gg, "v.patch_embd.weight", err) || !upload_f32(pos, gg, "v.position_embd.weight", err) ||
         !upload_matrix(proj, gg, "mm.input_projection.weight", err))
@@ -1747,8 +1883,7 @@ bool VitGpuImpl::load_gemma4(const Gguf& gg, std::string& err) {
     return true;
 }
 
-// Gemma 4's tower on the GPU: VitCpu's encode_gemma4 with the products by the BLAS (16-bit inputs, float32 sums) and the attention as the Qwen
-// tower has it (one batched product of the scores per chunk of queries, F16 scores, the softmax, the product with v; no scale here)
+// Gemma 4's tower on the GPU: VitCpu's encode_gemma4 with the products by the BLAS (16-bit inputs, float32 sums) and the attention by attend() (no scale)
 bool VitGpuImpl::encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
     if (glayers.empty()) { err = "the tower is not loaded"; return false; }
     const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn, K = g.pool, T = g.pos_grid;
@@ -1783,7 +1918,7 @@ bool VitGpuImpl::encode_gemma4(const PreparedImage& img, std::vector<float>& row
             return false;
         }
         if (cudaMemcpy(d_y, img.chw.data(), img.chw.size() * 4, cudaMemcpyHostToDevice) != cudaSuccess) { err = "GPU copy failed"; return false; }
-        k_gemma_patches<<<N, 256>>>(d_y, img.w, img.h, P, pw, d_ctx);
+        k_patches<<<N, 256>>>(d_y, img.w, img.h, P, pw, 2.0f, -1.0f, d_ctx);
     }
     DevW pw_w;
     pw_w.p = patch_w; pw_w.kind = K_F32; pw_w.rows = D; pw_w.cols = K0;
@@ -1803,37 +1938,7 @@ bool VitGpuImpl::encode_gemma4(const PreparedImage& img, std::vector<float>& row
             k_gemma_qkv<<<rn, 32 * H>>>(d_y, L.q_norm, L.k_norm, r0, pw, H, HD, theta_scale, g.eps, d_q16, d_k16, d_v16);
         }
         stage(1);
-        // float32 scores (k_softmax_rows_f32), the probabilities F16 in place, as long as a row fits the registers; past 16,384 patches (more than 1,820
-        // tokens, over Gemma 4's default limit) F16 scores as the Qwen tower has them
-        // (the fused attention where the card has it: no score matrix at all)
-        bool fused = false;
-#if !defined(STRATA_VIT_HIP)
-        fused = attend_fa_wmma(N, D, H, HD);
-#endif
-        const bool f32 = N <= kSoftmaxThreads * kSoftmaxPer;
-        const int Np = (int) padded((size_t) N);
-        int QC = (int) std::max<size_t>(1, std::min<size_t>((size_t) N, sp_elems / ((f32 ? 2 : 1) * (size_t) H * Np)));
-        const int qa = align_for((size_t) N);
-        if (qa > 1 && QC < N && QC >= qa) QC -= QC % qa;
-        for (int q0 = 0; !fused && q0 < N; q0 += QC) {
-            const int qc = std::min(QC, N - q0);
-            if (f32) {
-                if (!bgemm(true, false, N, qc, HD, d_k16, CUDA_R_16F, D, HD, d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, d_S, CUDA_R_32F, Np, (long long) qc * Np,
-                           H, err))
-                    return false;
-                softmax_rows_f32((float*) d_S, N, Np, H * qc);
-                if (!bgemm(false, false, HD, qc, N, d_v16, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, 2 * Np, 2LL * qc * Np, d_ctx + (size_t) q0 * D, CUDA_R_32F, D,
-                           HD, H, err))
-                    return false;
-                continue;
-            }
-            if (!bgemm(true, false, N, qc, HD, d_k16, CUDA_R_16F, D, HD, d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, Np, (long long) qc * Np, H, err))
-                return false;
-            k_softmax_rows_long<<<H * qc, kSoftmaxThreads>>>(d_S, N, Np);
-            if (!bgemm(false, false, HD, qc, N, d_v16, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, Np, (long long) qc * Np, d_ctx + (size_t) q0 * D, CUDA_R_32F, D, HD, H,
-                       err))
-                return false;
-        }
+        if (!attend(N, err)) return false;
         stage(2);
         for (int r0 = 0; r0 < N; r0 += R) {      // x += norm(o(ctx)); x += norm(down(quick_gelu(gate) * up))
             const int rn = std::min(R, N - r0);
@@ -1867,6 +1972,157 @@ bool VitGpuImpl::encode_gemma4(const PreparedImage& img, std::vector<float>& row
                      pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]);
     nx = M;
     ny = 1;
+    return true;
+}
+
+bool VitGpuImpl::load_minicpmv(const Gguf& gg, std::string& err) {
+    auto attn = [&](const std::string& p, DevLayer& L) {
+        return upload_f32(L.ln1_w, gg, p + "ln1.weight", err) && upload_f32(L.ln1_b, gg, p + "ln1.bias", err) &&
+               upload_matrix(L.qkv, gg, std::vector<std::string>{p + "attn_q.weight", p + "attn_k.weight", p + "attn_v.weight"}, err) &&
+               upload_f32(L.qkv_b, gg, std::vector<std::string>{p + "attn_q.bias", p + "attn_k.bias", p + "attn_v.bias"}, err) &&
+               upload_matrix(L.o, gg, p + "attn_out.weight", err) && upload_f32(L.o_b, gg, p + "attn_out.bias", err);
+    };
+    if (!upload_f32(patch_w, gg, "v.patch_embd.weight", err) || !upload_f32(patch_b, gg, "v.patch_embd.bias", err) ||
+        !upload_f32(pos, gg, "v.position_embd.weight", err) || !upload_f32(post_w, gg, "v.post_ln.weight", err) || !upload_f32(post_b, gg, "v.post_ln.bias", err) ||
+        !attn("v.vit_merger.", wm) || !upload_f32(ds_ln_w, gg, "v.vit_merger.ds_ln.weight", err) || !upload_f32(ds_ln_b, gg, "v.vit_merger.ds_ln.bias", err) ||
+        !upload_matrix(ds_up, gg, "v.vit_merger.ds_ffn_up.weight", err) || !upload_f32(ds_up_b, gg, "v.vit_merger.ds_ffn_up.bias", err) ||
+        !upload_matrix(ds_down, gg, "v.vit_merger.ds_ffn_down.weight", err) || !upload_f32(ds_down_b, gg, "v.vit_merger.ds_ffn_down.bias", err) ||
+        !upload_f32(mmn_w, gg, "mm.input_norm.weight", err) || !upload_f32(mmn_b, gg, "mm.input_norm.bias", err) ||
+        !upload_matrix(mm_up, gg, "mm.up.weight", err) || !upload_f32(mm_up_b, gg, "mm.up.bias", err) ||
+        !upload_matrix(mm_down, gg, "mm.down.weight", err) || !upload_f32(mm_down_b, gg, "mm.down.bias", err))
+        return false;
+    layers.assign((size_t) g.layers, DevLayer{});
+    for (int il = 0; il < g.layers; ++il) {
+        DevLayer& L = layers[(size_t) il];
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        if (!attn(p, L) || !upload_f32(L.ln2_w, gg, p + "ln2.weight", err) || !upload_f32(L.ln2_b, gg, p + "ln2.bias", err) ||
+            !upload_matrix(L.up, gg, p + "ffn_up.weight", err) || !upload_f32(L.up_b, gg, p + "ffn_up.bias", err) ||
+            !upload_matrix(L.down, gg, p + "ffn_down.weight", err) || !upload_f32(L.down_b, gg, p + "ffn_down.bias", err))
+            return false;
+    }
+    return true;
+}
+
+// MiniCPM-V 4.7's tower on one tile on the GPU: VitCpu's encode_minicpmv with the products by the BLAS (16-bit inputs, float32 sums), the attention by
+// attend() (the scale in q), the window merger's 4-token attention by k_window_attn.  d_ctx holds in turn the patch matrix, the attention context, the
+// downsample's and the final merger's gathered rows (4 D floats a row: N / 4 and N / 16 rows), and the output rows (d_out, over the gathered rows the
+// last chunk no longer reads); d_y the post norm's float32 rows before the final gather.
+bool VitGpuImpl::encode_minicpmv(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
+    if (layers.empty()) { err = "the tower is not loaded"; return false; }
+    const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn, T = g.pos_grid, D4 = 4 * D;
+    if (img.w <= 0 || img.h <= 0 || img.w % (P * 4) != 0 || img.h % (P * 4) != 0) { err = "the tile size is not a multiple of patch * 4"; return false; }
+    if (H > 32 || HD % 8 != 0) { err = "this tower's heads are not handled by the GPU kernels"; return false; }
+    const int pw = img.w / P, ph = img.h / P, N = pw * ph, hw = pw / 2, hh = ph / 2, N2 = hw * hh, M = (hw / 2) * (hh / 2);
+    if (cudaSetDevice(device) != cudaSuccess) { err = "cannot use the GPU"; return false; }
+    if (!size_buffers(N, err)) return false;
+    const int R = std::min(N, kRows);
+    // the wide products (the downsample's up to ds_ffn, the merger's up) and their 4 D-wide norms run in chunks that fit d_y, d_f16 and d_a
+    const size_t f16_elems = (size_t) R * std::max(g.ffn, g.merger_hidden);
+    const int RC = (int) std::max<size_t>(1, std::min({(size_t) R / 4, y_elems / (size_t) std::max(g.ds_ffn, g.merger_hidden), f16_elems / (size_t) g.ds_ffn}));
+    if ((size_t) N2 * D > y_elems || (size_t) 3 * img.w * img.h > y_elems) { err = "the tile is larger than the work buffers"; return false; }
+    auto sync_err = [&](const char* what) {
+        const cudaError_t e = cudaGetLastError();
+        if (e != cudaSuccess) { err = std::string(what) + ": " + cudaGetErrorString(e); return false; }
+        return true;
+    };
+    static const bool prof = std::getenv("STRATA_VIT_PROF") != nullptr;
+    double pt[6] = {0, 0, 0, 0, 0, 0};
+    auto pclock = [] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    double pmark = prof ? pclock() : 0.0;
+    auto stage = [&](int i) {
+        if (!prof) return;
+        (void) cudaDeviceSynchronize();
+        const double now = pclock();
+        pt[i] += now - pmark;
+        pmark = now;
+    };
+    const int K0 = 3 * P * P;
+    if (cudaMemcpy(d_y, img.chw.data(), img.chw.size() * 4, cudaMemcpyHostToDevice) != cudaSuccess) { err = "GPU copy failed"; return false; }
+    k_patches<<<N, 256>>>(d_y, img.w, img.h, P, pw, 1.0f, 0.0f, d_ctx);
+    DevW pw_w;
+    pw_w.p = patch_w; pw_w.kind = K_F32; pw_w.rows = D; pw_w.cols = K0;
+    if (!gemm(pw_w, d_ctx, N, d_x, CUDA_R_32F, err)) return false;
+    k_mini_pos<<<N, 256>>>(d_x, patch_b, pos, T, pw, ph, D);
+    if (!sync_err("patch embedding")) return false;
+    stage(0);
+
+    uint16_t* const a16 = d_a;
+    const float qscale = 1.0f / sqrtf((float) HD);
+    auto project = [&](const DevLayer& L, int n) {
+        for (int r0 = 0; r0 < n; r0 += R) {
+            const int rn = std::min(R, n - r0);
+            k_layernorm<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln1_w, L.ln1_b, g.eps, D, a16, (int) L.qkv.kind);
+            if (!gemm(L.qkv, a16, rn, d_y, dtype(L.qkv.kind), err)) return false;
+            k_mini_qkv<<<rn, 256>>>(d_y, L.qkv_b, r0, D, qscale, d_q16, d_k16, d_v16);
+        }
+        return true;
+    };
+    auto out_proj = [&](const DevLayer& L, int n) {      // x += o(ctx)
+        for (int r0 = 0; r0 < n; r0 += R) {
+            const int rn = std::min(R, n - r0);
+            k_cast<<<blocks_for((size_t) rn * D), 256>>>(d_ctx + (size_t) r0 * D, (size_t) rn * D, a16, (int) L.o.kind);
+            if (!gemm(L.o, a16, rn, d_y, dtype(L.o.kind), err)) return false;
+            k_add_bias_res<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, L.o_b, D);
+        }
+        return true;
+    };
+    auto layer = [&](const DevLayer& L, int n) {
+        if (!project(L, n)) return false;
+        stage(1);
+        if (!attend(n, err)) return false;
+        stage(2);
+        if (!out_proj(L, n)) return false;
+        for (int r0 = 0; r0 < n; r0 += R) {      // x += down(gelu(up(LN2 x)))
+            const int rn = std::min(R, n - r0);
+            k_layernorm<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln2_w, L.ln2_b, g.eps, D, a16, (int) L.up.kind);
+            if (!gemm(L.up, a16, rn, d_y, dtype(L.up.kind), err)) return false;
+            k_bias_gelu_cast<<<rn, 256>>>(d_y, L.up_b, F, d_f16, (int) L.down.kind);
+            if (!gemm(L.down, d_f16, rn, d_y, dtype(L.down.kind), err)) return false;
+            k_add_bias_res<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, L.down_b, D);
+        }
+        stage(3);
+        return true;
+    };
+
+    for (int il = 0; il <= g.insert_layer; ++il)
+        if (!layer(layers[(size_t) il], N)) return false;
+    // the window merger: attention inside each 2x2 window, its residual; then the downsample MLP of the gathered windows plus their mean, into the first N2 rows of x
+    if (!project(wm, N)) return false;
+    k_window_attn<<<N2, 32 * H>>>(d_q16, d_k16, d_v16, pw, H, HD, d_ctx);
+    if (!out_proj(wm, N)) return false;
+    k_gather4<<<N2, 256>>>(d_x, pw, D, d_ctx);
+    for (int r0 = 0; r0 < N2; r0 += RC) {
+        const int rn = std::min(RC, N2 - r0);
+        k_layernorm<<<rn, 256>>>(d_ctx + (size_t) r0 * D4, ds_ln_w, ds_ln_b, g.eps, D4, a16, (int) ds_up.kind);
+        if (!gemm(ds_up, a16, rn, d_y, dtype(ds_up.kind), err)) return false;
+        k_bias_gelu_cast<<<rn, 256>>>(d_y, ds_up_b, g.ds_ffn, d_f16, (int) ds_down.kind);
+        if (!gemm(ds_down, d_f16, rn, d_y, dtype(ds_down.kind), err)) return false;
+        k_ds_out<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, ds_down_b, d_ctx + (size_t) r0 * D4, D);
+    }
+    if (!sync_err("the window merger")) return false;
+    stage(4);
+    for (int il = g.insert_layer + 1; il < g.layers; ++il)
+        if (!layer(layers[(size_t) il], N2)) return false;
+    // the post norm (float32, into d_y), the final 2x2 gather and its MLP (erf GELU) into the output rows
+    k_layernorm<<<N2, 256>>>(d_x, post_w, post_b, g.eps, D, d_y, (int) K_F32);
+    k_gather4<<<M, 256>>>(d_y, hw, D, d_ctx);
+    for (int r0 = 0; r0 < M; r0 += RC) {
+        const int rn = std::min(RC, M - r0);
+        k_layernorm<<<rn, 256>>>(d_ctx + (size_t) r0 * D4, mmn_w, mmn_b, g.eps, D4, a16, (int) mm_up.kind);
+        if (!gemm(mm_up, a16, rn, d_y, dtype(mm_up.kind), err)) return false;
+        k_bias_gelu_erf_cast<<<rn, 256>>>(d_y, mm_up_b, g.merger_hidden, d_f16, (int) mm_down.kind);
+        if (!gemm(mm_down, d_f16, rn, d_out + (size_t) r0 * g.out_dim, dtype(mm_down.kind), err)) return false;
+        k_add_bias<<<rn, 256>>>(d_out + (size_t) r0 * g.out_dim, mm_down_b, g.out_dim);
+    }
+    if (!sync_err("the merger")) return false;
+    rows.resize((size_t) M * g.out_dim);
+    if (cudaMemcpy(rows.data(), d_out, rows.size() * 4, cudaMemcpyDeviceToHost) != cudaSuccess) { err = std::string("GPU copy failed: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    stage(5);
+    if (prof)
+        std::fprintf(stderr, "vit-prof minicpmv N=%d: patches %.2f, norm+qkv %.2f, attention %.2f, o-proj+ffn %.2f, window merger %.2f, merger+copy-out %.2f ms\n", N,
+                     pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]);
+    nx = hw / 2;
+    ny = hh / 2;
     return true;
 }
 
