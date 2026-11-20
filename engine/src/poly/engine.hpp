@@ -629,7 +629,9 @@ protected:
         return mirror_of_.empty() ? nullptr : mirror_of_[(size_t) il * (size_t) n_expert_ + (size_t) e];
     }
     uint8_t* mirror_take(int il);             ///< a spare slot of the layer's size, or null
-    bool mirror_grow(int c);                  ///< Options::lock_experts: more spare slots of trade class c
+    void lock_queue(int il, int e);           ///< Options::lock_experts: for lock_loop() to copy into the mirror
+    void lock_loop();
+    void lock_settle();                       ///< the copies lock_loop() has made, the mirror's now
     /// Options::lock_experts: an expert grow_cache() brings back keeps its copy in the mirror.  Those are mostly the
     /// experts the next long read takes from the cache again (widen_stage(), take_prompt()), which then go with no copy
     /// back from the card: given back, the copies held every 4,833-token read of Qwen3.6 UD-Q3_K_M on a 4090 2-3%
@@ -755,8 +757,21 @@ protected:
     std::vector<std::vector<uint8_t*>> mirror_spare_;   ///< per trade class: free slots
     std::vector<size_t> mirror_stride_;             ///< per trade class: a slot's bytes
     bool mirror_registered_ = false;                ///< the pieces are cudaHostRegister()'s, not cudaMallocHost()'s
-    size_t mirror_grown_ = 0;                       ///< bytes mirror_grow() added
-    bool mirror_grow_failed_ = false;
+    // Options::lock_experts: lock_loop()'s thread, the experts asked of it (layer * n_expert + expert) and the copies
+    // it has made, with their slots, under lock_m_; lock_done_n_ is lock_done_'s size, for lock_settle() to look at
+    // without the lock.  lock_blocks_ are the thread's pinned pieces, freed once it is joined.  lock_idle_: no request
+    // under way (trim() to the next read() or run()), when the thread copies.  lock_asked_, the main thread's: per
+    // (layer, expert), asked of the thread and not settled yet.
+    std::vector<uint8_t> lock_asked_;
+    std::thread lock_thread_;
+    std::mutex lock_m_;
+    std::condition_variable lock_cv_;
+    bool lock_quit_ = false;
+    std::atomic<bool> lock_idle_{false};
+    std::vector<int64_t> lock_want_;
+    std::vector<std::pair<int64_t, uint8_t*>> lock_done_;
+    std::atomic<int> lock_done_n_{0};
+    std::vector<MirrorPiece> lock_blocks_;
     GatherPiece* gather_ring_ = nullptr;            ///< pinned piece lists of the gathers, taking turns
     void* gather_ev_[8] = {};                       ///< per list: marks the card's read of it
     int gather_at_ = 0;

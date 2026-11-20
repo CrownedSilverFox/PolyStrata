@@ -769,6 +769,14 @@ Engine::~Engine() {
         swap_cv_.notify_all();
         follower_.join();
     }
+    if (lock_thread_.joinable()) {
+        {
+            std::lock_guard<std::mutex> l(lock_m_);
+            lock_quit_ = true;
+        }
+        lock_cv_.notify_all();
+        lock_thread_.join();
+    }
     if (swap_st_) cudaStreamSynchronize(cs(swap_st_));
     if (up_) cudaStreamSynchronize(cs(up_));
     if (rs_) cudaStreamSynchronize(cs(rs_));
@@ -782,6 +790,7 @@ Engine::~Engine() {
     graphs_.clear();
 #endif
     free_pieces(mirror_blocks_);
+    free_pieces(lock_blocks_);
     for (void* e : gather_ev_)
         if (e) cudaEventDestroy((cudaEvent_t) e);
     for (void* p : dev_allocs_) cudaFree(p);
@@ -2837,8 +2846,10 @@ void Engine::follow(int written) {
         coming_[(size_t) in.il * ne + (size_t) in.e] = 1;
         from_pool(*s);
         s->mirror = mirror(in.il, in.e);
-        if (!mirror_of_.empty() && !mirror(out.il, out.e) && (s->spare = mirror_take(out.il)))
-            s->out = (int64_t) out.il * (int64_t) ne + out.e;
+        if (!mirror_of_.empty() && !mirror(out.il, out.e)) {
+            if ((s->spare = mirror_take(out.il))) s->out = (int64_t) out.il * (int64_t) ne + out.e;
+            else lock_queue(out.il, out.e);
+        }
         // card_far_: the outgoing expert goes to its spare now, on st_, and is the mirror's at once, so that a call
         // routed on the card while the swap is on its way finds it there; the upload waits for that copy
         if (card_far_ && s->spare) {
@@ -3808,6 +3819,13 @@ void Engine::trim() {
     if (pool_) {
         std::fill(prompt_use_.begin(), prompt_use_.end(), 0.f);
         prompt_rows_ = 0;
+    }
+    if (lock_thread_.joinable()) {   // between requests: lock_loop()'s turn
+        {
+            std::lock_guard<std::mutex> l(lock_m_);
+            lock_idle_.store(true, std::memory_order_relaxed);
+        }
+        lock_cv_.notify_one();
     }
     if (next_) next_->trim();
     else drop_images();   // once, by the last card's engine
@@ -5117,8 +5135,8 @@ GatherPiece* Engine::gather_slot() {
 // Options::lock_experts takes the mirror as its copy of the experts outside VRAM: pinned pages are never paged out
 // or dropped, and the NVIDIA driver pins them past RLIMIT_MEMLOCK, which is 8 MiB on many Linux desktops and kept
 // mlock() of the mapping (lock_outside()) from holding anything there (issue #79).  An expert that leaves the card
-// with no spare left gets one (mirror_grow()), so it stays in RAM too.  Where there is no mirror, the mapping's pages
-// are locked as before.
+// with no spare left is copied into the mirror too, by lock_loop()'s thread, so it comes to stay in RAM as well.
+// Where there is no mirror, the mapping's pages are locked as before.
 void Engine::build_mirror() {
 #if defined(STRATA_GPU_METAL) || defined(STRATA_USE_HIP)
     return;
@@ -5258,10 +5276,14 @@ void Engine::build_mirror() {
     mirror_registered_ = same != 0;
     std::fprintf(stderr, "strata-poly: the %zu experts outside VRAM in %.1f GiB of pinned memory in %.1f s\n", n,
                  (double) total / (1 << 30), ms_since(t0) / 1000.0);
-    if (opt_.lock_experts)
+    if (opt_.lock_experts) {
         std::fprintf(stderr, "strata-poly: --lock-experts: copied the %zu experts outside VRAM into %.1f GiB of RAM and "
-                             "locked all of it: pinned for the card, which the system does not page out%s\n",
+                             "locked all of it: pinned for the card, which the system does not page out%s; one that "
+                             "leaves VRAM later is copied in too, from the model file, between requests\n",
                      n, (double) total / (1 << 30), memlock_note().c_str());
+        lock_asked_.assign(layers_.size() * ne, 0);
+        lock_thread_ = std::thread([this] { lock_loop(); });
+    }
 
     // card_far_: an answer's few tokens route on the card as with every expert cached, and the card copies the
     // picks it lacks from the mirror itself: a layer does not wait for the host, and a window is one recording.  The
@@ -5389,50 +5411,125 @@ void Engine::build_mirror() {
 
 uint8_t* Engine::mirror_take(int il) {
     const int c = layers_[(size_t) il].trade;
-    if (mirror_spare_.empty() || c < 0) return nullptr;
-    if (mirror_spare_[(size_t) c].empty() && !(opt_.lock_experts && mirror_grow(c))) return nullptr;
+    if (mirror_spare_.empty() || c < 0 || mirror_spare_[(size_t) c].empty()) return nullptr;
     uint8_t* s = mirror_spare_[(size_t) c].back();
     mirror_spare_[(size_t) c].pop_back();
     return s;
 }
 
-// Options::lock_experts: class c has no spare left for an expert that leaves the card, so the mirror takes a piece of
-// 256 MiB more slots, pinned as its own pieces are.  Then the expert stays in RAM, where without the option it goes
-// back to the mapping.  The slots stay the mirror's.  (Qwen3.6 UD-Q3_K_M on a 4090 held to 12 GiB: 1 GiB more over
-// the first two reads of a 4,833-token prompt, then none; those reads were 5-20% slower than the default's, the ones
-// after as fast.)
-bool Engine::mirror_grow(int c) {
-#if defined(STRATA_GPU_METAL) || defined(STRATA_USE_HIP)
-    (void) c;
-    return false;
-#else
-    if (mirror_grow_failed_) return false;
-    const size_t stride = mirror_stride_[(size_t) c];
-    const size_t n = std::max<size_t>(1, (size_t(256) << 20) / stride);
-    MirrorPiece m{nullptr, n * stride, mirror_registered_};
-    if (m.registered) {
-        m.base = host_alloc(m.bytes);
-        if (m.base && cudaHostRegister(m.base, m.bytes, cudaHostRegisterPortable | cudaHostRegisterMapped) != cudaSuccess) {
-            host_free(m.base);
-            m.base = nullptr;
+// Options::lock_experts: an expert that leaves the card with no spare slot goes back to the mapping, as without the
+// option, and lock_loop() copies it from the files into a slot of its own; lock_settle() makes the copy the mirror's.
+// Made where the expert left, the pinned memory for it and the copy back from the card took the read that took the
+// cache's VRAM: on a 4090 held to 12 GiB the first reads of Qwen3.6 UD-Q3_K_M were 5-30% slower than the default's.
+void Engine::lock_queue(int il, int e) {
+    const size_t k = (size_t) il * (size_t) n_expert_ + (size_t) e;
+    if (!lock_thread_.joinable() || lock_asked_[k]) return;
+    lock_asked_[k] = 1;
+    {
+        std::lock_guard<std::mutex> l(lock_m_);
+        lock_want_.push_back((int64_t) k);
+    }
+    lock_cv_.notify_one();
+}
+
+// The experts lock_queue() asks for, read from the files into slots of pieces of 32 MiB, pinned as the mirror's own
+// are, between requests only: from trim() to the next read() or run().  cudaHostRegister() holds the CUDA calls of
+// every other thread while it pins: a launch and a sync on another thread waited out all of it, 80-100 ms for 256
+// MiB on lab-pro6000 and 128-130 ms on lab-241, 11-14 ms for 32 MiB.  A piece begun as a request comes holds the
+// request up no longer than that.  Only this thread touches lock_blocks_ until the engine joins it; it reads none
+// of what the main thread changes (the slots, mirror_of_).
+void Engine::lock_loop() {
+#if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+    cudaSetDevice(device_);
+    const size_t ne = (size_t) n_expert_;
+    std::vector<std::vector<uint8_t*>> slots((size_t) n_trade_);
+    size_t grown = 0, copied = 0, left = 0;
+    bool failed = false;
+    for (;;) {
+        int64_t k = -1;
+        {
+            std::unique_lock<std::mutex> l(lock_m_);
+            if ((copied || left) && (lock_want_.empty() || !lock_idle_.load(std::memory_order_relaxed))) {
+                size_t wait = 0;
+                for (const int64_t w : lock_want_) wait += mirror_stride_[(size_t) layers_[(size_t) w / ne].trade];
+                std::fprintf(stderr, "strata-poly: --lock-experts: %.0f MiB of experts that left VRAM copied from the "
+                                     "model file into locked RAM (%.1f GiB more in all)%s%s\n",
+                             (double) copied / (1 << 20), (double) grown / (1 << 30),
+                             left ? ("; " + std::to_string(left >> 20) + " MiB of them stay in the model file, with no "
+                                     "more pinned memory for them").c_str() : "",
+                             wait ? ("; " + std::to_string(wait >> 20) + " MiB more wait for the end of the request "
+                                     "under way").c_str() : "");
+                copied = left = 0;
+            }
+            lock_cv_.wait(l, [&] {
+                return lock_quit_ || (lock_idle_.load(std::memory_order_relaxed) && !lock_want_.empty());
+            });
+            if (lock_quit_) return;
+            k = lock_want_.back();
+            lock_want_.pop_back();
         }
-    } else if (cudaMallocHost((void**) &m.base, m.bytes) != cudaSuccess) {
-        m.base = nullptr;
+        {
+            const Layer& L = layers_[(size_t) k / ne];
+            const size_t e = (size_t) k % ne, c = (size_t) L.trade, stride = mirror_stride_[c];
+            if (slots[c].empty() && !failed) {
+                const size_t n = std::max<size_t>(1, (size_t(32) << 20) / stride);
+                MirrorPiece m{nullptr, n * stride, mirror_registered_};
+                if (m.registered) {
+                    m.base = host_alloc(m.bytes);
+                    if (m.base && cudaHostRegister(m.base, m.bytes, cudaHostRegisterPortable | cudaHostRegisterMapped) !=
+                                      cudaSuccess) {
+                        host_free(m.base);
+                        m.base = nullptr;
+                    }
+                } else if (cudaMallocHost((void**) &m.base, m.bytes) != cudaSuccess) {
+                    m.base = nullptr;
+                }
+                if (m.base) {
+                    lock_blocks_.push_back(m);
+                    for (size_t i = n; i > 0; --i) slots[c].push_back(m.base + (i - 1) * stride);
+                    grown += m.bytes;
+                } else {
+                    cudaGetLastError();
+                    failed = true;
+                }
+            }
+            if (slots[c].empty()) {
+                left += stride;
+                continue;
+            }
+            uint8_t* to = slots[c].back();
+            slots[c].pop_back();
+            const auto get = [&](uint8_t* dst, const uint8_t* src, size_t n) {
+                if (!read_file(dst, src, n)) std::memcpy(dst, src, n);
+            };
+            get(to, L.exp_gate + e * L.gu_stride, L.gu_bytes);
+            get(to + L.gu_bytes, L.exp_up + e * L.u_stride, L.u_bytes);
+            get(to + L.gu2(), L.exp_down + e * L.d_bytes, L.d_bytes);
+            copied += stride;
+            std::lock_guard<std::mutex> l(lock_m_);
+            lock_done_.emplace_back(k, to);
+            lock_done_n_.store((int) lock_done_.size(), std::memory_order_release);
+        }
     }
-    if (!m.base) {
-        cudaGetLastError();
-        std::fprintf(stderr, "strata-poly: --lock-experts: no more pinned memory for the experts that leave VRAM: "
-                             "they go back to the model file\n");
-        mirror_grow_failed_ = true;
-        return false;
-    }
-    mirror_blocks_.push_back(m);
-    for (size_t i = 0; i < n; ++i) mirror_spare_[(size_t) c].push_back(m.base + i * stride);
-    mirror_grown_ += m.bytes;
-    std::fprintf(stderr, "strata-poly: --lock-experts: %.0f MiB more of locked RAM for experts that left VRAM (%.1f GiB "
-                         "more in all)\n", (double) m.bytes / (1 << 20), (double) mirror_grown_ / (1 << 30));
-    return true;
 #endif
+}
+
+// On the main thread, between calls, where the mirror is read: each copy lock_loop() made is its expert's slot in the
+// mirror, on the card again or not (refills_mirror()), unless it got one meanwhile (a spare when it left the card
+// again), and then a spare, for the next one that leaves.
+void Engine::lock_settle() {
+    if (lock_done_n_.load(std::memory_order_acquire) == 0) return;
+    std::vector<std::pair<int64_t, uint8_t*>> done;
+    {
+        std::lock_guard<std::mutex> l(lock_m_);
+        done.swap(lock_done_);
+        lock_done_n_.store(0, std::memory_order_relaxed);
+    }
+    for (const auto& [k, s] : done) {
+        lock_asked_[(size_t) k] = 0;
+        if (!mirror_of_[(size_t) k]) mirror_of_[(size_t) k] = s;
+        else mirror_spare_[(size_t) layers_[(size_t) k / (size_t) n_expert_].trade].push_back(s);
+    }
 }
 
 void Engine::mirror_give(int il, int e) {
@@ -5446,7 +5543,7 @@ void Engine::mirror_give(int il, int e) {
 void Engine::mirror_keep(int il, int e, const uint8_t* vram) {
     if (mirror_of_.empty() || mirror(il, e)) return;
     uint8_t* s = mirror_take(il);
-    if (!s) return;
+    if (!s) return lock_queue(il, e);
     ck(cudaMemcpyAsync(s, vram, layers_[(size_t) il].slot_bytes, cudaMemcpyDeviceToHost, cs(st_)), "the expert cache");
     mirror_of_[(size_t) il * (size_t) n_expert_ + (size_t) e] = s;
 }
@@ -5899,6 +5996,7 @@ void* Engine::record(F&& work) {
 // n tokens from pos() through every layer.  The sequence is not longer for it: the caller says by how much.
 void Engine::run(const int32_t* tokens, int n) {
     if (n < 1 || n > rows_) throw std::logic_error("eval takes 1 to max_rows() tokens");
+    lock_idle_.store(false, std::memory_order_relaxed);
     if (n >= kStageRows) take_prompt();
     if (pos_ + n > opt_.max_context)
         throw std::runtime_error("the context is full (" + std::to_string(opt_.max_context) + " tokens)");
@@ -5914,6 +6012,9 @@ void Engine::run(const int32_t* tokens, int n) {
     // STRATA_FREEZE_EXPERTS holds the split still for the whole request instead: the request's first token
     // claims the arrivals and asks for the trades, and the tokens after it see the cache as it was then.
     // follow() above takes the arrivals it finds, so the freeze only has to keep the later ones from asking.
+    // lock_loop()'s copies are not waited for: until one is the mirror's, its expert is read from the mapping, and a
+    // card_far_ call that routes to it goes to the host.
+    lock_settle();
     if (n_swap_ > 0) {
         settle_swaps();
         follow(n < kStageRows ? n : 0);
@@ -6700,6 +6801,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     // (a read of no tokens of its own takes co-reads: a request whose prompt the conversation holds but its last token)
     if (n < (n_co > 0 ? 0 : 1) || all > read_rows_)
         throw std::logic_error("read takes 1 to max_read() tokens, co-reads among them");
+    lock_idle_.store(false, std::memory_order_relaxed);
     if (all >= kStageRows) take_prompt();
     for (const Image& im : images_)
         if (im.at < pos_ + n && im.at + im.n > pos_)
@@ -6850,6 +6952,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         throw std::runtime_error("the context is full (" + std::to_string(opt_.max_context) + " tokens)");
 
     ck(cudaStreamSynchronize(cs(st_)), "read");
+    lock_settle();
     if (n_swap_ > 0) follow(0);
     const size_t e_row = (size_t) n_embd_, r_row = (size_t) streams() * e_row, r_bytes = r_row * sizeof(float);
     const size_t part = (size_t) std::max(streams(), draft_ ? 3 : 1) * rows_ * e_row;   // a call's rows of r_
