@@ -5,18 +5,19 @@ of the box, what speed to expect with Qwen3.8-Flash-Next IQ3_S, and the traps on
 build, the toolchain and the opt-in switches are on [STRIX_HALO.md](STRIX_HALO.md).
 
 The structure of this page comes from the first Windows guide for this PC, written by HaiYunChuang (pull request #3029). It measured
-engines 0.1.41 to 0.1.47 with a hand-made configuration (`--mmap-experts`, a list of switches, a batch file). Since then the app and
-`strata launch` have taken over most of that, so this version describes the 0.2.7 install and every number in it was measured again.
+engines 0.1.41 to 0.1.47 with a hand-made configuration (`--mmap-experts`, a list of switches, a batch file). The numbers below were
+measured again by the Strata project on its 0.2.7 release, installed with its Terminal (`strata launch`). PolyStrata runs the same
+Qwen3.8-Flash-Next engine and installs it with setup ([3. Install](#3-install)).
 
 ## 1. What this PC reaches
 
 Measured on 2026-10-26 on a GMKtec NucBox EVO-X2 (Ryzen AI Max+ 395, 128 GB shared memory: a 64 GB BIOS carve-out for the graphics chip
-and 64 GB that Windows sees; Windows 11 Pro, AMD Adrenalin 26.10.1 / driver 32.0.32015.7029). PolyStrata was the 0.2.7 release candidate
-(Terminal and engine 0.1.51 built from commit `3e468f5de`, ROCm 10.2.0a20260930). The server was started with `strata launch` and
-nothing else was set by hand; the speeds come from `terminal/tools/strata_bench.py` against the running server (three runs per test, medians,
+and 64 GB that Windows sees; Windows 11 Pro, AMD Adrenalin 26.10.1 / driver 32.0.32015.7029). The build was the
+Strata project's 0.2.7 release candidate (its Terminal and engine 0.1.51 from commit `3e468f5de`, ROCm 10.2.0a20260930). The server was
+started with that Terminal's `strata launch` and nothing else was set by hand; the speeds come from `terminal/tools/strata_bench.py` against the running server (three runs per test, medians,
 the engine's own timings; the model is loaded before the clock starts). The numbers can still move before the release is cut.
 
-**Qwen3.8-Flash-Next IQ3_S** (`strata launch --family qwen --model iq3_s`; 131,072 tokens of context, int8 KV, pictures on):
+**Qwen3.8-Flash-Next IQ3_S** (`strata launch --family qwen --model iq3_s` in the Strata project's Terminal; 131,072 tokens of context, int8 KV, pictures on):
 
 | Test | Result |
 | --- | --- |
@@ -43,16 +44,16 @@ were not measured for this page.
 
 ## 3. Install
 
-1. Use the Windows app (`PolyStrata-<version>-windows-x64-setup.exe`) or the Terminal. The engine for this chip is the `windows-x86_64-hip-rdna3`
-   package; the app or `strata launch` downloads it on the first start, and `strata update` keeps it current.
-2. Choose the model in the app, or `strata launch --family qwen --model iq3_s`. With model files you already have, add
-   `--model-path <folder>` (for IQ3_S the two shards are in one folder: shard 1 is the main model, shard 2 holds the per-layer embedding
-   table and must stay a separate file).
-3. The first start took about 20 minutes on the measured PC with the model files already on disk: the engine package (158 MB), the
-   check of the 84 GB of model files, the picture reader (0.9 GB), the draft layer (about 5 GB) and the one-time pack. The next start
-   took under two minutes.
+1. Run `START-HERE.bat --setup --family qwen --model IQ3_S` ([INSTALL.md](INSTALL.md)). Setup chooses the AMD engine by itself; for
+   this chip it is the Strata project's `windows-x86_64-hip-rdna3` package, which setup downloads on the first start
+   ([AMD_HIP.md](AMD_HIP.md#ready-made-packages)), and `UPDATE.bat` keeps it current.
+2. With model files you already have, add `--gguf-dir <folder>` (for IQ3_S the two shards are in one folder: shard 1 is the main
+   model, shard 2 holds the per-layer embedding table and must stay a separate file).
+3. With the Strata project's Terminal the first start took about 20 minutes on the measured PC with the model files already on
+   disk: the engine package (158 MB), the check of the 84 GB of model files, the picture reader (0.9 GB), the draft layer (about
+   5 GB) and the one-time pack. The next start took under two minutes.
 
-What `strata launch` wrote for IQ3_S, with no switches of mine (these are the settings to copy if you drive the engine by hand):
+What the Strata project's `strata launch` wrote for IQ3_S, with no switches of mine (these are the settings to copy if you drive the engine by hand):
 
 ```
 --expert-cache auto --prefill auto --spec 4 --spec-min-p 0.5 --mtp <draft layer>
@@ -107,14 +108,16 @@ The answers stay the same: on the same PC and build I ran five fixed greedy prom
 4,091-token prompt and a 16,383-token prompt; 895 generated token ids) through the engine four times, with the switch on, off, on, off. The
 token ids were identical in all four runs for every prompt.
 
-What 0.2.7 does: on Windows `gfx1151` the engine no longer turns the switch on by itself. To turn it back on, use `strata launch ...
---set STRATA_SH_STREAM=1` (or put `STRATA_SH_STREAM=1` in the environment of an engine you start by hand); a value you set is always kept.
+What 0.2.7 does: on Windows `gfx1151` the engine no longer turns the switch on by itself. To turn it back on, put
+`"STRATA_SH_STREAM": "1"` in the `"env"` of the model's run config (or in the environment of an engine you start by hand); a value you
+set is always kept.
 `STRATA_DEFAULTS=026` brings back everything 0.2.6 did, including the switch on. This is one model, one PC and short answers; Linux `gfx1151` has not been measured against it.
 
 ## 5. Traps
 
 1. **Keep RAM free.** Qwen IQ3_S held 49 GB of 63.6 GB. A browser with many tabs, or a second model, is enough to push the PC into paging.
-2. **Do not run two engines.** One model at a time on this PC; `strata launch --status` shows what is serving, `strata launch --stop` ends it.
+2. **Do not run two engines.** One model at a time on this PC: close the model's window before you start
+   another. `http://127.0.0.1:8080/health` says what is serving.
 3. **The graphics driver.** The measured driver is Adrenalin 26.10.1 (32.0.32015.7029).
 4. **If Windows resets the driver** (screen flicker, the engine dies mid-answer), see the driver-reset entry in
    [TROUBLESHOOTING.md](TROUBLESHOOTING.md#amd-cards).
@@ -124,8 +127,8 @@ What 0.2.7 does: on Windows `gfx1151` the engine no longer turns the switch on b
 ## 6. Reproduce it
 
 ```
-strata launch --family qwen --model iq3_s            # then, from a source checkout:
-python terminal/tools/strata_bench.py --url http://127.0.0.1:8080 --runs 3 --long
+START-HERE.bat --setup --family qwen --model IQ3_S   # then, with the model running:
+tools\BENCH.bat --runs 3 --long
 ```
 
 `--long` adds the 32K prompt.

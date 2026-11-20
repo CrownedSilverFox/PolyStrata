@@ -12,13 +12,14 @@ GLM 5.3 Flash has a page of its own: [GLM.md](GLM.md).
 ## Quick start
 
 1. Find your memory in [Pick by memory](#pick-by-memory) and choose the first provider that fits.
-2. Print the plan. Nothing is downloaded or changed:
+2. Install it with setup ([INSTALL.md](INSTALL.md)), naming the family and size, or press Enter for the size setup
+   recommends:
 
    ```sh
-   strata launch --plan --family qwen --model iq2_xs
+   START-HERE.bat --setup --family qwen --model IQ2_XS        # Linux and Mac: ./setup.sh --setup ...
    ```
 
-3. Start it with `strata launch` (guided), or run the same command without `--plan` and add `--yes --no-tui`.
+3. Setup prints what it will download and how much RAM it plans for, then asks before it starts.
 
 **Provider order:** ISTA-DASLab, then Unsloth, then Gyro, then others, using the first compatible pack that fits the
 model and your hardware. ISTA-DASLab is the default recommendation. Gyro saves memory and is slower. Swift 1.5, NVFP4
@@ -79,8 +80,7 @@ card makes it faster and does not lower the RAM needed, except in low-RAM mode.
 **Big graphics card, little RAM.** When RAM cannot hold the experts beside the system, setup maps them from the model
 files and keeps in RAM only what the card does not hold. A 32 GB PC with a 24 GB GPU runs Q2_0, IQ2_XS and the Coder
 this way, and a 32 GB PC with a 12 to 16 GB GPU runs the Coder. With a small card most experts come from the SSD and it
-is much slower; setup says so. A source checkout can force the mode with `--low-ram on|off`
-([SOURCE_INSTALL.md](SOURCE_INSTALL.md)). `strata launch` has no `--low-ram` flag.
+is much slower; setup says so. Setup's `--low-ram on|off` forces the mode.
 
 The download is 66 to 76 GB for the three smaller sizes ([details](DETAILS.md#which-model)). The first start also
 fetches the MTP draft layer (about 6 GB, 1 GB more with pictures).
@@ -93,7 +93,7 @@ picture). The rule is the same on NVIDIA and AMD.
 
 | Setting | Effect |
 | --- | --- |
-| `--vision off` | no pictures (also "No" in the app and in `strata launch`) |
+| `--vision off` | no pictures (also "no" to setup's question) |
 | `--vision cpu` / `--vision gpu` | choose the reader |
 
 - **AMD:** `strata-vision-hip` is the card's reader. If it cannot start, PolyStrata uses the CPU reader ([AMD_HIP.md](AMD_HIP.md)).
@@ -114,7 +114,7 @@ It is weaker outside code and in languages other than English, Chinese and other
 or whenever RAM allows, take a size that keeps every expert. More: [details](DETAILS.md#or-the-coder-half-the-experts-for-code).
 
 ```sh
-strata launch --family coder --model IQ1_M
+START-HERE.bat --setup --family coder --model IQ1_M        # Linux and Mac: ./setup.sh --setup ...
 ```
 
 ### Swift 1.5
@@ -124,7 +124,7 @@ thinks much shorter before answering, with about the same quality. Speed per tok
 original. Its own license applies. More: [details](DETAILS.md#or-swift-15-a-fine-tune-that-thinks-shorter).
 
 ```sh
-strata launch --family swift --model IQ2_XS
+START-HERE.bat --setup --family swift --model IQ2_XS        # Linux and Mac: ./setup.sh --setup ...
 ```
 
 <a id="unsloth-ud-iq4_xs"></a><a id="unsloth-ud-q4_k_xl-experimental"></a>
@@ -148,7 +148,7 @@ NVIDIA, AMD and Intel details are in [QUANTS.md](QUANTS.md); the files are descr
 [UD-Q6_K_XL](UNSLOTH_Q6.md). Older AMD speeds are in [History](#history--older-measurements).
 
 ```sh
-strata launch --family unsloth --model UD-Q5_K_XL
+START-HERE.bat --setup --family unsloth --model UD-Q5_K_XL        # Linux and Mac: ./setup.sh --setup ...
 ```
 
 <a id="gyro"></a>
@@ -168,7 +168,7 @@ On an RTX 3060 12 GB and an R9700, Gyro-M decodes 16 to 21% slower than Q2_0. De
 [GYRO.md](GYRO.md). Intel Arc: [INTEL_ARC.md](INTEL_ARC.md). Mac: [MAC.md](MAC.md#gyro-s-and-gyro-m-agentionais-trellis-experts).
 
 ```sh
-strata launch --family gyro --model Gyro-S
+START-HERE.bat --setup --family gyro --model Gyro-S        # Linux and Mac: ./setup.sh --setup ...
 ```
 
 <a id="nvfp4"></a><a id="nvfp4-qad"></a>
@@ -194,7 +194,7 @@ setup downloads with it. Licenses: NVIDIA Open Model Agreement and Qwen's Commun
 More: [NVFP4.md](NVFP4.md#nvidias-fp4-local-checkpoint).
 
 ```sh
-strata launch --family nvfp4 --model NVFP4
+START-HERE.bat --setup --family nvfp4 --model NVFP4        # Linux and Mac: ./setup.sh --setup ...
 ```
 
 ### OrcaRouter Uncensored IQ3_XXS
@@ -205,10 +205,12 @@ packing conversion and is not an installer menu option.
 ## Qwen3.6-35B-A3B
 
 A smaller model from the same maker: [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) (35 billion
-parameters, 3 billion active per token, 256 experts, Apache 2.0). PolyStrata runs
-[Unsloth's GGUFs with the MTP draft layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) on its own engine
-path, chosen by the file. It is in the app's model list and in setup (`--family qwen36`). It runs on NVIDIA and AMD
-cards; the Intel Arc engine and the Mac engine do not run it. It reads pictures and serves several requests at once.
+parameters, 3 billion active per token, 256 experts, Apache 2.0). The Strata project's engine runs
+[Unsloth's GGUFs with the MTP draft layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) on a path of its own,
+chosen by the file: setup's `--family qwen36-strata`. It runs on NVIDIA and AMD cards; the Intel Arc engine and the
+Mac engine do not run it. `--family qwen36` runs the same model on PolyStrata's own engine, strata-poly, with other sizes
+and on smaller cards ([qwen36.md](models/qwen36.md), [BACKENDS.md](BACKENDS.md#qwen36-on-two-engines)). It reads
+pictures and serves several requests at once.
 
 | Size | File | RAM setup plans for | In plain words |
 | --- | ---: | ---: | --- |
@@ -235,25 +237,26 @@ do not describe a 16 GB card sharing 32 GB of system RAM with other large proces
 Pictures, parallel requests, full measurements and limits: [QWEN36.md](QWEN36.md).
 
 ```sh
-strata launch --family qwen36 --model UD-Q4_K_XL
+START-HERE.bat --setup --family qwen36-strata --model UD-Q4_K_XL        # Linux and Mac: ./setup.sh --setup ...
 ```
 
 ## Adding or switching models
 
-- **In the app:** the Models page lists every model with its size and whether it fits your computer. Pick one and press the install button.
-- **In the Terminal:** `strata launch` has a Model step with the same list and "Use model files I already have".
-  `strata models list` shows what is installed. `strata models import <folder or .gguf> --plan` shows what a set of
-  files you already have would become, without changing anything.
-- **From a source checkout only:** `SETUP.bat` or `./setup.sh --setup` adds another model ([SOURCE_INSTALL.md](SOURCE_INSTALL.md)).
+`START-HERE.bat --setup` (Linux and Mac: `./setup.sh --setup`) adds another model; shared files are reused.
+`START-HERE.bat` then asks which installed model to start, and `terminal/run-<model>.bat` (Linux: `run-<model>.sh`)
+starts one directly. `--inspect <folder or .gguf>` shows what files you already have hold, and `--custom-gguf` installs
+them ([INSTALL.md](INSTALL.md#options-without-questions)).
 
-Shared files are reused. In the Terminal, choose a model in `strata launch`, pass an explicit family and model, or use a
-saved `--preset`. Add `--restart` when replacing a running launch. Generated `run-<model>` scripts belong to a source
-checkout, not to the installed app.
+Once a model runs, the chat page's model list switches to another installed model without a restart, and each model
+runs with its own settings ([DETAILS.md](DETAILS.md#the-web-page-chat-images-monitor-requests-about)). With
+`"switch_on_request": true` in the config it starts with, API clients see every installed model in `/v1/models` too,
+and a request that names one loads it ([DETAILS.md](DETAILS.md#connecting-apps)). From a terminal,
+`python polystrata.py --model <name>` does the same ([BACKENDS.md](BACKENDS.md#changing-the-model)).
 
 ## Speed on your own PC
 
-`--tune quick` and `--tune thorough` measure settings for the selected model, and the app offers tuning too. Results
-depend on the backend and machine. All speed measurements, long-context numbers and estimates for other cards are in
+`START-HERE.bat --calibrate` (Linux: `./setup.sh --calibrate`) measures the engine's settings on your PC for the
+selected model ([INSTALL.md](INSTALL.md#tuning-for-your-pc)). Results depend on the backend and machine. All speed measurements, long-context numbers and estimates for other cards are in
 [DETAILS.md](DETAILS.md#speed-measured). AMD measurements per card are in [AMD_HIP.md](AMD_HIP.md#rdna4-gfx1201).
 Measured PolyStrata on your own PC? See [Community benchmark results](COMMUNITY_BENCHMARKS.md).
 

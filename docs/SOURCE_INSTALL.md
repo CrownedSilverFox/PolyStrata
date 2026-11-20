@@ -1,7 +1,7 @@
 # Install and build from a source checkout
 
 Use this guide to work on PolyStrata's code or maintain a source-based installation. It is for developers.
-To just use PolyStrata (version 0.2.17), install the [desktop app or the Terminal](INSTALL.md). Installed apps do not use `START-HERE.bat`.
+To just use PolyStrata, follow [INSTALL.md](INSTALL.md): it is the same `START-HERE.bat` and `setup.sh`, run with their defaults.
 
 The repository includes `START-HERE.bat`, `UPDATE.bat` and `setup.sh`. (`SETUP.bat` and `update.sh` went away with the 0.2.16 folder
 layout: `START-HERE.bat --setup` and `./setup.sh --setup` do what `SETUP.bat` did, `START-HERE.bat --update` and `./setup.sh --update` what `update.sh` did.)
@@ -20,7 +20,7 @@ acquire or build an engine. Check [model requirements](MODELS.md) before downloa
 
 ## From source: Windows
 
-1. Clone the [repository](https://github.com/Niko1221/Strata) or download and extract its source archive.
+1. Clone the [repository](https://github.com/simplexai-labs/PolyStrata) or download and extract its source archive.
 2. Open the source folder and run `START-HERE.bat`.
 3. Choose a supported model, storage folder and settings. Keep the window open while setup works.
 
@@ -32,7 +32,7 @@ START-HERE.bat --family qwen --model Q2_0
 
 Choose a pack that fits your machine; Q2_0 is an example, not a universal minimum-memory option.
 In PowerShell, prefix the wrapper with `.\`, for example `.\START-HERE.bat`.
-`SETUP.bat` opens setup again to add a model or change settings. The wrapper can reuse an existing install;
+`START-HERE.bat --setup` opens setup again to add a model or change settings. The wrapper can reuse an existing install;
 first-start and later load times depend on the pack, disk, RAM and backend. A model can take several minutes to load.
 Run again over an installed model, setup pre-selects the size that is installed and marks it "(installed)", and `--yes` takes it: a repeat run
 does not move the model to the recommended size.
@@ -53,19 +53,19 @@ Clone or extract the source, enter its folder, then run:
 ```
 
 On Debian and Ubuntu, the wrapper can offer to install missing system packages through `sudo apt`.
-Other distributions need the equivalent dependencies installed first. Python dependencies use the checkout's
-`.venv`. NVIDIA source builds need the CUDA toolkit; AMD builds need HIP/ROCm. See [Linux details](DETAILS.md#linux).
+Other distributions need the equivalent dependencies installed first. Python dependencies use
+`terminal/.venv`. NVIDIA source builds need the CUDA toolkit; AMD builds need HIP/ROCm. See [Linux details](DETAILS.md#linux).
 
-Nix/NixOS users can enter the supplied development environment:
+Nix/NixOS users can enter the supplied development environment (its flake is in `tools/nix`):
 
 ```bash
-nix develop -c ./setup.sh
+nix develop ./tools/nix -c ./setup.sh
 ```
 
 ### Build from git on Linux (to try a pull request or change the code)
 
 ```bash
-git clone https://github.com/Niko1221/Strata.git
+git clone https://github.com/simplexai-labs/PolyStrata.git
 cd PolyStrata
 ./setup.sh --build --no-start
 ```
@@ -88,11 +88,11 @@ Run against the resulting binary and the matching model config. Use the build in
 [HIP](AMD_HIP.md), [SYCL](INTEL_ARC.md) or [Metal](MAC.md) when changing those backends.
 Follow [contribution validation requirements](../.github/CONTRIBUTING.md) before requesting review.
 
-For the Terminal monitor from a checkout:
+A monitor in the terminal, from a checkout that setup has prepared (it installs the monitor's packages into
+`terminal/.venv`):
 
 ```bash
-.venv/bin/pip install -r terminal/requirements-monitor.txt
-STRATA_PYTHON="$PWD/.venv/bin/python3" terminal/bin/strata monitor --url http://127.0.0.1:8080
+STRATA_PYTHON="$PWD/terminal/.venv/bin/python3" terminal/bin/strata monitor --url http://127.0.0.1:8080
 ```
 
 ## From source: Mac
@@ -105,7 +105,7 @@ xcode-select --install
 
 Then run `./setup.sh` in the source folder. macOS uses its own setup implementation and builds the Metal engine;
 its options and model preparation differ from Windows/Linux. Read [MAC.md](MAC.md#install) and
-`./setup.sh --help`. The released app and Terminal do not require a compiler.
+`./setup.sh --help`.
 
 ## AMD cards
 
@@ -124,14 +124,14 @@ Source setup uses `--gpus` to select multiple cards of the same supported backen
 ./setup.sh --gpus 0,1
 ```
 
-Windows equivalent: `START-HERE.bat --gpus 0,1`. The installed Terminal instead uses
-`strata launch --gpu 0,1`. Main/Helper roles, memory limits and measurements are in [MULTI_GPU.md](MULTI_GPU.md).
+Windows equivalent: `START-HERE.bat --gpus 0,1`. Main/Helper roles, memory limits and measurements are in [MULTI_GPU.md](MULTI_GPU.md).
 Several cards are not always faster than one; measure the workload you care about.
 
 ## Docker (Linux)
 
-Use [DOCKER.md](DOCKER.md) for released images, GPU access and the container build instructions.
-A container is a separate installation route. Intel model preparation and host driver requirements still apply.
+[DOCKER.md](DOCKER.md) builds a container for Qwen3.8-Flash-Next on the Strata project's engine (PolyStrata's own
+models are not in it), with GPU access and the build instructions. A container is a separate installation route. Intel model
+preparation and host driver requirements still apply.
 
 ## Older CPUs (experimental)
 
@@ -139,15 +139,6 @@ Ready-made x86 engines require AVX2. Source setup can build experimental AVX or 
 this does not make every model pack compatible. Q2_0's CPU requirements differ from the i-quants.
 See the [CPU and build notes](DETAILS.md) and [older GPU guide](OLDER_GPUS.md) for the relevant hardware.
 Record the actual CPU, compiler, model and validation results when reporting an experimental build.
-
-### Using an engine you built with `strata launch`
-
-`strata launch` and the app start the engine installed in PolyStrata's component folder, not the one in your checkout. To use your own build,
-run `strata components add-build <folder>`, where the folder holds the engine program you built (`strata`, its libraries and `BUILD.json`).
-PolyStrata first checks that the program runs on this computer (`strata --version`) and is for this computer's kind of graphics card. It then
-copies it in as a local engine, not signed by PolyStrata, and uses it from then on. `strata components engines` and `strata doctor` show it as
-a local build. PolyStrata never switches to a local build by itself, not even when it is newer than the released engines.
-`strata components use newest` goes back to the released engines, and `strata components remove <folder>` deletes the local build.
 
 ## Updating
 
@@ -162,16 +153,15 @@ by its old place in the checkout keeps working until the engine restarts and the
 After an update from 0.2.15 or older, point such paths (and the `ExecStart` of a service unit) at the new places.
 
 If you changed engine code, rebuild it and verify the executable path again. The presence of updated source files
-is not evidence that a running engine contains those changes. Desktop and Terminal component updates are covered
-separately in [INSTALL.md](INSTALL.md#updating).
+is not evidence that a running engine contains those changes.
 
 ## Where things are stored
 
-Source setup writes model run configs (`strata-<model>.json`), launch scripts (`run-<model>.bat` / `.sh`) and
-logs in the checkout. Models, packs and draft data normally go in `PolyStrata-data` beside it, or the location selected
+Setup writes model run configs (`strata-<model>.json`), launch scripts (`run-<model>.bat` / `.sh`) and
+logs in the checkout's `terminal` folder. Models, packs and draft data normally go in `PolyStrata-data` beside it, or the location selected
 with `--data-dir`. Dependencies and build products stay in the source installation.
 
-These are source paths. The desktop app and installed Terminal use the [release data locations](INSTALL.md#where-things-are-stored).
+The full list: [where things are stored](INSTALL.md#where-things-are-stored).
 Back up a config before editing it: setup can rewrite the fields it owns. Do not publish API keys or private paths in logs.
 
 ## Setup's questions
@@ -183,8 +173,7 @@ Executable defaults may differ, so select the family explicitly when that choice
 
 ## Tuning for your PC
 
-Use source setup's `--calibrate` only where that backend supports it. Terminal tuning instead uses
-`strata launch --tune quick` or `--tune thorough`; those are separate interfaces. Tuning can take a substantial
+Use setup's `--calibrate` only where that backend supports it ([INSTALL.md](INSTALL.md#tuning-for-your-pc)). Tuning can take a substantial
 amount of time and should use the same hardware and model configuration as the intended workload.
 
 ## Options without questions
@@ -202,5 +191,6 @@ START-HERE.bat --setup
 ```
 
 `--yes` accepts setup's recommended answers and can start large downloads. Use it only after choosing the pack
-and storage location. Keep source flags (`--gpus`, `--vision yes|no`, numeric `--context`) separate from
-[Terminal flags](TERMINAL_LAUNCH.md) and raw engine options.
+and storage location. Keep setup's flags (`--gpus`, `--vision yes|no`, numeric `--context`) separate from raw engine options, which go in
+the run config's `"args"` ([DETAILS.md](DETAILS.md)).
+

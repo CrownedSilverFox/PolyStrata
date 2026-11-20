@@ -13,10 +13,10 @@ SH = ROOT.parent / "tools" / "packaging" / "install.sh"
 
 class Text(unittest.TestCase):
     def test_the_readme_one_liner_cannot_succeed_on_a_failed_download(self):
-        for name in ("README.md", "docs/lang/README.de.md", "docs/INSTALL.md", "docs/TERMINAL_LAUNCH.md"):
+        # PolyStrata's pages install through START-HERE.bat / setup.sh and carry no install.sh one-liner; none may pipe one
+        for name in ("README.md", "docs/INSTALL.md", "docs/TERMINAL_LAUNCH.md"):
             text = (ROOT.parent / name).read_text(encoding="utf-8")
             self.assertNotIn("install.sh | sh", text, name)                    # `curl ... | sh` runs nothing and exits 0 when curl fails
-            self.assertIn("install.sh -o install.sh && sh install.sh", text, name)
 
     def setUp(self):
         self.ps1 = PS1.read_text(encoding="utf-8")

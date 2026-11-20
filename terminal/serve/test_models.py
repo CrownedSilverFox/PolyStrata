@@ -426,7 +426,7 @@ class OnRequest(unittest.TestCase):
 
     def test_off_everything_is_as_before(self):
         """Without the key: /v1/models as 0.1.44.1-poly.6 said it, with the context under the names other APIs use too
-        (Strata 0.2.17), and any name answered by the loaded model."""
+        (the Strata project's 0.2.17), and any name answered by the loaded model."""
         ctx = {"max_model_len": 4096, "context_length": 4096, "max_context_length": 4096, "meta": {"n_ctx": 4096}}
         loaded = {"object": "list", "data": [
             {"id": "alpha", "object": "model", "status": {"value": "loaded"}, **ctx,

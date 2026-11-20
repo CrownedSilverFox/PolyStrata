@@ -2,7 +2,7 @@
 
 This page is for people who want PolyStrata's server to make images through `POST /v1/images/generations`, OpenAI's
 images API. It is optional, off unless you ask for it, and separate from reading pictures in chat (for that, use
-`strata launch --vision on` with a supported model and reader).
+setup's `--vision yes` with a model that reads pictures).
 
 It needs a [source checkout](SOURCE_INSTALL.md) and build tools. The steps below are not part of a normal app install.
 

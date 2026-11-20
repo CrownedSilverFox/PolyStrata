@@ -1,9 +1,8 @@
 # Older GPUs (experimental)
 
 This page is for people with an NVIDIA card older than the RTX 20 series, an older AMD card, or a Turing card they want to tune.
-For a normal install use the app installer for your hardware or the [Terminal](INSTALL.md#the-terminal). Pascal and Volta use the
-CUDA 12 engine package. The `--cuda`, `--gpus`, `START-HERE.bat` and `UPDATE.bat` examples below are
-[source-setup](SOURCE_INSTALL.md) options, not Terminal launch flags.
+The install is the usual one ([INSTALL.md](INSTALL.md)): `START-HERE.bat` or `./setup.sh`. Pascal and Volta use the
+experimental CUDA 12 engine. The `--cuda`, `--gpus`, `START-HERE.bat` and `UPDATE.bat` examples below are setup's options.
 
 PolyStrata's supported cards are NVIDIA RTX 20 / 30 / 40 / 50 and the AMD cards in [AMD_HIP.md](AMD_HIP.md). The cards below run
 through opt-in, experimental paths that community members wrote and measured. The maintainers own one of these cards, a Tesla
@@ -115,7 +114,7 @@ apply here: on an RTX 5090 with driver 570, strata-poly built with CUDA 12.8 rea
 at 6,200 to 6,700 tokens/s. On a Pascal or Volta card setup adds `-DSTRATA_EXPERIMENTAL_SM60=ON`; strata-poly
 compiles for sm_61 and sm_70 with CUDA 12.4 and 12.8. On two Tesla V100-PCIE-32GB, built with CUDA 12.9.1, it ran
 Qwen3.6 UD-Q3_K_M split over both cards at 157 tokens/s in a chat and read 4K and 16K prompts at 2,615 and 2,778
-tokens/s ([issue 88](https://github.com/VecSzn/PolyStrata/issues/88)). Built as compute_61 PTX only and
+tokens/s ([issue 88](https://github.com/simplexai-labs/PolyStrata/issues/88)). Built as compute_61 PTX only and
 run on an RTX 3080, which takes the Pascal code paths, Qwen3.6's greedy answer matched llama.cpp's for 60 of 64
 tokens (the sm_86 build: 64) and differed after that by a near tie. On Windows, with CUDA 12.9 and Visual Studio's
 14.44 compiler, it builds for sm_61 and for sm_89; the sm_89 build wrote the same 200 tokens of Qwen3.6 UD-Q2_K_XL as
@@ -338,7 +337,8 @@ existing code ([gemm.cu](../engine/src/prefill/gemm.cu), [qsa_select.cu](../engi
 
 ## AMD: building gfx906 and gfx1012
 
-Setup does not build these. Build by hand and run `terminal/serve/server.py` with a config, as on any other card.
+Setup does not build these, except gfx1012 on Windows, which is opt-in (see the gfx1012 bullet). Otherwise build by hand
+and run `terminal/serve/server.py` with a config, as on any other card.
 
 - **gfx906** (MI50 / MI60 / Radeon VII, wave64): a separate opt-in build, `-DSTRATA_HIP_GFX906=ON
   -DCMAKE_HIP_ARCHITECTURES=gfx906` (not `STRATA_ENABLE_HIP`). Current ROCm no longer ships gfx906 libraries; the reporter used a
@@ -346,7 +346,7 @@ Setup does not build these. Build by hand and run `terminal/serve/server.py` wit
   [AMD_HIP.md](AMD_HIP.md#gfx906-instinct-mi50--mi60-radeon-vii-wave64-built-from-source).
 - **gfx1012** (RX 5500 XT): the wave32 backend, `-DSTRATA_ENABLE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx1012`. HIP 5.7 (Ubuntu's
   packages) works: older hipBLAS is used through rocBLAS, legacy HIP names and the missing `__syncwarp` are version-gated, and
-  RDNA1's missing signed dot4 uses llama.cpp's SDWA sequence (`-DSTRATA_GFX1012_PORTABLE_DOT=ON`: the portable one).
+  RDNA1 takes the native signed dot4 (`v_dot4_i32_i8`) where the compiler has `__builtin_amdgcn_sdot4`. `-DSTRATA_GFX1012_SDWA_DOT=ON` switches to the SDWA sequence, and `-DSTRATA_GFX1012_PORTABLE_DOT=ON` to the portable loop. On Windows setup installs strata-poly for gfx1012 only with `STRATA_EXPERIMENTAL_GFX1012=1` (opt-in, one card measured): [RADEON_PRO_5500M.md](RADEON_PRO_5500M.md).
 
 ## Reports welcome
 

@@ -169,7 +169,7 @@ Nasıl çalıştığı ve nasıl ölçüldüğü: [docs/BACKENDS.md](docs/BACKEN
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.md) | yukarıdakiyle aynı; AMD beta olarak | 8 GB'lık bir kartın yanında yaklaşık 25 GB | 16 ila 29 GB | Windows, Linux |
 | [Kolibri 1](docs/models/kolibri.md) | NVIDIA RTX 20 serisi veya daha yenisi, 8 GB veya daha fazla | 8 GB'lık bir kartın yanında yaklaşık 33 GB | 29 ila 48 GB | Windows, Linux |
 
-RAM değeri yükleyicinin tahminidir; daha büyük bir kartla daha azı gerekir. Geri kalan her şeyi yükleyici kurar: Windows'ta motoru hazır derlenmiş olarak indirir; yalnızca AVX2 desteği olmayan bir işlemcide ya da senin kopyandaki motor son sürümden daha yeniyse onu bilgisayarında derler ve gereken araçları kurmayı önerir. İki ya da üç kart bir modeli paylaşabilir ([çoklu GPU](docs/MULTI_GPU.md)). Eski ekran kartları, Intel Arc, Apple Silicon Mac'ler (Qwen3.8-Flash-Next; beta olarak Qwen3.6 ve LFM2.5), Strix Halo ve AVX2 desteği olmayan eski işlemciler: [tam liste](docs/INSTALL.md#what-you-need). Her modelin kart, RAM ve boyut ayrıntıları kendi sayfasında.
+RAM değeri yükleyicinin tahminidir; daha büyük bir kartla daha azı gerekir. Geri kalan her şeyi yükleyici kurar: Windows'ta motoru hazır derlenmiş olarak indirir; yalnızca AVX2 desteği olmayan bir işlemcide, AMD kartta PolyStrata'nın kendi modelleri için ya da senin kopyandaki motor son sürümden daha yeniyse onu bilgisayarında derler ve gereken araçları kurmayı önerir. İki ya da üç kart bir modeli paylaşabilir ([çoklu GPU](docs/MULTI_GPU.md)). Eski ekran kartları, Intel Arc, Apple Silicon Mac'ler (Qwen3.8-Flash-Next; beta olarak Qwen3.6 ve LFM2.5), Strix Halo ve AVX2 desteği olmayan eski işlemciler: [tam liste](docs/INSTALL.md#what-you-need). Her modelin kart, RAM ve boyut ayrıntıları kendi sayfasında.
 
 Qwen3.6, Clover, Ornith 1.5, Gemma 4, Tiel Coder ve MiniCPM-V'nin her birinin neye ihtiyaç duyduğu ve bunun nasıl kontrol edildiği: [docs/BACKENDS.md](docs/BACKENDS.md#install).
 
@@ -220,11 +220,11 @@ On ikisinin hepsi yükleyicinin model listesinde. `./setup.sh --family glm`, `de
 > kapatma. Pencere PolyStrata'nın ne yaptığını gösterir.
 
 **Bir dahaki sefere** `START-HERE.bat` dosyasını (ya da `./setup.sh` komutunu) yeniden çalıştır. Hemen başlar ve
-hiçbir şeyi iki kez indirmez. Modeli durdurmak için penceresini kapat. `UPDATE.bat` (`./update.sh`) PolyStrata'yı
-başlatmadan günceller. Güncelleme, Docker, birden fazla kart, dosyaların nereye gittiği ve tüm seçenekler:
+hiçbir şeyi iki kez indirmez. Modeli durdurmak için penceresini kapat. `UPDATE.bat` (`./setup.sh --update`)
+PolyStrata'yı başlatmadan günceller. Güncelleme, birden fazla kart, dosyaların nereye gittiği ve tüm seçenekler:
 [docs/INSTALL.md](docs/INSTALL.md).
 
-**Senin bilgisayarında hızlı mı?** `BENCH.bat` (`./bench.sh`) çalıştır: yaklaşık 5-10 dakika sürer; kendi ayarlarınla sohbeti, 4K/16K prompt'ları ve ajan tarzı bir oturumu ölçer ve paylaşabileceğin bir rapor yazar ([nasıl](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)).
+**Senin bilgisayarında hızlı mı?** `tools/BENCH.bat` (`tools/bench.sh`) çalıştır: yaklaşık 5-10 dakika sürer; kendi ayarlarınla sohbeti, 4K/16K prompt'ları ve ajan tarzı bir oturumu ölçer ve paylaşabileceğin bir rapor yazar ([nasıl](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)).
 
 ## Hangi modeli seçmeliyim?
 
@@ -255,7 +255,11 @@ On iki modelin hepsi aynı şekilde kullanılır: aynı uygulama, aynı API.
 <sub>Bir kodlama ajanı videodaki pagoda bahçesini yazarken (sağda) uygulamanın <b>Monitor</b> sekmesi (solda). Ekran görüntüsü <a href="https://github.com/Niko1221/Strata">Strata</a> projesinden.</sub></p>
 
 - **Tarayıcıda:** `http://127.0.0.1:8080` adresini aç. Uygulamada **Chat**, modeli ve GPU/CPU/RAM kullanımını canlı
-  gösteren **Monitor** ve ayarlarla adresleri gösteren **About** sekmeleri var.
+  gösteren **Monitor**, açıldıktan sonra [API istek izleyicisini](docs/DETAILS.md#api-request-monitor) kendi sekmesinde
+  açan **Requests** ve ayarlarla adresleri gösteren **About** sekmeleri var. Birden fazla model kuruluysa sayfanın
+  üstündeki liste aralarında geçiş yapar; geçiş yeni bir sohbet başlatır, **Undo** eskisini geri getirir.
+- **Terminalde:** PolyStrata klasöründe `python polystrata.py --model <name>` kurulu bir modelle sohbet açar,
+  `--list-models` hepsini listeler ([daha fazlası](docs/INSTALL.md#the-terminal)).
 - **Kişisel ajan olarak:** [Linger](https://github.com/simplexai-labs/linger)'i indir: [Mac (Apple Silicon)](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-macos-arm64.dmg) ·
   [Windows](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-windows-x64-setup.exe) · [Linux](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-linux-x64.tar.gz).
 - **Uygulamaların ve kodlama ajanların:** temel URL'si **`http://127.0.0.1:8080/v1`** olan "OpenAI-compatible" bir
@@ -274,9 +278,9 @@ Farklı oldukları yerler:
 
 | | Qwen3.8-Flash-Next | GLM 5.3 Flash | DeepSeek V4 Flash | LFM2.5-24B-A2B | Flint 40B-A2.5B | Kolibri 1 | Qwen3.6-35B-A3B, Clover-35B-A3B-Preview, Ornith 1.5, Gemma 4 26B-A4B, Tiel Coder 35B-A3B, MiniCPM-V 4.7 35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Resimler** | Kurulumda "Images?" sorusuna evet de. Sonra sohbette **Picture** düğmesine tıkla ya da uygulamanda resim ekle. AMD kartlar Linux'ta resimleri işlemci üzerinden okur; Windows'ta henüz okuyamaz. | Henüz değil. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Kurulumda "Images?" sorusuna evet de; sonrası Qwen3.8-Flash-Next ile aynı. 16 GB'tan az belleği olan bir kartta resim kodlayıcı işlemcide çalışır ve bir resim birkaç saniye sürer. Clover yalnızca metin okur. |
+| **Resimler** | Kurulumda "Images?" sorusuna evet de. Sonra sohbette **Picture** düğmesine tıkla ya da uygulamanda resim ekle. Ekran kartı belleği 24 GB'tan azsa resim kodlayıcı işlemcide çalışır; NVIDIA'da da AMD'de de böyle. | Henüz değil. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Kurulumda "Images?" sorusuna evet de; sonrası Qwen3.8-Flash-Next ile aynı. 16 GB'tan az belleği olan bir kartta resim kodlayıcı işlemcide çalışır ve bir resim birkaç saniye sürer. Clover yalnızca metin okur. |
 | **Birden fazla istek** | Varsayılan olarak aynı anda bir tane; diğerleri bekler. `"parallel": 2` birkaçını aynı anda yanıtlar ([BATCHING.md](docs/BATCHING.md)); 12 GB'lık bir kartta her yanıt yavaşlar. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. |
-| **Birden fazla sohbet** | Sonuncusu saklanır, böylece devam mesajları saniyeler içinde başlar. İki motor argümanı birkaçını RAM'de tutar ([ayrıntılar](docs/DETAILS.md#using-it)). | Sonuncusu saklanır. Kurulum, birkaçının RAM'de tutulup tutulmayacağını sorar; böylece bir ajan ve alt ajanları, prompt'ları yeniden okunmadan sırayla çalışabilir ([nasıl](docs/GLM.md#several-conversations-at-once)). | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. |
+| **Birden fazla sohbet** | Yer olduğu sürece varsayılan olarak birkaçı RAM'de tutulur, böylece devam mesajları ve sırayla çalışan ajanlar saniyeler içinde başlar ([ayrıntılar](docs/DETAILS.md#conversation-cache)). | Sonuncusu saklanır. Kurulum, birkaçının RAM'de tutulup tutulmayacağını sorar; böylece bir ajan ve alt ajanları, prompt'ları yeniden okunmadan sırayla çalışabilir ([nasıl](docs/GLM.md#several-conversations-at-once)). | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. |
 | **Uzun prompt'lar** | Bir sohbetin ilk mesajı baştan sona okunur; 30.000 token başına yaklaşık 1 dakika. | İlk mesaj baştan sona okunur; 30.000 token başına yaklaşık 40 saniye. | İlk mesaj baştan sona okunur; 30.000 token başına yaklaşık 29 saniye. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda 1,3 ila 1,5 saniye, 8 GB'lık dizüstünde 8 ila 10 saniye sürer. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda yaklaşık 2,3 saniye, 8 GB'lık dizüstünde 15 ila 22 saniye sürer. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda Q2_K ile yaklaşık 6 saniye sürer. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda 4 ila 5 saniye, 8 GB'lık dizüstünde 14 ila 27 saniye sürer. |
 
 Daha fazlası: [sohbetlerin nerede saklandığı](docs/INSTALL.md#where-things-are-stored), [API](docs/DETAILS.md#using-it).
@@ -285,7 +289,7 @@ Daha fazlası: [sohbetlerin nerede saklandığı](docs/INSTALL.md#where-things-a
 
 İsteğe bağlı olarak açılan iki ayar (RubenTorney tarafından, #1904 ve #1905). Tek bir ekran kartı kullandığında ve
 RAM'in tüm uzmanları tutabildiğinde işe yararlar (PolyStrata'nın arena modu, örneğin 64 GB'lık bir bilgisayarda Q2_0
-veya IQ3_XXS). PolyStrata veri klasöründeki yapılandırma dosyan olan `strata-<model>.json` dosyasını aç
+veya IQ3_XXS). PolyStrata'nın `terminal` klasöründeki yapılandırma dosyan olan `strata-<model>.json` dosyasını aç
 ([nerede](docs/INSTALL.md#where-things-are-stored)) ve şunları ekle:
 
 - **Daha hızlı yanıt üretme (decode):** `"args"` listesine `"--adapt-async", "1"`. Uzman önbelleği böylece yanıtı
@@ -316,7 +320,7 @@ Değişiklikten sonra PolyStrata'yı yeniden başlat (`START-HERE.bat` veya `./s
 - **8080 portunun zaten kullanımda olduğunu söylüyor.** PolyStrata zaten çalışıyor. Penceresini ara.
 
 Diğer sorunlar ve çözümleri: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Hâlâ takıldın mı? Bir
-[issue](https://github.com/simplexai-labs/PolyStrata/issues) aç ve PolyStrata klasöründeki `strata-<model>.log` dosyasını ekle.
+[issue](https://github.com/simplexai-labs/PolyStrata/issues) aç ve `terminal` klasöründeki `strata-<model>.log` dosyasını ekle.
 Bir güvenlik sorunu mu buldun? Gizli olarak bildir: [SECURITY.md](SECURITY.md).
 
 ## Nasıl çalışıyor?

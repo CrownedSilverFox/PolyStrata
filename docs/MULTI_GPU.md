@@ -13,19 +13,18 @@ Ornith, Tiel Coder, GLM 5.3 Flash) split their layers as well, more simply: see
 
 ## Using it
 
-**Desktop app:** choose Main, Helper or Off for each card. **Terminal:** run `strata launch` and use the Cards step, or name
-the cards:
+`START-HERE.bat` (Linux: `./setup.sh`) lists your cards, says which ones PolyStrata can use, and asks whether to share
+the model across them. Or name the cards:
 
 ```sh
-strata launch --gpu 0,1
-strata launch --gpu-roles 1=main,0=helper     # cards you do not name are Off
+START-HERE.bat --gpus 0,1
+START-HERE.bat --gpu-roles 1=main,0=helper     # cards you do not name are Off
 ```
 
-Choose a model that fits the combined memory. A split can add capacity without adding speed.
+Choose a model that fits the combined memory. A split can add capacity without adding speed. The Strata project's app
+and Terminal have their own card picker (`strata launch --gpu 0,1`), with other flags than setup's.
 
-**Source checkout only:** `START-HERE.bat` and `./setup.sh` have their own card picker. Their flags are not `strata launch` flags:
-
-| Source setup flag | Meaning |
+| Setup flag | Meaning |
 | --- | --- |
 | `--gpus 0,2` | These cards together, numbered as `nvidia-smi` numbers them. PolyStrata puts the faster card last. Remembered. |
 | `--gpus all` | Every card that can share the model. |

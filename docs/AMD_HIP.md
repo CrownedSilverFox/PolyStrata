@@ -7,23 +7,17 @@ covered under [Integrated GPUs](#integrated-gpus-mini-pcs).
 
 ## Quick start
 
-Use the matching [desktop app or Terminal](INSTALL.md). The engine package carries the HIP runtime, so only the AMD
-graphics driver must be installed (Windows: [AMD Software: Adrenalin Edition](https://www.amd.com/en/support/download/drivers.html);
-Linux: the kernel's amdgpu driver, no ROCm install). Terminal:
+The same setup as on NVIDIA ([INSTALL.md](INSTALL.md#amd-cards)): double-click `START-HERE.bat` on Windows, run `./setup.sh` on
+Linux. Only the AMD graphics driver must be installed (Windows: [AMD Software: Adrenalin Edition](https://www.amd.com/en/support/download/drivers.html);
+Linux: the kernel's amdgpu driver, no ROCm install).
 
-```sh
-strata launch --plan       # shows what would happen, changes nothing
-strata launch              # sets up and serves
-```
+Setup picks `--backend hip` by itself on a PC with no NVIDIA card PolyStrata can use; `--backend hip` chooses it on a PC that
+has both. Other AMD architectures and mixed AMD/NVIDIA runs are not supported.
 
-Source checkout on Linux ([SOURCE_INSTALL.md](SOURCE_INSTALL.md#amd-cards)):
-
-```sh
-./setup.sh --backend hip
-```
-
-Setup picks `--backend hip` by itself on a PC with no NVIDIA card PolyStrata can use. Other AMD architectures and mixed AMD/NVIDIA
-runs are not supported. Use the [package table](#ready-made-packages) to match your card.
+- **Windows:** Qwen3.8-Flash-Next runs on the Strata project's ready-made HIP engine, which setup downloads for the card
+  ([packages](#ready-made-packages)). PolyStrata's own models run on strata-poly, which setup compiles on the PC for the card
+  ([Windows](#windows)).
+- **Linux:** setup compiles the engine for the card ([Install with setup](#install-with-setup-source-checkout-linux)).
 
 ## Supported cards
 
@@ -45,9 +39,10 @@ Strix Point (890M / 880M, gfx1150) and Krackan (860M / 840M, gfx1152) are named 
 <a id="ready-made-packages-023"></a>
 ## Ready-made packages
 
-The Terminal one-liner and `strata update` pick the package whose GPU code covers the card. The app installer
-(`PolyStrata-0.2.17-windows-x64-setup.exe`, `PolyStrata-0.2.17-linux-x86_64.AppImage`) has no engine inside: on its first start the app
-downloads the matching package for the card. You can also press **Update engine** in Settings (or run `strata update`).
+These are the Strata project's packages of the Qwen3.8-Flash-Next engine, published in its signed update feed. On Windows,
+setup takes the one whose GPU code covers the card (`engine_from_feed` in `terminal/setup.py`), checks its signature and
+test-starts it (a release that still carries the single `strata-windows-x64-hip.zip` is read as before). On Linux setup
+compiles the engine instead. The Strata project's own app and Terminal install these packages too.
 
 | Package (variant) | OS | GPU code inside | ROCm |
 | --- | --- | --- | --- |
@@ -101,9 +96,9 @@ prompt-speed run with `on` and `off` from an RX 7000 or Strix Halo card.
 | Step | What setup does |
 | --- | --- |
 | Detection | Finds the card through the kernel's KFD topology. Integrated Radeon GPUs are listed as not supported (Strix Halo has its own page). |
-| ROCm | Uses a system ROCm 7 in `/opt/rocm` (or `$ROCM_PATH`) with hipcc and hipBLAS when present. Otherwise, or when it is older than 7.0, installs ROCm into `.venv` from AMD's TheRock wheels (about 10 GB, no sudo). |
+| ROCm | Uses a system ROCm 7 in `/opt/rocm` (or `$ROCM_PATH`) with hipcc and hipBLAS when present. Otherwise, or when it is older than 7.0, installs ROCm into `terminal/.venv` from AMD's TheRock wheels (about 10 GB, no sudo). |
 | Engine | Compiles it for the card's architecture (10-20 minutes, once; again when you pick another architecture). Needs a C++ compiler and git (`sudo apt install build-essential git`). |
-| Tuning table | Uses `tools/hip/<arch>-hipblaslt-<version>.txt` only when it matches both the architecture and the installed hipBLASLt version. Otherwise it says so and uses plain hipBLAS. On gfx103x the same role falls to a rocBLAS table. |
+| Tuning table | Uses `terminal/tools/hip/<arch>-hipblaslt-<version>.txt` only when it matches both the architecture and the installed hipBLASLt version. Otherwise it says so and uses plain hipBLAS. On gfx103x the same role falls to a rocBLAS table. |
 | Pictures | On by default. CPU reader under 24 GB of VRAM, GPU reader from 24 GB; `--vision gpu` / `--vision cpu` switch it. If the GPU reader cannot start, the CPU reader is used. |
 
 TheRock wheel index per family: `gfx110X-dgpu` (gfx1100, gfx1101), `gfx120X-all` (gfx1200, gfx1201), `gfx103X-all`
@@ -128,11 +123,16 @@ reused. The Monitor shows the card's load, VRAM, temperature and power from Linu
 
 ## Windows
 
-Install the [app](INSTALL.md) (`PolyStrata-0.2.17-windows-x64-setup.exe` from the
-[release page](https://github.com/Niko1221/Strata/releases/latest); it downloads the engine for the card), or
-install the [Terminal](INSTALL.md#the-terminal) and run `strata launch`. You need Windows 10 or 11 (64-bit), a supported card
-and a current AMD driver. No ROCm or HIP SDK, no compiler, no admin rights. `START-HERE.bat --backend hip` is a
-source-checkout option for developers, not a way to start the released app.
+An AMD card on Windows is set up like an NVIDIA one: download PolyStrata and double-click `START-HERE.bat`. On a PC with
+no NVIDIA card PolyStrata can use, the AMD card is chosen by itself; with both, `--backend hip` chooses it. You need Windows
+10 or 11 (64-bit), a supported card and a current AMD driver. No ROCm or HIP SDK and no admin rights.
+
+- **Engine for Qwen3.8-Flash-Next:** the Strata project's ready-made HIP engine for the card ([packages](#ready-made-packages)),
+  into `terminal\engine\`. It carries the ROCm libraries it needs. `START-HERE.bat --backend hip --build` compiles it on the
+  PC instead (below).
+- **Engine for PolyStrata's own models:** strata-poly, compiled on the PC for the card into `terminal\engine-poly\`, again only
+  when its source changes. It needs the Visual Studio C++ build tools (2019 or 2022, workload "Desktop development with
+  C++"); setup stops and says so when they are missing. ROCm comes from AMD's TheRock wheels in `terminal\.rocm-win`.
 
 - **Detection:** setup reads the display adapters Windows lists. An integrated Radeon is listed as not supported, except Strix
   Halo ([STRIX_HALO.md](STRIX_HALO.md)). Phoenix / Hawk Point (780M / 760M) is not supported on Windows; on Linux it has an
@@ -140,10 +140,10 @@ source-checkout option for developers, not a way to start the released app.
 - **HIP runtime:** the engine folder holds its own `amdhip64_7.dll` and `amd_comgr.dll`, because Windows looks in the
   program's folder before System32, where some AMD drivers install an `amdhip64_7.dll` that crashes the bundled libraries. The
   engine log names the runtime it loaded (`strata generate: HIP runtime ...`).
-- **Before the model download,** setup runs `engine\strata-device.exe --list-devices`. If the HIP runtime does not see the
+- **Before the model download,** setup runs `terminal\engine\strata-device.exe --list-devices`. If the HIP runtime does not see the
   card, setup stops and points to the driver. With an integrated Radeon, a discrete card is HIP device 1, not 0; `--gpu N` and
   the config's `"gpu"` are HIP numbers.
-- **Several cards:** use the app's card selector or `strata launch --gpu 0,1`. [MULTI_GPU.md](MULTI_GPU.md) lists the
+- **Several cards:** `START-HERE.bat --gpus 0,1`, or setup's question. [MULTI_GPU.md](MULTI_GPU.md) lists the
   combinations measured. A tested Linux pair does not validate the same pair on Windows.
 - **VRAM budget:** `hipMemGetInfo` on Windows does not subtract what the desktop and other programs hold. The engine lowers
   the free figure by what Windows' video memory budget for the process withholds (logged once). `STRATA_WDDM_BUDGET=0` turns
@@ -159,7 +159,7 @@ source-checkout option for developers, not a way to start the released app.
 - **WMMA prompt attention** is opt-in on Windows (`STRATA_HIP_WMMA=1`); it is the default on gfx12 on Linux.
 
 **Reporting a Windows AMD run.** Give your card, the driver version (AMD Software > System), the output of the two commands
-below (from the PolyStrata folder, after `set PATH=%CD%\engine\rocm\bin;%PATH%`), the end of `strata-<model>.log`, and the speed
+below (from the `terminal` folder of PolyStrata, after `set PATH=%CD%\engine\rocm\bin;%PATH%`), the end of `strata-<model>.log`, and the speed
 lines the server window prints for a first answer.
 
 ```bat
@@ -168,8 +168,8 @@ engine\strata-device.exe --selftest
 ```
 
 **Building it yourself.** `START-HERE.bat --backend hip --build` compiles the engine on this PC (Visual Studio 2022
-Build Tools with the C++ workload, Python, git; no admin, no AMD GPU): AMD's TheRock wheels go into `.rocm-win`, the
-build into `build-hip-win`, and later runs keep that build (it is compiled again when the source changes).
+Build Tools with the C++ workload, Python, git; no admin, no AMD GPU): AMD's TheRock wheels go into `terminal\.rocm-win`, the
+build into `terminal\build-hip-win`, and later runs keep that build (it is compiled again when the source changes).
 `terminal\tools\hip\build_windows.bat` builds and packages `dist\strata-windows-x64-hip.zip`.
 `START-HERE.bat --backend hip --prebuilt dist\` installs that one.
 `terminal\tools\hip\build_windows.bat tests` also builds the HIP tests. `STRATA_HIP_ARCHS` picks other architectures; for the RX 6000
@@ -501,7 +501,7 @@ before it installs a model.
 - The attention caches take their VRAM at load on an AMD card (`--kv-whole`; setup writes it into the config and
   adds it to an older one on update). On NVIDIA they grow with the conversation, and the expert cache gives VRAM
   up to them as it grows; on ROCm the VRAM that `hipMemUnmap` and `hipMemRelease` give back never returns to the
-  free pool (an RX 7600 showed 48 MiB free after releasing 1 GiB, [#13](https://github.com/VecSzn/PolyStrata/issues/13)), so a long prompt was refused
+  free pool (an RX 7600 showed 48 MiB free after releasing 1 GiB, [#13](https://github.com/simplexai-labs/PolyStrata/issues/13)), so a long prompt was refused
   with "no VRAM for the attention cache". With the caches whole, 32K of context fits on 8 GB beside 4,592 of
   Qwen3.6's 10,496 experts (4.4 GiB).
 - On Linux a card whose BAR does not cover its VRAM (a PC without Resizable BAR; the kernel log says
@@ -536,7 +536,7 @@ before it installs a model.
   116K tokens read and answered with no error. Those cards have no Resizable BAR: there a mapping is not usable the
   moment it is made, and the pool needs the wait for it (`Engine::vmm_settle()`, above). That is the pool's only run on Linux ROCm so far.
 - Measured by the port's author on an RX 7600 (gfx1102, 8 GB; Ryzen 5 5600X, 30 GB of RAM) with the README's
-  benchmark, `--kv-whole` on ([#13](https://github.com/VecSzn/PolyStrata/issues/13)):
+  benchmark, `--kv-whole` on ([#13](https://github.com/simplexai-labs/PolyStrata/issues/13)):
 
   | Model | Short chat, writes | After a 32K prompt, reads / writes |
   | --- | --- | --- |
@@ -654,14 +654,14 @@ On Windows, setup's ready-made engine runs an RX 6800 beside a 780M iGPU (HIP nu
 - **gfx1032** (RX 6600 / 6600 XT / 6650 XT): setup knows it (the `gfx103X-all` wheels, unvalidated). One owner ran it
   on Fedora with an RX 6600 XT 8 GB and 32 GB DDR5: setup built the engine for gfx1032 from the `gfx103X-all`
   7.13.0a20260515 wheels, and Qwen3.6 UD-Q4_K_M on strata-poly wrote at 69 tok/s over a 2,331-token answer with
-  71.1% of the experts from VRAM ([discussion 49](https://github.com/VecSzn/PolyStrata/discussions/49)). The card
+  71.1% of the experts from VRAM ([discussion 49](https://github.com/simplexai-labs/PolyStrata/discussions/49)). The card
   needs no `HSA_OVERRIDE_GFX_VERSION`. One left in the shell from an older guide (10.3.0 makes the card a gfx1030)
   stops this engine at the first request with `rms_norm: device kernel image is invalid`; unset it.
 - **gfx1010** (RX 5600 XT / 5700 / 5700 XT, RDNA1): setup knows it (unvalidated). One owner ran an RX 5700 XT 8 GB
   under Windows 11, the engine compiled for gfx1010 from AMD's TheRock 10.2.0a20260930 Windows packages with no
   patch: the official suite at 32K for Qwen3.6, Ornith, Tiel Coder and Gemma 4, 132 requests with no errors, short
-  chats written at 28.6 to 31.4 tok/s ([PR 102](https://github.com/VecSzn/PolyStrata/pull/102),
-  `bench/results/2026-10-27-community-rx5700xt-windows-qwen36-q3`). On Linux it takes the `gfx101X-dgpu` wheels and
+  chats written at 28.6 to 31.4 tok/s ([PR 102](https://github.com/simplexai-labs/PolyStrata/pull/102),
+  `docs/bench-results/2026-10-27-community-rx5700xt-windows-qwen36-q3`). On Linux it takes the `gfx101X-dgpu` wheels and
   has not been tried.
 
 ## gfx906 (Instinct MI50 / MI60, Radeon VII): wave64, built from source
@@ -736,7 +736,7 @@ CASES=$(awk 'NR>2 {printf " --case %s,%s,%s,%s,%s", $1, $5, $2, $3, $4}' termina
 ```
 
 The file's second line names the architecture and version (`STRATA_HIPBLASLT_TUNING_V1 gfx1201 100401`). Save it as
-`tools/hip/<arch>-hipblaslt-<version>.txt` for setup, or point `STRATA_HIPBLASLT_TUNING` at it. Compare the prompt speed with and
+`terminal/tools/hip/<arch>-hipblaslt-<version>.txt` for setup, or point `STRATA_HIPBLASLT_TUNING` at it. Compare the prompt speed with and
 without it before keeping it. For an engine package, `tools/packaging/stage_tuning.py` (Linux) and `terminal/tools/hip/package_windows.py`
 copy the tables that match the bundled hipBLASLt into the package's `tuning/` folder. `STRATA_HIPBLASLT_VERBOSE=1` reports
 fallbacks; look for `fallbacks=0`. The test `hip_prefill_hipblaslt_gemm` is a smoke test (it checks 2 rows), and it does not
@@ -791,7 +791,7 @@ The tool times rocBLAS's default kernel and every solution the library lists for
 T,N,K,ldy` adds a shape, `--tokens` changes the buckets), checks the fastest against the default's output, and writes one row
 per shape and bucket: the winning solution where it beats the default by `--min-gain` (1.05), `default` otherwise. The header
 names the architecture and version (`STRATA_ROCBLAS_TUNING_V1 gfx1030 5.6.0.8d1ae90e`). Save it as
-`tools/hip/<arch>-rocblas-<version>.txt` (trailing dots dropped) for setup, or point `STRATA_ROCBLAS_TUNING` at the file.
+`terminal/tools/hip/<arch>-rocblas-<version>.txt` (trailing dots dropped) for setup, or point `STRATA_ROCBLAS_TUNING` at the file.
 `STRATA_ROCBLAS_VERBOSE=1` prints the solution picked per shape and a `tuned_launches=... fallbacks=...` summary at exit. A
 solution rocBLAS refuses at run time falls back to the default kernel for that call, and after three refusals for good.
 `hip_prefill_rocblas_gemm` (with `STRATA_ROCBLAS_TUNING` set) is the smoke test.

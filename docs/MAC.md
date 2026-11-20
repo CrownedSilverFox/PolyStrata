@@ -1,7 +1,7 @@
 # PolyStrata on a Mac (Apple Silicon, Metal)
 
 This page is for people with an Apple Silicon Mac (M1 or newer). PolyStrata runs there on its own Metal engine: the NVIDIA kernels
-are replaced by Metal ones (`metal/`), and the host code and the server are the PC's. Intel Macs cannot run it.
+are replaced by Metal ones (`engine/metal/`), and the host code and the server are the PC's. Intel Macs cannot run it.
 
 > **On this page:** [What you need](#what-you-need) · [Install](#install) · [Defaults](#defaults-and-options) ·
 > [Gyro](#gyro-s-and-gyro-m-agentionais-trellis-experts) · [Measured](#measured-m5-max-128-gb) · [Limits](#limits-this-version) ·
@@ -9,17 +9,12 @@ are replaced by Metal ones (`metal/`), and the host code and the server are the 
 
 ## Quick start
 
-There are two ways in:
+Install Apple's Command Line Tools once (`xcode-select --install`; Xcode itself is not needed), then run `./setup.sh` in the
+PolyStrata folder. It sets things up the way `START-HERE.bat` does on Windows and builds the engine on your Mac (about 1 to
+15 minutes); there is no ready-made Mac engine in this repository's releases. `./setup.sh --list-models` lists every model
+and size.
 
-- **The PolyStrata app (`.dmg`) and the Terminal (`strata launch`).** The Metal engine comes ready-made: the `.dmg` has it inside and
-  the Terminal fetches it as an engine component. Nothing is built on your Mac and you need no Command Line Tools. If macOS says
-  the app is "damaged", see [Troubleshooting](TROUBLESHOOTING.md#the-desktop-app-and-the-terminal). How the builds are signed:
-  [packaging/mac/README.md](../tools/packaging/mac/README.md).
-- **From source: `./setup.sh`.** It sets things up the way `START-HERE.bat` does on Windows and builds the engine on your Mac
-  (about 1 to 15 minutes).
-
-Pictures are on by default in the app, the Terminal and the source build ([Limits](#limits-this-version)). The NVIDIA, AMD and
-Intel engines are unchanged.
+Pictures are on by default ([Limits](#limits-this-version)). The NVIDIA, AMD and Intel engines are unchanged.
 
 **Status:** new. It was measured on three Macs: an M5 Max with 128 GB, where the model stays in memory, and an M4 Mac mini with
 32 GB and an M1 Max with 34 GB, where the experts stream from the SSD. Other chips are untested, and reports help
@@ -65,11 +60,12 @@ context is 8,192 tokens.
 The engine uses the shared PolyStrata architecture code, expert cache, CPU experts, conversations, batching and
 speculative decoding. It speaks the existing server protocol; OpenAI and Anthropic APIs and the web app remain
 in `serve/server.py`. `--parallel`, `--conversation-cache-mib` and `--vram-reserve-mib` can be written by setup.
-`--vision yes` builds the existing image encoder with Metal and uses the family's projector. The encoder builds
-on the validation Mac; real-image inference with these families is not validated. GLM uses native KDA,
+`--vision yes` builds the picture reader, PolyStrata's own vision tower with Metal kernels (no llama.cpp in it),
+and uses the family's projector. It reads Qwen3.6's, Gemma 4's and MiniCPM-V 4.7's pictures on the GPU
+([Local validation](#local-validation) has what was measured). GLM uses native KDA,
 hyper-connections and sparse latent attention. DeepSeek uses native compression, indexer and attention kernels.
 
-The native implementation is in `metal/src/poly/`. It covers floating-point projections, quantized GGUF
+The native implementation is in `engine/metal/src/poly/`. It covers floating-point projections, quantized GGUF
 projections, expert routing, normalization and activation, attention with FP16/Q8 caches, rotary positions,
 convolution, and the recurrent delta network with speculative snapshots. The GGUF block decoders come from the
 same pinned ggml checkout as the CPU expert code. Where MetalPerformancePrimitives' `matmul2d` compiles (macOS 26
@@ -79,21 +75,29 @@ rows or more is first turned into fp16 once, and prompt attention is a flash-sty
 256 values. Otherwise the older kernels run. Decode attention splits a token's keys among up to 32 threadgroups
 and merges their results.
 
-On the M5 Ultra Mac Studio (thinking off, greedy, 200-token answers, medians of three runs taking turns with an
-older engine; the Mac was shared with other work):
+On an M5 Ultra, against the v0.1.45-poly.10 engine loaded at the same time and sent the same text: thinking off,
+greedy, answers of up to 200 tokens, 12 rounds taking turns with 3 seconds idle before each request; `--tail-skip 0
+--max-context 8192`, the expert profile in each model's pack, `--threads 10 --metal-optimize --metal-memory balanced`,
+the draft on. The two engines gave the same answer in every round. Each cell is the range and, in brackets, the median,
+in tok/s: prompt read / decode.
 
-| Model | Prompt tokens | Prompt read | Decode |
-|---|---:|---:|---:|
-| LFM2.5 UD-Q3_K_XL | 30 | | 153 tok/s |
-| | 1,786 | 3,650 tok/s | 144 tok/s |
-| | 3,680 | 4,294 tok/s | 136 tok/s |
-| | 6,829 | 4,357 tok/s | 121 tok/s |
-| Qwen3.6 UD-Q2_K_XL | 32 | | 134 tok/s |
-| | 1,798 | 2,700 tok/s | 109 tok/s |
-| | 3,768 | 2,978 tok/s | 97 tok/s |
-| | 7,217 | 2,738 tok/s | 81 tok/s |
+| Model | Prompt tokens | This release | v0.1.45-poly.10 |
+|---|---:|---|---|
+| Qwen3.6 UD-Q2_K_XL | 31 | decode 123.9-138.2 (135.2) | decode 125.9-145.0 (137.1) |
+| | 670 | 1,485-1,703 (1,523) / 118.5-129.9 (124.4) | 1,438-1,623 (1,482) / 110.0-129.8 (123.8) |
+| | 1,797 | 2,586-2,721 (2,598) / 110.4-130.1 (121.1) | 2,521-2,703 (2,553) / 111.3-127.2 (119.3) |
+| | 3,767 | 2,947-3,065 (3,004) / 95.6-101.9 (98.8) | 2,970-3,045 (2,993) / 95.3-99.8 (98.0) |
+| | 7,216 | 2,744-2,772 (2,755) / 79.8-89.4 (81.5) | 2,710-2,758 (2,732) / 77.3-89.0 (81.9) |
+| LFM2.5 UD-Q3_K_XL | 29 | decode 152.2-156.7 (154.9) | decode 152.9-156.8 (154.9) |
+| | 643 | 1,844-2,076 (1,884) / 147.2-160.1 (149.7) | 1,810-2,114 (1,890) / 147.6-162.0 (149.8) |
+| | 1,785 | 3,197-3,688 (3,458) / 144.0-157.3 (148.2) | 3,414-3,727 (3,458) / 143.7-158.4 (148.1) |
+| | 3,679 | 4,192-4,489 (4,280) / 133.0-137.7 (135.2) | 4,122-4,350 (4,257) / 134.9-137.6 (135.5) |
+| | 6,828 | 4,361-4,494 (4,422) / 120.9-126.3 (122.8) | 4,329-4,444 (4,417) / 121.2-126.4 (122.5) |
 
-Other Apple GPUs have not been measured.
+The two engines read and write at about the same speed on this Mac (their ranges overlap). Requests sent back to back, with no
+idle time between them, read the prompt at one of two levels depending on what the GPU did just before: the 1,797-token
+prompt jumped between about 2,900 and about 3,850 tok/s, and both engines landed on the slower level as often. The table
+uses the reads after an idle pause for that reason. Other Apple GPUs have not been measured.
 
 For these checks, add `-DSTRATA_METAL_POLY=ON` to the engine build below and run `ctest -L poly`. Tests include
 CPU-reference kernel comparisons, small generated GGUF fixtures for all five architectures, graph replay,
@@ -162,16 +166,24 @@ match ggml's decoder for 1, 4 and 8 tokens. Neither published NVFP4 pack has bee
 
 `qwen36-strata` selects the separate `strata-q36` Metal executable, including UD-Q4_K_XL, UD-Q6_K_XL and Q8_0.
 It keeps the original driver's MTP, parallel sessions, hybrid CPU experts and server protocol. A build-time
-adapter reads `src/qwen35/q36_engine.cu`, emits Metal kernels and substitutes native dispatch calls. CUDA-only
+adapter reads `engine/src/qwen35/q36_engine.cu`, emits Metal kernels and substitutes native dispatch calls. CUDA-only
 fused optimizations use equivalent unfused operations. This path is distinct from `qwen36` on `strata-poly`.
 Its generated model tests compare graph/plain/MTP generation, hybrid MTP, conversation replay and two parallel
-MTP slots. Reference checks cover recurrent state updates and split-K attention. Actual Qwen3.6 weights
-have not been validated on Metal.
+MTP slots. Reference checks cover recurrent state updates and split-K attention.
+
+Earlier Mac builds of `strata-q36` gave 0 for every routed expert, so only the shared expert reached the output. With
+that fixed, the real UD-Q4_K_XL file writes the same tokens as `qwen36` on strata-poly (greedy, a 40-token prompt, 64
+tokens). It is experimental on a Mac and slow there. On an M5 Ultra, UD-Q4_K_XL wrote 60 tok/s (an 8-token prompt, 256
+tokens, no MTP) and read prompts at 19 tok/s in chunks of 8 tokens, which is what `--prefill auto` picks on Metal; the
+same model on strata-poly wrote 147 tok/s and read prompts at thousands of tokens a second. The warm-up before the first
+answer took 0.5 seconds, and the first start of a newly built engine takes about 20 seconds more while Metal compiles
+its shaders. For Qwen3.6 on a Mac, install the `qwen36` family (strata-poly), and do not use `qwen36-strata` for long
+prompts.
 
 On the M1 Pro validation machine, GLM's generated in-file draft executes through the existing speculative
 protocol. DeepSeek's generated prompt crosses its 128-token compression boundary and restores a parked
 conversation. These checks establish execution and state handling, not output quality on the published models.
-Run the full native regression with `ctest --test-dir build-metal --output-on-failure`; individual groups use
+Run the full native regression with `ctest --test-dir engine/build-metal --output-on-failure`; individual groups use
 `ctest -L poly`, `ctest -L q36`, and the `nvfp4_parity` / `ready_stream` tests.
 
 ### LFM2.5 real-weight smoke test
@@ -252,59 +264,48 @@ rule.
 
 ## Install
 
-For everyday use follow [the app or Terminal installation](INSTALL.md). The commands below are the source installation, which
-builds the Metal engine locally.
+Setup builds the Metal engine on your Mac:
 
 ```sh
-git clone https://github.com/Niko1221/Strata && cd PolyStrata
-./setup.sh                 # asks the size; --yes takes the recommended answers
+git clone https://github.com/simplexai-labs/PolyStrata && cd PolyStrata
+./setup.sh                 # asks the model and size; --yes takes the recommended answers
 ```
 
 What the first run does (each step is skipped when it is already done):
 
 1. **Python.** It needs Python 3.10 or newer, but macOS ships 3.9. If that is all your Mac has, `setup.sh` downloads a standalone
-   Python 3.12 (25 MB, pinned by SHA-256) into `.python`. No sudo, no Homebrew.
+   Python 3.12 (25 MB, pinned by SHA-256) into `terminal/.python`. No sudo, no Homebrew.
 2. **Checks your Mac:** the chip, the memory, the macOS version, the Command Line Tools and the free disk.
-3. **Python packages** into `.venv`. CMake and Ninja come from pip too, installed just before the build.
-4. **Builds the engine** (`build-metal/strata`) with Apple's metal-cpp headers (pinned by SHA-256).
+3. **Python packages** into `terminal/.venv`. CMake and Ninja come from pip too, installed just before the build.
+4. **Builds the engine** (`engine/build-metal/strata`) with Apple's metal-cpp headers (pinned by SHA-256).
 5. **Downloads the model.** The download resumes if interrupted. `--gguf-dir` uses files you already have.
 6. **Prepares the model.** Setup makes the pack (seconds) and prepares the MTP draft layer where it fits (about 5 GB of the
    original checkpoint). A streaming Mac below 96 GB skips MTP and makes the experts' copy (about 3 minutes on the M4).
    Auto also fetches DFlash2 for compatible Qwen3.8-Flash-Next packs. Q2_0 and IQ3_XXS get the stock drafter (1.2 GB).
-   UD-Q4_K_XL and UD-IQ4_XS-v31 prefer the tuned drafter (0.34 GB from PolyStrata's signed update feed) and can use the stock drafter
+   UD-Q4_K_XL and UD-IQ4_XS-v31 prefer the tuned drafter (0.34 GB from the Strata project's signed update feed) and can use the stock drafter
    if the tuned one is unavailable. The tuned drafter uses `--spec 6` and `--draft-conf 0.7`. It is based on
    incoai/Qwen3.8-Flash-Next-DFlash2 and licensed under Apache-2.0. IQ3_S selects MTP.
    If DFlash2 is missing, the server uses MTP when it is available. `./setup.sh --setup` can fetch the drafter later.
    [DFlash2 license notice](../terminal/data/dflash2-tuned/NOTICE.md)
-7. **Writes `strata-<model>.json` and `run-<model>.sh`, then starts the server.**
+7. **Writes `strata-<model>.json` and `run-<model>.sh` in `terminal/`, then starts the server.**
 
-After that, `./setup.sh` or `./run-q2_0.sh` starts the model directly. The server is the same as on a PC: the OpenAI-compatible
+After that, `./setup.sh` or the model's `terminal/run-<model>.sh` starts it directly. The server is the same as on a PC: the OpenAI-compatible
 API on `http://127.0.0.1:8080/v1`, the Anthropic API on `/v1/messages`, and the chat page on `http://127.0.0.1:8080/`.
+`python polystrata.py --list-models` in the PolyStrata folder lists the installed models, as on a PC.
 
 | Option | Meaning |
 | --- | --- |
-| `--model Q2_0\|IQ3_XXS\|IQ3_S\|UD-Q4_K_XL\|UD-Q5_K_XL\|UD-Q6_K_XL\|Gyro-S\|Gyro-M` | The pack. The `UD-` files are Unsloth's. |
-| `--family qwen\|unsloth\|gyro` | The model family. |
+| `--list-models` | Every family and size setup offers on a Mac, and exit. |
+| `--family NAME --model QUANT` | The model and its size, as `--list-models` names them. For Qwen3.8-Flash-Next: `Q2_0`, `IQ3_XXS`, `IQ3_S`, Unsloth's `UD-Q4_K_XL` / `UD-Q5_K_XL` / `UD-Q6_K_XL` (`--family unsloth`) and `Gyro-S` / `Gyro-M` (`--family gyro`). |
 | `--vision yes\|no\|gpu\|cpu` | Picture reader. |
 | `--context N`, `--port`, `--host`, `--api-key` | Server settings. |
 | `--draft-vocab`, `--no-browser` | Draft vocabulary; do not open the browser. |
 | `--data-dir`, `--models-dir`, `--gguf-dir` | Where files go, or where yours are. |
-| `--setup`, `--no-start`, `--check`, `--build` | Choose another model or settings; install only; only check the Mac; build the engine again. |
+| `--setup`, `--no-start`, `--check`, `--build`, `--update` | Choose another model or settings; install only; only check the Mac; build the engine again; update without starting. |
 
-### The desktop app and `strata launch` on a Mac
-
-The app and `strata launch` build nothing. The Metal engine comes ready-made as an engine component, from the update feed or
-inside the app's installer. The model install is `setup.py` in its Control mode (`STRATA_CONTROL_INSTALL=1`). It downloads, or
-uses with `--gguf-dir`, and prepares the model files, and writes a run config whose engine is `component:strata-engine`. It does
-not run `engine/metal/setup_mac.py`, needs no Command Line Tools, and writes the same Metal flags.
-
-The model list and the recommendation judge a Mac by its unified memory with the rules of `terminal/strata_control/mac_fit.py`, the module
-`setup_mac.py` uses too. Q2_0, IQ3_XXS, IQ3_S and the Gyro packs are offered. Unsloth's many-shard files need the source
-installer's repack for now. A pack that does not stay in memory is listed as "read from the SSD", and a Mac under 16 GB of unified
-memory is told the model does not fit.
-
-The ready-made Mac engine is in the app and in the Terminal's engine component, not in the release zips. The zips (for
-`START-HERE.bat` and `setup.sh`) have no Mac engine: `./setup.sh` builds it.
+The model list and the recommendation judge a Mac by its unified memory with the rules of
+`terminal/strata_control/mac_fit.py`. A pack that does not stay in memory is read from the SSD, and a Mac under 16 GB of
+unified memory is told the model does not fit.
 
 ## Defaults and options
 
@@ -399,14 +400,16 @@ from each other: top-1 agreement 95.4% against 95.8%, mean KL 0.0207 against 0.0
 The first request after a model loads also waits once while the engine builds its prompt kernels. On one M2 Ultra (a user's report,
 #5369) the first word came after about 20 seconds, 9.2 s of it for the kernels; later requests started in under a second.
 
-- **Images (vision):** on by default. The app and the Terminal use the `strata-vision` that sits beside `strata` in the engine
-  package; `./setup.sh` builds it and asks "Should the model also read images?" (default yes). With `--gpu` it reads on the Mac's
-  GPU (ggml's Metal backend), without it on the CPU. A Mac always gets the GPU reader, whatever its memory. The footprint is about
-  1.18 GB on the GPU and 1.05 GB on the CPU. `--vision cpu` is still allowed and prints a note. The CPU reader is slow because
-  ggml has no vector kernel for BF16 on ARM. If the GPU reader cannot start, the server prints one line and starts it on the CPU.
-  Checked on one Mac mini M4 only; the M5 Max is untested for pictures.
+- **Images (vision):** on by default. `./setup.sh` builds the picture reader, `strata-vision`, beside the engine and asks
+  "Should the model also read images?" (default yes). The reader is PolyStrata's own vision tower (`terminal/tools/vision/own`)
+  with Metal kernels for the Qwen models', Gemma 4's and MiniCPM-V 4.7's towers; no llama.cpp or ggml is built into it. With
+  `--gpu` it reads on the Mac's GPU, without it on the CPU, from the same program. A Mac always gets the GPU reader, whatever its
+  memory. `--vision cpu` is still allowed and prints a note (M5 Ultra, Qwen3.6's projector, a 256-token picture: 0.85 s on the
+  CPU, 0.03 s on the GPU). If the GPU reader cannot start, the server prints one line and starts
+  it on the CPU. The tower's measurements on an M5 Ultra are under [Local validation](#local-validation).
 
-  **Measured on:** Mac mini M4, 32 GB, Qwen3.8-Flash-Next BF16 projector.
+  **Measured on:** Mac mini M4, 32 GB, Qwen3.8-Flash-Next BF16 projector, with the earlier reader (llama.cpp's mtmd on ggml's
+  Metal backend; it took about 1.18 GB on the GPU and 1.05 GB on the CPU).
 
   | Picture | GPU reader | CPU reader |
   | --- | --- | --- |
@@ -418,9 +421,12 @@ The first request after a model loads also waits once while the engine builds it
 - **Several requests at once.** `--parallel N` keeps N sequences side by side in the engine, each with its own running state and K/V (0.65 GB each at a 36,864-token context). Measured on an M5 Max with IQ3_S, the MTP draft layer and `--spec 2`, N requests of 150 tokens sent at the same time, tokens a second over all of them: 1 request 85, 2 requests 95 to 102, 3 requests 115, 4 requests 119 to 125. One request alone decodes at 96 to 100; with 2, 3 and 4 at once each decodes at 53 to 61, 41 to 48 and 32 to 40. The engine uses 8.3, 12.0, 14.0 and 16.0 GB for 1 to 4.
 - **Not ported:** the control vector (`--control-vector-scaled`) and the PC tuning (`--calibrate`).
 - **Streaming** is measured at 32 GB only.
-- **Families:** the original Qwen3.8-Flash-Next, Unsloth's UD-Q4/Q5/Q6_K_XL and agentionai's Gyro-S are measured. Setup repacks
-  Unsloth's shards into one file for the GPU; a Gyro file is used as it is. The Swift and Coder releases are not set up on Mac
-  yet, and Qwen3.6 does not run on the Mac engine.
+- **Families:** every installer choice is offered ([model coverage](#model-coverage)). On the original engine the original
+  Qwen3.8-Flash-Next, Unsloth's UD-Q4/Q5/Q6_K_XL and agentionai's Gyro-S are measured; setup repacks Unsloth's shards into one
+  file for the GPU, and a Gyro file is used as it is. Qwen3.6 and LFM2.5 run on strata-poly's Metal engine as a beta (measured
+  in [model coverage](#model-coverage)); Qwen3.6 also runs on `strata-q36` (`qwen36-strata`), experimental and slow
+  ([Additional Qwen and ready-pack choices](#additional-qwen-and-ready-pack-choices)). The other newly ported paths (Swift, Coder, NVFP4, GLM, DeepSeek and the rest) have
+  not run on a Mac with their real weights.
 
 ### Quality
 
@@ -473,9 +479,9 @@ that answer, shows the GPU temperature from the HID sensors where it has them, a
 The standalone checks generate their own inputs and do not need model files or metal-cpp:
 
 ```sh
-cmake -S metal -B build-metal-check -DCMAKE_BUILD_TYPE=Release
-cmake --build build-metal-check -j 4
-ctest --test-dir build-metal-check --output-on-failure
+cmake -S engine/metal -B engine/build-metal-check -DCMAKE_BUILD_TYPE=Release
+cmake --build engine/build-metal-check -j 4
+ctest --test-dir engine/build-metal-check --output-on-failure
 ```
 
 CTest registers the memory-budget check and kernel parity checks, and serializes GPU tests even with `ctest -j`.
@@ -488,15 +494,49 @@ Pipeline handles share ownership across copies and release the native Metal pipe
 away. This avoids retaining every compiled pipeline after a model context is destroyed. `pipeline_lifetime`
 checks dispatch through a surviving copy and release of the last owner; it is not a throughput benchmark.
 
+### Local validation
+
+On an M5 Ultra. A setup from scratch with the model files already on the disk (nothing downloaded) and pictures on took
+43 to 51 seconds, and `python polystrata.py --list-models` then listed the model:
+
+```sh
+./setup.sh --family qwen36 --model UD-Q2_K_XL --gguf-dir <folder with the files> --vision yes --yes --no-start
+```
+
+`python polystrata.py benchmark --model <name>` on that config (setup's defaults for Qwen3.6 UD-Q2_K_XL, which include
+`--tail-skip 6`): a 21-token prompt, first token after 0.23 seconds and the answer at 148 tok/s; a 2,981-token prompt,
+read at 3,890 tok/s and the answer at 117 tok/s. The engine speeds against v0.1.45-poly.10 are in
+[model coverage](#model-coverage).
+
+Through the server with Qwen3.6 UD-Q2_K_XL, the answer about a screenshot of code gave the numbers in it, and a photo was
+described correctly.
+
+Pictures on the Metal tower against the Metal reader of v0.1.45-poly.10 (llama.cpp's mtmd on ggml's Metal backend), on
+the GPU: a picture of 992 tokens, a 1600x1200 photo and a 1024x1024 picture, the time of each picture's second read in
+milliseconds, the peak memory from `/usr/bin/time -l`, 3 rounds taking turns.
+
+| Model | This reader | v0.1.45-poly.10 |
+| --- | --- | --- |
+| Gemma 4 | 922 / 675-677 / 238-239 ms, peak 993 MiB | 963-965 / 721-722 / 271 ms, 1,806 MiB |
+| MiniCPM-V 4.7 | 174-175 / 174-175 / 134 ms, 1,596 MiB | 276-277 / 276 / 198 ms, 1,680 MiB |
+| Qwen3.6 | 816-819 / 591-592 / 141 ms, 758-793 MiB | 898 / 672 / 234 ms, 1,567-1,584 MiB |
+
+The reader now reads the weights in place from the mapped mmproj file. macOS can drop those pages and read them again,
+so they do not count in the process's memory.
+
+`tools/packaging/mac/build_engine.sh --version 0.1.63` made a Mac engine package of 6.8 MiB in 41 files that needs
+macOS 15.0 or newer. These are checks on one Mac, not a quality evaluation.
+
 ## How it works
 
-The code is in `metal/` (the engine's side in `engine/metal/src/engine`, the kernels in `engine/metal/kernels`).
+The code is in `engine/metal/` (the engine's side in `engine/metal/src/engine`, the kernels in `engine/metal/kernels`).
 
 - **Host code:** the PC host code compiles unchanged for macOS. `engine/metal/include/metal_compat` maps the CUDA runtime calls it makes
   onto a small Metal runtime (`engine/metal/src/gpu`).
 - **Decode and prompt work** run in Metal kernels: one command buffer per verify window, experts read in place from the mapped
   model file, hyper-connections, GDN state and QSA attention on the GPU, and a whole MTP draft round in one command buffer.
-- **The PC builds are byte-identical** with this code present. Every shared file's change is behind `STRATA_GPU_METAL` or `__APPLE__`.
+- **PC paths stay separate:** every shared file's change is behind `STRATA_GPU_METAL` or `__APPLE__`, and the Metal build has
+  its own CMake project. Whether PolyStrata's PC builds come out byte-identical with this code present was not measured.
 
 ## History / older measurements
 

@@ -30,8 +30,9 @@ a second machine, a Windows laptop whose card has 8 GB.
 GGUF in place, and it now has eight architectures. It was called `strata-glm`, after its first model; an install
 from then keeps its engine and moves to the new name the next time setup updates it.
 
-The optional CUDA [GDN prefill adapter](DETAILS.md#strata-poly-chunked-gdn-prefill) uses
-`STRATA_GDN_MMA=1` for eligible Qwen35 reads. It is off by default; that section lists its shape and device limits.
+The CUDA [GDN prefill adapter](DETAILS.md#strata-poly-chunked-gdn-prefill) reads eligible Qwen35 prompts on the
+tensor cores. It is on by default where the card and the shape allow it, and `STRATA_GDN_MMA=0` turns it off;
+that section lists its shape and device limits.
 
 ### Groot 19B-A3B 261023 (Q4_K_M text measured on one card)
 
@@ -2151,7 +2152,7 @@ the 256 tokens of each of the three answers were the same as with every expert i
 cannot hand their memory to another program. Without it they are pages of the file, which Windows counts in the
 engine's working set and Linux in its page cache, and either takes them back when memory runs short; a token that
 needs one then reads it from the disk again. A user's 16.7 GB file had 3.4 GB of it left in memory under Linux
-([issue 79](https://github.com/VecSzn/PolyStrata/issues/79)). The engine locks them once the load has read them
+([issue 79](https://github.com/simplexai-labs/PolyStrata/issues/79)). The engine locks them once the load has read them
 in (mlock under Linux, VirtualLock under Windows), and between requests unlocks the ones the cache has taken and
 locks the ones it has given up. Linux locks no more than `ulimit -l` allows; past it the engine says how much it
 locked and the rest stay in the file cache. It does not go with `--ram-experts-mib`.

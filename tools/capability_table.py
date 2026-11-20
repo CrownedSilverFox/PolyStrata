@@ -128,7 +128,7 @@ def summary(cap, fam):
            for c in cap["columns"] if fam["cells"][c["id"]]["supported"] == "yes"]
     untested = [label(cap, c["id"]) for c in cap["columns"] if fam["cells"][c["id"]]["supported"] == "untested"]
     no = [label(cap, c["id"]) for c in cap["columns"] if fam["cells"][c["id"]]["supported"] == "no"]
-    s = "%s runs in the desktop app and in the Terminal. Hardware: %s." % (fam["name"], "; ".join(yes))
+    s = "The Strata project's release packages run %s on: %s." % (fam["name"], "; ".join(yes))
     if untested:
         s += " Package present but not tested: %s." % ", ".join(untested)
     if no:
@@ -149,7 +149,11 @@ def block(cap, release, key):
 def page(cap, release):
     cols = cap["columns"]
     out = ["# Which model runs on which hardware", "",
-           "This page is built by `tools/capability_table.py` from [docs/data/capabilities.json](data/capabilities.json) and the package names of release %s ([docs/data/release.json](data/release.json)). Do not edit it by hand." % release["tag"],
+           "This page is built by `tools/capability_table.py` from [docs/data/capabilities.json](data/capabilities.json) and the package names of the Strata project's release %s ([docs/data/release.json](data/release.json)). Do not edit it by hand." % release["tag"],
+           "",
+           "Those packages are the Strata project's engine for its own desktop app and Terminal, which this repository does not publish. "
+           "PolyStrata's setup installs the same engine for these two families; the hardware setup covers is in [INSTALL.md](INSTALL.md#what-you-need). "
+           "The models of PolyStrata's own engine are not on this page: see [the README](../README.md#what-you-need) and each model's page.",
            "",
            "- **Packaged**: the engine packages in the release for that hardware. Read from the release's file names.",
            "- **Supported**: what these docs commit to. *untested* means a package exists and nothing is claimed.",

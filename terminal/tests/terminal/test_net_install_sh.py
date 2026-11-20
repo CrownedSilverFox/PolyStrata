@@ -99,10 +99,10 @@ class DocumentedLines(unittest.TestCase):
         self.assertEqual(left, [])
 
     def test_the_readme_lines(self):
+        # PolyStrata's README installs through START-HERE.bat / setup.sh, not the Strata project's one-line installers
         text = (ROOT.parent / "README.md").read_text(encoding="utf-8")
-        self.assertIn("curl -fsSL --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh "
-                      "-o install.sh && sh install.sh", text)
-        self.assertIn("irm -TimeoutSec 120 https://github.com/Niko1221/Strata/releases/latest/download/install.ps1 | iex", text)
+        self.assertNotIn("releases/latest/download/install.sh", text)
+        self.assertNotIn("releases/latest/download/install.ps1", text)
 
 
 class InstallPs1Text(unittest.TestCase):

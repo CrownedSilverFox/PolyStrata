@@ -12,16 +12,16 @@ shared by the CPU and the GPU). PolyStrata runs there through the same HIP backe
 
 ## Quick start
 
-Use the [current release](https://github.com/Niko1221/Strata/releases/latest). You do not need to build ROCm for a packaged install.
+The usual setup ([INSTALL.md](INSTALL.md)): `./setup.sh` on Linux, `START-HERE.bat` on Windows.
 
-| System | What to install | Engine variant |
-| --- | --- | --- |
-| Linux | `PolyStrata-0.2.17-linux-x86_64.AppImage` (it downloads the engine on first start), or `strata launch` | `linux-x86_64-hip-halo` |
-| Windows | `PolyStrata-0.2.17-windows-x64-setup.exe` (it downloads the engine on first start), or `strata launch` | `windows-x86_64-hip-rdna3` |
+| System | What setup does |
+| --- | --- |
+| Linux | compiles the engine for `gfx1151` (ROCm from AMD's `gfx1151` wheels when there is no system ROCm 7; [AMD_HIP.md](AMD_HIP.md#install-with-setup-source-checkout-linux)) |
+| Windows | takes the Strata project's ready-made HIP package for the card for Qwen3.8-Flash-Next (`windows-x86_64-hip-rdna3`, [packages](AMD_HIP.md#ready-made-packages)) |
 
 Packaged engines carry the matching hipBLASLt tuning table for gfx1151 and select it on their own. Setup recognizes `gfx1151` and
 PCI ID `1002:1586`; other integrated Radeon chips have separate support limits. Unified memory is counted once. Setup does not
-change BIOS or kernel settings. The manual Linux toolchain below is for reproduction and builds, not a prerequisite for the app. WSL is not supported: the AMD engines hang there.
+change BIOS or kernel settings. The manual Linux toolchain below is for reproduction and builds by hand. WSL is not supported: the AMD engines hang there.
 
 On Windows, [STRIX_HALO_WINDOWS.md](STRIX_HALO_WINDOWS.md) has the speeds measured on 0.2.7 with Qwen IQ3_S, how memory is used and the traps.
 

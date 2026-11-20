@@ -141,11 +141,9 @@ size stops it before the download starts.
 release file. If GitHub cannot say (offline, rate limit), setup warns and installs anyway. `STRATA_SKIP_SHA256=1` switches the
 check off, and it is never on by default.
 
-**The one-line install** (`curl ... | sh`, `irm ... | iex`) checks the Terminal archive's SHA-256 and the signed feed with the
-Terminal it just unpacked. The checksum and the key come from the same release as the archive, so the first install trusts
-HTTPS and the `Niko1221/Strata` release itself. What that means, and how to read the script first, is in
-[SECURITY.md](../.github/SECURITY.md#how-far-to-trust-curl--sh-and-irm--iex). Later updates are checked against the key already on
-your PC.
+**Getting PolyStrata.** It comes from a git clone or the source zip of `simplexai-labs/PolyStrata`, so the first install
+trusts HTTPS and that repository ([SECURITY.md](../.github/SECURITY.md#installing-from-this-repository)).
+The Strata project's one-line Terminal install is not part of PolyStrata.
 
 **Code signing.** The Windows installer is not code-signed yet, so Windows shows "Windows protected your PC". The signing and
 Apple notarisation of the Mac builds is set up in `packaging/mac/` and runs on the maintainer's Mac. A Mac build that has not
@@ -191,12 +189,13 @@ The agent runs on a loopback address with a random token, so other programs on t
 
 ## Open source and reporting a problem
 
-PolyStrata is MIT-licensed and the whole code is at [github.com/Niko1221/Strata](https://github.com/Niko1221/Strata). Read it, build
-it and compare. PolyStrata has not had an outside security audit yet.
+PolyStrata is MIT-licensed and the whole code is at
+[github.com/simplexai-labs/PolyStrata](https://github.com/simplexai-labs/PolyStrata). Read it, build it and compare.
+PolyStrata has not had an outside security audit yet.
 
 To report a security problem, use GitHub's private reporting (the repository's **Security** tab), as described in
 [SECURITY.md](../.github/SECURITY.md). Ordinary questions and ideas can go to an
-[issue](https://github.com/Niko1221/Strata/issues).
+[issue](https://github.com/simplexai-labs/PolyStrata/issues).
 
 ## Where to check this in the code
 

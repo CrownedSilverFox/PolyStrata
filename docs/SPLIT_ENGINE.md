@@ -1,8 +1,10 @@
-# The all-cards split engine (starts by itself on the cards it has been run on; `--split-engine off` turns it off)
+# The all-cards split engine (`strata launch` starts it by itself on the cards it has been run on; `--split-engine off` turns it off)
 
 `strata-split` gives every card a share of **every** layer instead of some of the layers, and the cards exchange the layer sums through
 page-locked host memory. It is built from [sFNX](https://github.com/johnfink8/sfnx) by John Fink (MIT; the licence and credit travel with the
-code in `engine/third_party/sfnx`). PolyStrata starts it by itself when the rule below says yes, and starts the normal layer split, with no message, when it does not.
+code in `engine/third_party/sfnx`). `strata launch` starts it by itself when the rule below says yes, and starts the normal layer split, with no message, when it does not.
+That is the Strata project's Terminal, which PolyStrata carries as `terminal/strata.py` ([TERMINAL.md](TERMINAL.md)). The run configs that
+setup writes (`START-HERE.bat`, `./setup.sh`) do not use the split engine.
 
 ## What it is for
 
@@ -36,7 +38,7 @@ Every other case keeps the layer split without a message. On AMD that includes 2
 Both sides need all of this: Linux; the Qwen3.8-Flash-Next shapes (48 layers, 512 experts) in a file the engine reads (checked from the tensor
 types, not the name); **all routed experts fit in the cards' memory** (the memory that is free when the launch is made, minus the engine's 700 MiB reserve: cards that other programs hold get the layer split with DFlash2 and no draft-layer fetch); enough free RAM for what stays in RAM (the 27.5 GiB embedding table, about
 3 GiB of buffers, the 4 GiB conversation cache and 8 GiB spare, about 43 GiB; measured 31 GB at start and 35 GB after long prompts); a context of
-131072 or less. The split uses the MTP drafter, so PolyStrata fetches the MTP draft layer (about 5.2 GB) when it is not on the disk; if that layer is
+131072 or less. The split uses the MTP drafter, so `strata launch` fetches the MTP draft layer (about 5.2 GB) when it is not on the disk; if that layer is
 missing, the launch is a quiet layer split.
 
 **Turn it off:** `strata launch --split-engine off`, or `"split_engine": "off"` in the run config, or `STRATA_SPLIT_ENGINE=0` in the environment.
@@ -46,9 +48,9 @@ cases Auto leaves out (2 or 3 R9700 cards, the IQ3_S set on AMD, other AMD cards
 If the engine refuses or fails to start, the server says so in one line and starts the normal layer split (`terminal/serve/server.py`,
 `start_engine_or_fallback`). A crash after it was running restarts the same engine (the fallback is for starting only).
 
-## In the desktop app
+## In the Strata project's desktop app
 
-The app follows the same rule as the Terminal (Linux only, so the Windows and macOS apps never see it). On a computer where the rule says yes, Auto in the Models screen is the all-cards
+This repository does not publish the app. The Strata project's app follows the same rule as its Terminal (Linux only, so the Windows and macOS apps never see it). On a computer where the rule says yes, Auto in the Models screen is the all-cards
 split engine with the MTP draft layer: the plan (`strata drafting plan`, no `--no-split`) says `split` and, when the draft layer is not on the disk, `mtp_needed` (about 5.2 GB); the Load
 fetches that layer once through the same installer step the MTP choice uses (it names the model's own files folder, so the model is not downloaded again), and the start asks Control
 (`strata split-engine apply`) to turn the run config the app built into the split engine's, with the app's request slots (default 4) as the lanes (1 to 8). A choice the person made keeps
@@ -72,7 +74,7 @@ the layer split there while `--split-engine on` still runs the split. It looks f
 
 **Other AMD cards the package has code for (gfx1100, gfx1101, gfx1102, gfx1103 and gfx1200) are opt-in:** only `--split-engine on` starts it there, and before the model loads the engine runs a
 kernel self-test on every card (`engine/src/split/src/hip/selftest_policy.hpp`: the expert tile and the attention tile's WMMA shapes). It prints one line saying the card has not been run and asking for a report;
-if the self-test fails, the line says so and PolyStrata starts the normal layer split. `FNX_SELFTEST=1` runs the self-test on gfx1201 too.
+if the self-test fails, the line says so and the server starts the normal layer split. `FNX_SELFTEST=1` runs the self-test on gfx1201 too.
 
 The cards exchange sums differently from NVIDIA here. By default (`FNX_PEER` unset) the engine probes every directed pair of cards at start (kernel stores into the peer, a full read-back
 compare, a flag round trip) and, if all pass, pushes the decode sums and the attention merge with kernel stores into the receiver's memory (never `hipMemcpyPeerAsync`); on any
@@ -82,7 +84,7 @@ failure, or with `FNX_PEER=0`, it uses the host-memory exchange for the whole ru
 
 ## DFlash2 instead of the MTP draft layer (engine flag; the launcher starts it only when you choose both)
 
-`strata-split-N --draft dflash2 --draft-model PACK --draft-vocab FILE` (or `FNX_DRAFT=dflash2`) drafts with the DFlash2 block drafter instead of the MTP draft layer: one drafter a lane on the first card (about 0.7 GB for the pack and the draft head, about 75 MiB a lane), the taps of layers 5, 15, 25, 35 and 45 made inside the window graphs, nothing exchanged between the cards. Answers are those of the MTP split and of the split with no drafter (greedy hashes equal, 1 and 8 users). It is measured faster on greedy code and JSON (+5 to +14%) and slower on sampled text and agent turns, and at 4 users, so Auto keeps the MTP draft layer and nothing starts it by itself. The launcher and the app start it only for a person who chose DFlash2 by name (`--drafting dflash2`) and the split engine on (`--split-engine on`): the run config then carries `--draft dflash2 --draft-model PACK` instead of `--mtp`, the MTP layer is not loaded or needed, and `--parallel N` sets the lanes as before. With the split engine on Auto, DFlash2 chosen by name keeps the normal layer split with DFlash2. The numbers are an internal measurement; the run logs are not published. Testers' switches: `FNX_DF2_CONF` (0.35), `FNX_DF2_DEFER`, `FNX_DF2_REFRESH`, `FNX_DF2_CALL_MS`, `FNX_DF2_TRACE`, `FNX_SPECULATE=0` (one row a window, no drafts).
+`strata-split-N --draft dflash2 --draft-model PACK --draft-vocab FILE` (or `FNX_DRAFT=dflash2`) drafts with the DFlash2 block drafter instead of the MTP draft layer: one drafter a lane on the first card (about 0.7 GB for the pack and the draft head, about 75 MiB a lane), the taps of layers 5, 15, 25, 35 and 45 made inside the window graphs, nothing exchanged between the cards. Answers are those of the MTP split and of the split with no drafter (greedy hashes equal, 1 and 8 users). It is measured faster on greedy code and JSON (+5 to +14%) and slower on sampled text and agent turns, and at 4 users, so Auto keeps the MTP draft layer and nothing starts it by itself. `strata launch` and the Strata project's app start it only for a person who chose DFlash2 by name (`--drafting dflash2`) and the split engine on (`--split-engine on`): the run config then carries `--draft dflash2 --draft-model PACK` instead of `--mtp`, the MTP layer is not loaded or needed, and `--parallel N` sets the lanes as before. With the split engine on Auto, DFlash2 chosen by name keeps the normal layer split with DFlash2. The numbers are an internal measurement; the run logs are not published. Testers' switches: `FNX_DF2_CONF` (0.35), `FNX_DF2_DEFER`, `FNX_DF2_REFRESH`, `FNX_DF2_CALL_MS`, `FNX_DF2_TRACE`, `FNX_SPECULATE=0` (one row a window, no drafts).
 
 ## Not proven
 

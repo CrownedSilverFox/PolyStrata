@@ -2,13 +2,14 @@
 
 <!-- Generated from terminal/data/settings-register.json by tools/settings_register.py --docs. Do not edit by hand; change the register. -->
 
-The engine reads its settings from environment variables whose names start with `STRATA_`. The Terminal and the app choose what
+The engine reads its settings from environment variables whose names start with `STRATA_`. Setup and the engine choose what
 your hardware needs, so most people never set one. This page lists the ones meant for people: switches that are off until you
 turn them on, and switches that take a newer default back to the earlier behaviour. The other settings are for measuring and
 debugging and are kept in `terminal/data/settings-register.json`.
 
-A number or a word is set like any environment variable, for example `STRATA_KVA=1`. In the Terminal, `strata launch --set NAME=value`
-puts it in the model's run configuration.
+A number or a word is set like any environment variable, for example `STRATA_KVA=1`, or in the `"env"` of the model's run config
+(`terminal/strata-<model>.json`), which the server passes to the engine. The Strata project's Terminal writes it there with
+`strata launch --set NAME=value`.
 
 ## Switches you can turn on (269)
 

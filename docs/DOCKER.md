@@ -1,41 +1,37 @@
 # PolyStrata in Docker
 
-Run PolyStrata in a container with a prebuilt engine. Install Docker, the host GPU driver and the GPU-access
-requirements in the table below. NVIDIA and AMD images can download and prepare a model on first start;
-Intel Arc needs prepared model files. Keep the data volume to reuse downloads and settings.
+Run Qwen3.8-Flash-Next in a container. The image holds the Strata project's engine and its Terminal, built here from
+`tools/docker`; PolyStrata's own models (strata-poly) are not in it, so for them use `START-HERE.bat` or `./setup.sh`
+([INSTALL.md](INSTALL.md)). Install Docker, the host GPU driver and the GPU-access requirements in the table below.
+NVIDIA and AMD images can download and prepare a model on first start; Intel Arc needs prepared model files. Keep the
+data volume to reuse downloads and settings.
 
 > **On this page:** [Which image](#which-image-for-which-card) · [One command per card](#one-command-per-card) ·
 > [Docker Compose](#docker-compose) · [Settings](#settings) · [The API key](#the-api-key) · [Connect your apps](#connect-your-coding-apps) ·
 > [Watch and stop](#watch-it-and-stop-it) · [Update](#updating) · [Troubleshooting](#troubleshooting) · [Podman](#podman-rootless-on-ubuntu) ·
-> [From the older image](#from-the-older-image) · [Build it yourself](#build-it-yourself)
+> [Build it yourself](#build-it-yourself)
 
-Docker on a **Mac** has no access to the Mac's graphics chip (no Metal): use the Mac app or the Terminal
-([MAC.md](MAC.md), [TERMINAL_LAUNCH.md](TERMINAL_LAUNCH.md)). Docker Desktop on **Windows** passes NVIDIA cards through
-(WSL 2) but not Radeon or Arc cards; on Windows use the native app for supported NVIDIA or AMD cards. Intel Arc has no native Windows engine; follow the Linux guide.
+Docker on a **Mac** has no access to the Mac's graphics chip (no Metal): run `./setup.sh` on the Mac
+([MAC.md](MAC.md)). Docker Desktop on **Windows** passes NVIDIA cards through
+(WSL 2) but not Radeon or Arc cards; on Windows use START-HERE.bat for supported NVIDIA or AMD cards. Intel Arc has no native Windows engine; follow the Linux guide.
 
 ## Which image for which card
 
 | Your graphics card | Image tag | Needs on the computer |
 | --- | --- | --- |
-| NVIDIA **RTX 20, 30, 40, 50** series (and the matching RTX A / Quadro cards) | `0.2.7-cuda13` | NVIDIA driver **580 or newer**, [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
-| NVIDIA **GTX 10 (Pascal), Tesla P100, V100 (Volta)**, or any NVIDIA card whose driver is **575 to 579** | `0.2.7-cuda12` | NVIDIA driver **575 or newer**, the same toolkit |
-| AMD **RX 9000** series and Radeon AI PRO R9700 (RDNA 4, gfx1200 / gfx1201) | `0.2.7-rocm-gfx120x` | the `amdgpu` kernel driver (Linux 6.8+) |
-| AMD **RX 7000** series (RDNA 3, gfx1100 / gfx1101 / gfx1102) | `0.2.7-rocm-gfx110x` | the `amdgpu` kernel driver |
-| AMD **Ryzen AI Max** ("Strix Halo", Radeon 8060S, gfx1151) | `0.2.7-rocm-gfx1151` | the `amdgpu` kernel driver |
-| Intel **Arc** A-series and B-series (including Arc Pro B70) | `0.2.7-sycl` (if no image exists for a release, [build it](#build-it-yourself)) | the `i915` or `xe` kernel driver; **prepared model files** (see [Intel](#intel-arc)) |
-
-**Measured on:** the 0.2.16 images (engine 0.1.62), pulled with Podman. Size on disk: `cuda13` 1.32 GB, `cuda12` 1.65 GB,
-`rocm-gfx120x` 2.73 GB, `rocm-gfx110x` 1.6 GB, `rocm-gfx1151` 1.48 GB, `sycl` 1.47 GB. The download is smaller (the layers are compressed): `cuda13` 713 MB, `cuda12` 904 MB,
-`rocm-gfx120x` 778 MB, `rocm-gfx110x` 415 MB, `rocm-gfx1151` 408 MB, `sycl` 446 MB. The model comes on top, on the first start.
-Current sizes may differ.
+| NVIDIA **RTX 20, 30, 40, 50** series (and the matching RTX A / Quadro cards) | `strata:cuda13` | NVIDIA driver **580 or newer**, [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
+| NVIDIA **GTX 10 (Pascal), Tesla P100, V100 (Volta)**, or any NVIDIA card whose driver is **575 to 579** | `strata:cuda12` | NVIDIA driver **575 or newer**, the same toolkit |
+| AMD **RX 9000** series and Radeon AI PRO R9700 (RDNA 4, gfx1200 / gfx1201) | `strata:rocm-gfx120x` | the `amdgpu` kernel driver (Linux 6.8+) |
+| AMD **RX 7000** series (RDNA 3, gfx1100 / gfx1101 / gfx1102) | `strata:rocm-gfx110x` | the `amdgpu` kernel driver |
+| AMD **Ryzen AI Max** ("Strix Halo", Radeon 8060S, gfx1151) | `strata:rocm-gfx1151` | the `amdgpu` kernel driver |
+| Intel **Arc** A-series and B-series (including Arc Pro B70) | `strata:sycl` (build it first: [Build it yourself](#build-it-yourself)) | the `i915` or `xe` kernel driver; **prepared model files** (see [Intel](#intel-arc)) |
 
 Not sure which NVIDIA image? Take `cuda13` when `nvidia-smi` shows driver 580 or newer and the card is an RTX; otherwise `cuda12`.
 A wrong pick does no harm: the container starts, says in plain words that the engine does not fit this card, and stops.
 
-**Ready-made images are published from version 0.2.1 on**, to the GitHub Container Registry: `ghcr.io/niko1221/strata:<version>-<flavor>`
-(for example `0.2.7-cuda13`), and `ghcr.io/niko1221/strata:latest-<flavor>` for the newest release of that flavor. Pin the version
-tag if you want updates only when you decide. The examples below use these images. If you built an image yourself
-([Build it yourself](#build-it-yourself)), use the tag you gave it (for example `strata:0.2.7-cuda13`) in their place.
+PolyStrata does not publish ready-made images. Build the image for your card with [Build it yourself](#build-it-yourself)
+first; the examples below use the tags in this table (`strata:cuda13` and so on), and you can give your image another
+name and use that in their place.
 
 ## One command per card
 
@@ -50,7 +46,7 @@ downloaded for the model itself ([Files you already have](#files-you-already-hav
 docker run -d --name strata --gpus all -p 127.0.0.1:8080:8080 \
   --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
   -v strata-data:/data -e FAMILY=qwen -e MODEL=IQ3_XXS -e API_KEY=$(openssl rand -hex 24) \
-  ghcr.io/niko1221/strata:0.2.7-cuda13
+  strata:cuda13
 ```
 
 **AMD**
@@ -60,7 +56,7 @@ docker run -d --name strata --device /dev/kfd --device /dev/dri \
   --group-add video --group-add $(getent group render | cut -d: -f3) -p 127.0.0.1:8080:8080 \
   --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
   -v strata-data:/data -e FAMILY=qwen -e MODEL=IQ3_XXS -e API_KEY=$(openssl rand -hex 24) \
-  ghcr.io/niko1221/strata:0.2.7-rocm-gfx120x
+  strata:rocm-gfx120x
 ```
 
 **Intel Arc**
@@ -69,7 +65,7 @@ docker run -d --name strata --device /dev/kfd --device /dev/dri \
 docker run -d --name strata --device /dev/dri --group-add $(getent group render | cut -d: -f3) \
   -p 127.0.0.1:8080:8080 --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
   -v strata-data:/data -e FAMILY=qwen -e MODEL=IQ3_S -e MODEL_PATH=/models -v /srv/gguf/IQ3_S:/models:ro \
-  -e API_KEY=$(openssl rand -hex 24) ghcr.io/niko1221/strata:0.2.7-sycl
+  -e API_KEY=$(openssl rand -hex 24) strata:sycl
 ```
 
 What the options are for: `--ulimit memlock=-1:-1` lets the engine pin the RAM it uses for the model, `--shm-size 2g` gives
@@ -101,6 +97,9 @@ docker compose -f docker-compose.nvidia.yml up -d
 docker compose -f docker-compose.nvidia.yml logs -f
 ```
 
+The files name the Strata project's images (`ghcr.io/niko1221/strata`) as their default. PolyStrata does not publish images
+there, so set `STRATA_IMAGE` in `.env` to the image you built (for example `strata:cuda13`).
+
 They set what the commands above set: the GPU (`deploy.resources.reservations.devices` for NVIDIA, `/dev/kfd` and
 `/dev/dri` plus the `video` and `render` groups for AMD, `/dev/dri` for Intel), `ulimits.memlock`, `shm_size`, a two-minute
 `stop_grace_period`, the `strata-data` volume, and the port bound to `127.0.0.1`. To let other computers reach it, set
@@ -116,7 +115,7 @@ screens; leave out what you do not care about.
 | `MODEL` | model size: `IQ2_XS`, `IQ3_XXS`, `IQ3_S`, `Q2_0`, `UD-Q4_K_XL`, ... ([MODELS.md](MODELS.md)) | PolyStrata picks what suits the card, and says so in the log |
 | `FAMILY` | `qwen`, `unsloth`, `gyro`, `coder`, `swift`, ...; use `qwen` for the original ISTA-DASLab packs | installer recommendation; may differ by hardware |
 | `MODEL_PATH` | GGUF files you already have: a folder or one `.gguf`, **inside the container** (mount it with `-v`, `:ro` is fine) | download |
-| `ALLOW_DOWNLOAD` | `1`: go on and download the model although model files of the older layout were left unread in `/data/models` (see [From the older image](#from-the-older-image)) | stop |
+| `ALLOW_DOWNLOAD` | `1`: go on and download the model although model files of the older layout were left unread in `/data/models` | stop |
 | `CONTEXT` | how much text it remembers at once: `32k`, `64k`, `128k`, `256k` or a number | the largest that fits |
 | `PARALLEL` | requests answered at the same time, 1 to 8 | fitted to the card |
 | `VISION` | `off`, `on` (the model reads pictures), `gpu`, `cpu`; the picture-reader file (about 0.9 GB) is downloaded with the model | `off` |
@@ -214,9 +213,9 @@ The health check asks `GET /v1/models` with the key. During the first download t
 ## Updating
 
 ```sh
-docker pull ghcr.io/niko1221/strata:0.2.7-cuda13      # the new tag (with a self-built image, build it again instead)
+# build the image again from the updated source or engine package (see Build it yourself)
 docker stop strata && docker rm strata
-# run the same docker run command again with the new tag (compose: docker compose pull && docker compose up -d)
+# run the same docker run command again with the rebuilt image (compose: docker compose up -d --build)
 ```
 
 The models, the prepared pack, your preset and tuning stay in the volume `strata-data`; nothing is downloaded again. A new
@@ -273,9 +272,7 @@ an interrupted download continues where it stopped when you start the container 
 
 ### Podman (rootless, on Ubuntu)
 
-The image runs under Podman as well; `docker` in the commands above becomes `podman`. Tested with rootless Podman 4.9.3 on Ubuntu 24.04,
-a Tesla P100 and the `0.2.16-cuda12` image: it serves, answers chat, tool calls and pictures, stops cleanly (exit code 0, the graphics memory is
-free again) and starts again from the same volume. Two things on such a computer differ from the Docker commands. Both are about the host, not
+The image runs under Podman as well; `docker` in the commands above becomes `podman`. Two things on such a computer differ from the Docker commands. Both are about the host, not
 the image.
 
 **`Error: setting up CDI devices: unresolvable CDI devices nvidia.com/gpu=all`.** Podman 4.9 reads the CDI file (`/etc/cdi/nvidia.yaml`),
@@ -299,7 +296,7 @@ then use `$GPU` where the Docker commands have `--gpus all`:
 podman run -d --name strata $GPU -p 127.0.0.1:8080:8080 \
   --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
   -v strata-data:/data -e FAMILY=qwen -e MODEL=IQ3_XXS -e API_KEY=$(openssl rand -hex 24) \
-  ghcr.io/niko1221/strata:0.2.17-cuda12
+  strata:cuda12
 ```
 
 If no card reaches the container, its start says so in plain words and stops (exit code 3) before anything is downloaded.
@@ -307,101 +304,45 @@ If no card reaches the container, its start says so in plain words and stops (ex
 **The container is killed while the model loads (exit code 137, no error in `podman logs`, `OOMKilled` is false).** Ubuntu's
 `systemd-oomd` ends a program of your login when its memory has been under strain for 20 seconds, and a rootless container lives below your
 user manager (`user@<your user number>.service`), where it watches. Loading a model bigger than the free RAM can do that, most of all when an
-earlier start left its copy of the model's files in the memory cache (17 GB on the test computer). `podman ps` can even go on saying
+earlier start left its copy of the model's files in the memory cache. `podman ps` can even go on saying
 "running" for a container whose processes are gone; `journalctl --user | grep "oomd killed"` shows the kill.
 
-- **From 0.2.17 the container gives that memory back itself** before the engine starts, and says so in its log (`[strata] memory guard:
-  freed 16 GB of memory that still held copies of this model's files ...`; `STRATA_OOMD_ROOM=0` turns it off). Measured on a Tesla P100
-  computer with 62 GB of RAM, a start that had to build its pack first: the load was ended in 2 of 2 starts without it and went through in 2 of
-  2 with it.
-- With an older image, give the cache of the model's files back yourself right before `podman run`, no root needed (it only forgets copies of
-  files on disk; nothing is deleted): `for f in /srv/gguf/IQ3_XXS/*.gguf; do dd if=$f iflag=nocache count=0 status=none; done` (the model's files
-  on the host, and the same for the big files in the volume's folder). It is what 0.2.17 does inside the container; by hand it was only tried
-  on a volume whose files were already prepared (2 starts, both served).
 - `--cgroups=disabled` is **not** a way out: Podman still puts its `conmon` and the container in a `podman-<number>.scope` below the user manager
   with that flag (checked in `/proc/<pid>/cgroup`), and a container started with it was ended by `systemd-oomd` too.
 - Docker (rootful) puts containers in the system's slice, where `systemd-oomd` does not look by default; that case was not tested.
 
-## From the older image
-
-The 0.1.x image compiled the engine inside `docker build` and was set up with `setup.py`. The new ones are built from the engine
-package and start through `strata launch`. Mapping:
-
-| Older variable | Now |
-| --- | --- |
-| `MODEL`, `FAMILY`, `CONTEXT`, `API_KEY`, `PORT`, `KV`, `GPU`, `GPUS`, `VISION` | the same (`VISION` takes `off\|on\|gpu\|cpu`; `no` / `yes` still work) |
-| `GGUF_DIR` | `MODEL_PATH` (the old name still works) |
-| `HOST` | not needed: the server listens on every address inside the container; choose where it is reachable with `-p` |
-| `LOW_RAM`, `RESIDENT_BUDGET_GIB`, `KV_STREAMING`, `LAYER_SPLIT`, `CONFIG`, `REINSTALL` | ignored with a warning; use `STRATA_SET` for engine settings and `strata launch --help` for the rest |
-
-A volume from the older image is picked up: the first start moves `/data/models`, `/data/packs` and `/data/mtp` into
-`/data/PolyStrata-data` (a rename inside the volume: nothing is copied or downloaded again, and the prepared pack is kept). The old
-`/data/config` is not read; the run settings are made again from the files. A folder you mounted yourself at one of those places
-is left alone: point `MODEL_PATH` at it. If model files are still in `/data/models` when the container starts (a folder you mounted there, or
-a move that failed) and `MODEL_PATH` is not set, the start **stops at once and says where the files are**: it would otherwise download the model
-again, tens of GB, because this image does not read that place. Name the folder in `MODEL_PATH`, or set `ALLOW_DOWNLOAD=1` to download anyway.
-The container name, the volume and the port can stay as they were.
-
 ## Build it yourself
 
-This is the way to get an image for a computer without registry access or after changing PolyStrata. You need an engine package
-folder (made by `tools/packaging/package_engine.py`, or fetched by `strata update` into a components folder) and Docker on Linux:
+Build the image on a Linux x86-64 computer with Docker. Two ways, and both leave the image in the local Docker (nothing is pushed).
+
+**From an engine package.** You need an engine package folder (made by `tools/packaging/package_engine.py`) and:
 
 ```sh
-tools/docker/build.sh --flavor cuda --engine ~/components/engine/<cuda13-package-folder> --tag strata:0.2.7-cuda13
-tools/docker/build.sh --flavor hip  --engine ~/components/engine/<hip-rx9070-package-folder> --tag strata:0.2.7-rocm-gfx120x
-tools/docker/build.sh --flavor sycl --engine ~/components/engine/<sycl-package-folder> --tag strata:0.2.7-sycl
+tools/docker/build.sh --flavor cuda --engine ~/pkgs/<cuda13-package-folder> --tag strata:cuda13
+tools/docker/build.sh --flavor hip  --engine ~/pkgs/<hip-rx9070-package-folder> --tag strata:rocm-gfx120x
+tools/docker/build.sh --flavor sycl --engine ~/pkgs/<sycl-package-folder> --tag strata:sycl
 ```
 
 `build.sh` assembles the build context (the Terminal's files and the package) and runs `docker build`. The build makes the
-Terminal exactly as the release archive (Python 3.12 and the locked packages, fetched at build time only), then checks the
+Terminal as the release archive does (Python 3.12 and the locked packages, fetched at build time only), then checks the
 engine package before it may enter the image: every file's SHA-256, and that every library it imports is bundled or belongs
-to the system or the graphics driver (`tools/packaging/binary_deps.py`); finally it checks that the dynamic linker resolves every
-library inside the finished image. A package that fails any of these stops the build. Nothing is pushed anywhere.
-`tools/docker/smoke-test.sh` runs the checks we ran on real cards (serves, key, chat, tool call, monitor, clean stop, memory freed, restart); see its first lines for the variables.
+to the system or the graphics driver (`tools/packaging/binary_deps.py`). Finally it checks that the dynamic linker resolves
+every library inside the finished image. A package that fails any of these stops the build.
+`tools/docker/smoke-test.sh` runs the checks on a real card (serves, key, chat, tool call, monitor, clean stop, memory freed,
+restart); see its first lines for the variables.
 
-**From source.** `docker build -t strata:src --build-arg STRATA_COMMIT=$(git rev-parse HEAD) .` in the repository compiles the CUDA 13
-engine inside Docker, makes the package and puts it in the same kind of image (`--build-arg CUDA_ARCHITECTURES=89` for one card only,
-much faster). `.git` is not copied into the build, so the commit comes in as `STRATA_COMMIT`; without it the Terminal stage stops.
-For a GTX 10, P100 or V100 build the CUDA 12 variant: `docker build -t strata:src-cuda12 --build-arg STRATA_COMMIT=$(git rev-parse HEAD)
+**From source.** The CUDA 13 engine is compiled inside Docker, packaged, and put in the same kind of image. `.git` is not copied
+into the build, so pass the commit in as `STRATA_COMMIT`:
+
+```sh
+docker build -t strata:src -f tools/docker/Dockerfile.src --build-arg STRATA_COMMIT=$(git rev-parse HEAD) .
+```
+
+`--build-arg CUDA_ARCHITECTURES=89` builds for one card only, which is much faster. For a GTX 10, P100 or V100 build the CUDA 12
+variant: `docker build -t strata:src-cuda12 -f tools/docker/Dockerfile.src --build-arg STRATA_COMMIT=$(git rev-parse HEAD)
 --build-arg CUDA_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu24.04 --build-arg CUDA_ARCHITECTURES="60;61;70;75;80;86;89" --build-arg BUILD_VISION=0 .`
-(the build turns on the Pascal / Volta code by itself when an architecture below 75 is listed, and names the package `cuda12` with
-driver 575.51). For AMD and Intel builds from source see [AMD_HIP.md](AMD_HIP.md) and [INTEL.md](INTEL.md); then package the result
-with `tools/packaging/package_engine.py` and use `tools/docker/build.sh`.
-
-## Publishing the images (for maintainers)
-
-The images are built from the **engine packages of a release**, never from a build on the runner, so an image holds exactly the
-files the signed update feed names. Nothing publishes by itself: a maintainer starts the workflow, after the owner's OK.
-
-1. Make the release first (its `strata-feed.json`, `strata-feed.json.sig` and the engine archives must be on the GitHub release).
-2. GitHub, **Actions, Docker images, Run workflow** ([.github/workflows/docker-images.yml](../.github/workflows/docker-images.yml); the file has to be on
-   the default branch to show up). Inputs: the release tag (`v0.2.7`), the flavors (empty: every flavor the release has a package
-   for), **push** and **latest**. Run it once with **push off**: it builds every image and publishes nothing (a dry run).
-3. Run it again with **push on**. It logs in to `ghcr.io` with the job's `GITHUB_TOKEN` (`packages: write`) and pushes
-   `ghcr.io/niko1221/strata:0.2.7-<flavor>` and `latest-<flavor>`. Turn **latest** off for a pre-release.
-4. The first push creates each package as private. In the repository's Packages, open every package, **Package settings, Change
-   visibility, Public**, and check it is linked to the repository (the image carries the `org.opencontainers.image.source` label).
-5. Check one pull from a computer that is not logged in: `docker pull ghcr.io/niko1221/strata:0.2.7-cuda13`.
-
-For each flavor the job runs [docker/fetch-engines.py](../tools/docker/fetch-engines.py), which reads the release's signed feed (the
-Ed25519 key in `terminal/strata_control/update_keys.json`), downloads the package, and checks the archive's size and SHA-256, the manifest
-hash, the package signature and every file's hash, exactly as `strata update` does; a package that fails stops the job before
-anything is built. [docker/build.sh](../tools/docker/build.sh) then builds the image (and checks the package again inside the build), and
-the job starts the image once to see that the Terminal inside it runs.
-
-| Flavor (tag suffix) | Engine package in the release feed |
-| --- | --- |
-| `cuda13` | `linux-x86_64`, cuda, variant `cuda13` |
-| `cuda12` | `linux-x86_64`, cuda, variant `cuda12` |
-| `rocm-gfx120x` | `linux-x86_64`, hip, variant `rx9070` (gfx1200 / gfx1201) |
-| `rocm-gfx110x` | `linux-x86_64`, hip, variant `rx7900` (gfx1100 / gfx1101 / gfx1102) |
-| `rocm-gfx1151` | `linux-x86_64`, hip, variant `halo` (Strix Halo, gfx1151) |
-| `sycl` | `linux-x86_64`, sycl; only when the feed lists one |
-
-A flavor the feed has no package for is left out, with a line in the log. The same steps run from a Linux computer with Docker:
-`tools/docker/publish.sh --release-tag v0.2.7` builds everything and pushes nothing; add `--push` (after `docker login ghcr.io`) to publish.
-The images run on the runner without a graphics card, so the card checks (`tools/docker/smoke-test.sh`) stay a manual step on a computer with the card.
+For AMD and Intel builds from source see [AMD_HIP.md](AMD_HIP.md) and [INTEL.md](INTEL.md); then package the result with
+`tools/packaging/package_engine.py` and use `tools/docker/build.sh`.
 
 ## Known limits
 
@@ -412,13 +353,3 @@ The images run on the runner without a graphics card, so the card checks (`tools
 - AMD **RX 7000** (gfx110x) and RDNA 3 iGPUs: the gfx110X image is built for gfx1100 / 1101 / 1102 (RX 7900, 7800, 7700, 7600). The
   Radeon 780M (gfx1103) is experimental and has its own engine package, not in these images.
 
-## History / older measurements
-
-**Tested on real cards.** Checks (`tools/docker/smoke-test.sh`): the container serves, `GET /v1/models` answers (and refuses a request
-without the key), a one-word chat and a tool call work, `docker exec strata monitor --once` works, `docker stop` ends it with exit
-code 0 and the graphics memory is free again, and a second start reuses the saved preset.
-
-| Date | Images built from | Card | Result |
-| --- | --- | --- | --- |
-| 2026-10-19 | 0.2.0-beta engine packages (engine 0.1.45.3), fetched and checked against the signed feed | `cuda13` and `cuda12` on one RTX A4000 (driver 580); `rocm-gfx120x` on one Radeon AI PRO R9700 | All passed. Serving 71-161 s after `docker run` with the prepared files; `docker stop` took 4-5 s with exit code 0. `rocm-gfx110x` and `rocm-gfx1151` passed the package and library checks but did not run on a card. On a computer without an AMD card the `rocm-gfx120x` container says the engine does not match the card and exits with code 3. |
-| 2026-10-17 | 0.1.45 engine packages | RTX 3060 (`cuda13`, `cuda12`), Radeon AI PRO R9700 (`rocm-gfx120x`), Intel Arc Pro B70 (`sycl`) | All checks passed on each. Not run on a card: `cuda12` on Pascal / Volta (it ran on the RTX 3060), `rocm-gfx110x` (RX 7000). |
