@@ -46,6 +46,7 @@ MATRIX = {
     "tiel": ("xml", OutputParser, "function"),
     "minicpmv": ("xml", OutputParser, "function"),
     "ornith122": ("xml", OutputParser, "function"),
+    "groot": ("xml", OutputParser, "function"),
 }
 
 TOOL = {"type": "function", "function": {"name": "get_weather", "description": "The weather in a city.",
