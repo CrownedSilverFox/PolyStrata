@@ -383,7 +383,9 @@ if(STRATA_METAL_POLY)
   add_custom_command(OUTPUT ${Q36_GENERATED}/q36_host.cpp ${Q36_GENERATED}/q36_launch.hpp ${Q36_GENERATED}/q36.metal
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/q36_host.py ${S}/qwen35/q36_engine.cu ${Q36_GENERATED}
     DEPENDS ${S}/qwen35/q36_engine.cu tools/q36_host.py VERBATIM)
-  add_executable(strata-q36 ${Q36_GENERATED}/q36_host.cpp ${S}/qwen35/q36_main.cpp src/q36/bindings.cpp src/q36/cpu_compat.cpp)
+  # (the engine's stub files: the CUDA int8 experts and the AVX-512 CPU rows the host library's expert pool asks for)
+  add_executable(strata-q36 ${Q36_GENERATED}/q36_host.cpp ${S}/qwen35/q36_main.cpp src/q36/bindings.cpp src/q36/cpu_compat.cpp
+    src/engine/stubs_i8.cpp src/engine/stubs_025.cpp)
   target_include_directories(strata-q36 PRIVATE ${Q36_GENERATED} src/q36 ${S}/poly ${_strata_ggml_root}/ggml/include)
   target_compile_definitions(strata-q36 PRIVATE STRATA_Q36_CPU_POOL=1 STRATA_Q36_METAL_SOURCE="${Q36_GENERATED}/q36.metal")
   target_link_libraries(strata-q36 PRIVATE strata_metal_host strata_poly_metal_kernels ggml-cpu ggml-base)

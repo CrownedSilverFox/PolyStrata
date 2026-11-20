@@ -3,6 +3,8 @@
 #include "strata/kernels/native_mmvq.hpp"
 #include "strata/kernels/native_router.hpp"
 #include "strata/prefill/gemm.hpp"
+#include "strata/prefill/moe_fused.hpp"
+#include "strata/prefill/moe_fused_q36.hpp"
 #include "strata/prefill/moe_mmq.hpp"
 #include "strata/poly/kernels.hpp"
 #include "../poly/quantized.hpp"
@@ -52,6 +54,33 @@ void iq_embed_rows(int type,const void* table,size_t stride,const int32_t* token
     if(!name)throw std::invalid_argument("unsupported Metal embedding type");
     QArgs a;a.p[0]=table;a.p[2]=out;a.p[3]=tokens;a.stride=stride;a.ni=n;a.rows=rows;
     qrun(std::string("q36_embed_")+name,a,s,{uint32_t((n+(type==30?31:511))/(type==30?32:512)),uint32_t(rows),1});
+}
+}
+// moe_fused's grouping, which only the fused prompt experts use: q36's own copies of the host library's Metal stubs
+// (prefill.cpp), so that its object, with the Strata engine's prompt path, is not linked
+namespace strata::prefill::fused {
+size_t act_bytes(int64_t,int64_t){return 0;}
+size_t group_bytes(int64_t,int){return 0;}
+void group(const int32_t*,int64_t,int,int,void*,int32_t*,int32_t*,void*){}
+}
+// the AVX-512 K-quant rows of the host library's expert pool (stubs.cpp has them for the Strata engine): x86 only
+namespace strata::metal_engine { void missing(const char* name); }
+namespace strata::kernels::cpu {
+void kq512_rows(int,const uint8_t*,size_t,int,const void* const*,int,float* const*,int,int){
+    strata::metal_engine::missing("strata::kernels::cpu::kq512_rows");
+}
+void kq512_gu_rows(int,const uint8_t*,size_t,size_t,int,const void* const*,int,float* const*,int,int){
+    strata::metal_engine::missing("strata::kernels::cpu::kq512_gu_rows");
+}
+}
+// the fused int8 prompt experts are CUDA kernels: no layer takes them on Metal, so the launch is never reached
+namespace strata::prefill::fused_q36 {
+bool native_layer_ext(int,int){return false;}
+void quantize_act_native(const float*,int64_t,int64_t,void*,void*){
+    throw std::logic_error("q36: the fused prompt experts are CUDA kernels");
+}
+void experts_native_ext(const Batch&,const NativeGeom&,int,int64_t,const void*,const void*,const int32_t*,void*,float*,void*){
+    throw std::logic_error("q36: the fused prompt experts are CUDA kernels");
 }
 }
 namespace strata::prefill {
