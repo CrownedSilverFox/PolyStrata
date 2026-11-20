@@ -4986,10 +4986,14 @@ void Engine::stage(const Layer& L, const int32_t* experts, int m, void* stream, 
 #if !defined(STRATA_GPU_METAL)
     if (!mirror_of_.empty()) {
         const int il = (int) (&L - layers_.data());
-        GatherPiece* q = gather_slot();
+        // The copy ahead of the routing runs beside the layer's work, where the gather's blocks, waiting on the bus,
+        // held SMs that work needed (DeepSeek V4 Flash's moe_sum took 9 times as long beside it): the copy engines
+        // take that one.
+        const bool dma = stream == up_;
+        GatherPiece* q = dma ? nullptr : gather_slot();
         int k = 0;
         const auto piece = [&](const void* src, void* dst, size_t n) {
-            if ((((uintptr_t) src | (uintptr_t) dst) % 16) == 0 && n % 16 == 0) q[k++] = {src, dst, n, 0};
+            if (!dma && (((uintptr_t) src | (uintptr_t) dst) % 16) == 0 && n % 16 == 0) q[k++] = {src, dst, n, 0};
             else ck(cudaMemcpyAsync(dst, src, n, cudaMemcpyHostToDevice, cs(stream)), "expert staging");
         };
         stage_rest_.clear();
@@ -5002,9 +5006,11 @@ void Engine::stage(const Layer& L, const int32_t* experts, int m, void* stream, 
             piece(src, stage_ + (size_t) j * step, L.gu2());
             piece(src + L.gu2(), stage_ + down_at + (size_t) j * L.d_bytes, L.d_bytes);
         }
-        gather_pieces(q, k, stream);
-        ck(cudaGetLastError(), "expert staging");
-        ck(cudaEventRecord((cudaEvent_t) gather_ev_[gather_at_], cs(stream)), "expert staging");
+        if (!dma) {
+            gather_pieces(q, k, stream);
+            ck(cudaGetLastError(), "expert staging");
+            ck(cudaEventRecord((cudaEvent_t) gather_ev_[gather_at_], cs(stream)), "expert staging");
+        }
         if (!stage_rest_.empty()) stage_rest(L, experts, stage_rest_, m, stream, alone);
         ck(cudaMemsetAsync(stage_ + down_at + (size_t) m * L.d_bytes, 0, kTail, cs(stream)), "expert staging");
         return;
