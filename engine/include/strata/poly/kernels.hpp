@@ -141,6 +141,24 @@ struct RowCaches {
     size_t rs = 0;   ///< the codes from a cache's row to its next, as Kvq8::rs; 0: n
 };
 void store_q8_rows(const float* x, const RowCaches& caches, int n, const long long* at, int rows, void* stream);
+
+#pragma pack(push, 1)
+struct block_q4_0 {
+    uint16_t d;             // scale (fp16 bits)
+    uint8_t qs[16];         // 32 4-bit codes: element j in low nibble of qs[j], j + 16 in high nibble
+};
+#pragma pack(pop)
+static_assert(sizeof(block_q4_0) == 18, "block_q4_0 must be 18 bytes");
+
+/// Stores the tokens' rows as ggml Q4_0 (one fp16 scale and 16 bytes of nibbles per 32-value block) from row `pos`.
+/// blocks: (n / 32) block_q4_0 per row. n must be a multiple of 32.
+void store_q4(const float* x, block_q4_0* out, int n, int64_t pos, int rows, void* stream);
+void store_q4_at(const float* x, block_q4_0* out, int n, const long long* at, int rows, int ring, void* stream);
+
+/// Dequantizes Q4_0 blocks to Q8_0 codes and scales (exact integer mapping: codes = nibble - 8, scale = scale).
+/// With `at`, the destination rows start at the position held on the card when the launch runs (graph replay).
+void dequant_q4_to_q8(const block_q4_0* in, int8_t* codes, uint16_t* scales, int n, int rows, void* stream,
+                      const long long* at = nullptr);
 /// Attention over cached latents for the tokens from position `pos`.  q: n_head * rank absorbed queries a token.
 /// The first dense_rows tokens attend to every cache row up to their own.  The others each have a list in sel
 /// (sel_stride apart): top_rows cache rows, then the rows of the pool their own position is still filling.
@@ -302,6 +320,22 @@ void attend_seqs(const AttnSeqs& seqs, int dim, int n_head, int kv_heads, float 
 /// turn, from the turn of the first), the bits a call of its own gives the row.  CUDA only.
 void head_norm_rope_rows(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
                          float theta_scale, int rows, float eps, void* stream, int sections, const long long* turns);
+/// YaRN as ggml's rope_yarn computes it, for head_norm_rope_yarn() (laguna's full layers).  Pair i's angle is the
+/// interpolated one, freq_scale times the angle head_norm_rope() gives it, mixed with that angle itself by the
+/// ramp ext_factor * (1 - clamp((i - corr_low) / max(0.001, corr_high - corr_low), 0, 1)).  mscale multiplies the
+/// rotated values' cos and sin: the final magnitude, the attention factor llama.cpp passes times the
+/// 1 + 0.1 * ln(1 / freq_scale) ggml adds when ext_factor is not 0.  The values past n_rot are only normed.
+struct RopeYarn {
+    float freq_scale = 1.0f;
+    float ext_factor = 0.0f;
+    float corr_low = 0.0f, corr_high = 0.0f;   ///< ggml_rope_yarn_corr_dims()
+    float mscale = 1.0f;
+};
+/// head_norm_rope() with YaRN: the same norm, NeoX pairing, positions and `at`, with no frequency factors or
+/// axes.  CUDA and HIP only.
+void head_norm_rope_yarn(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
+                         float theta_scale, int64_t pos, int rows, float eps, void* stream, const RopeYarn& yarn,
+                         const long long* at = nullptr);
 /// An attention cache stored as ggml Q8_0: a row is `n` int8 codes and `n / 32` fp16 scales with
 /// `n = kv_heads * dim`, row-major (`codes[row * n + blk * 32 + j]`, `scales[row * (n / 32) + blk]`).
 /// A q8 read is active wherever `codes` is not null.  The value a block holds is
@@ -339,7 +373,12 @@ struct Kvq8 {
 void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int64_t pos, int rows, float* score,
             int chunk, float* out, int dim, int n_head, int kv_heads, float scale, void* stream, int window = 0,
             int ring = 0, bool whole = false, const long long* at = nullptr, int room = 0, size_t score_floats = 0,
-            Kvq8 kq8 = {}, Kvq8 vq8 = {}, const float* sinks = nullptr, size_t part_floats = 0);
+            Kvq8 kq8 = {}, Kvq8 vq8 = {}, const float* sinks = nullptr, size_t part_floats = 0,
+            float* ml_out = nullptr);
+/// Merges a piece's normalized attention output (piece_out) and per-(token, head) (max, sum) pairs (piece_ml)
+/// into the running accumulator (acc_out, acc_ml) via exact online softmax.
+void merge_attn_piece(float* acc_out, float* acc_ml, const float* piece_out, const float* piece_ml, int rows,
+                      int n_head, int dim, void* stream);
 /// The floats of score that attend()'s blocks of rows take for calls of up to chunk tokens attending up to max_rows
 /// rows (score_floats): with that much a model's every call takes them.
 size_t attend_split_floats(int chunk, int n_head, int max_rows, int dim);
@@ -365,7 +404,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
                   float* score, size_t score_floats, float* work, float* out, int dim, int n_head, int kv_heads,
                   float scale, void* stream, int window = 0, int ring = 0, bool whole = false, Kvq8 kq8 = {},
                   Kvq8 vq8 = {}, uint16_t* kwork = nullptr, uint16_t* vwork = nullptr, size_t work_halves = 0,
-                  const float* sinks = nullptr);
+                  const float* sinks = nullptr, float* ml_out = nullptr);
 /// attend() over int8 caches (store_int8): the same attention, the same order of products and sums.  `q8` is scratch
 /// in the same form for this call's queries (rows * n_head * dim / kQ8_0Values blocks of codes, and as many
 /// deltas).  A score is a dp4a of a lane's own run of codes - the query's against the key's, both 4-aligned - and
@@ -394,6 +433,9 @@ void likeliest(const float* logits, int n, Likeliest* out, void* stream);
 /// acc[r][i] *= sigmoid(g[r][i]) for `rows` groups of n values; group r's gates start r * g_stride floats into g.
 /// With one_gate a group has one gate for all its values.
 void mul_sigmoid(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream);
+/// mul_sigmoid() with ggml's softplus in place of the sigmoid: g above 20 as it is, else log1p(exp(g)) (laguna's
+/// attention output gate).  CUDA and HIP only.
+void mul_softplus(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream);
 /// A causal convolution of four taps over each of `channels` channels, and its SiLU.  x and out: `channels` values
 /// a token.  state: 3 past inputs a channel, oldest first, advanced here by `rows` tokens.  w: (4, channels).
 /// With snap, the state as it is after some of the call's tokens is also written there, for a window of guessed

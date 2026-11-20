@@ -715,6 +715,94 @@ __global__ void store_q8_kernel(const float* __restrict__ x, int8_t* __restrict_
     }
 }
 
+// Q4_0: d = (max value of |x|) / -8; q = clamp(trunc(x/d + 8.5), 0, 15).
+__global__ void store_q4_kernel(const float* __restrict__ x, block_q4_0* __restrict__ out,
+                                int n, int rows, int nb) {
+    const int gb = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gb >= nb * rows) return;
+    const int row = gb / nb, blk = gb % nb;
+    const float* xr = x + (size_t) row * n + blk * 32;
+    float amax = 0.f, mval = 0.f;
+#pragma unroll
+    for (int j = 0; j < 32; ++j) {
+        const float v = xr[j];
+        const float a = fabsf(v);
+        if (a > amax || (a == amax && v > mval)) {
+            amax = a;
+            mval = v;
+        }
+    }
+    const float d = mval / -8.0f;
+    const float id = d != 0.f ? 1.0f / d : 0.0f;
+    block_q4_0& b = out[(size_t) row * nb + blk];
+    const half hd = __float2half(d);
+    b.d = *reinterpret_cast<const uint16_t*>(&hd);
+#pragma unroll
+    for (int j = 0; j < 16; ++j) {
+        const float x0 = xr[j] * id + 8.5f;
+        const float x1 = xr[j + 16] * id + 8.5f;
+        const int q0 = __float2int_rz(x0);
+        const int q1 = __float2int_rz(x1);
+        const uint8_t c0 = (uint8_t) (q0 < 0 ? 0 : (q0 > 15 ? 15 : q0));
+        const uint8_t c1 = (uint8_t) (q1 < 0 ? 0 : (q1 > 15 ? 15 : q1));
+        b.qs[j] = (uint8_t) (c0 | (c1 << 4));
+    }
+}
+
+__global__ void store_q4_at_kernel(const float* __restrict__ x, block_q4_0* __restrict__ out,
+                                   int n, int rows, int nb,
+                                   const long long* __restrict__ at, int ring) {
+    const int gb = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gb >= nb * rows) return;
+    const int trow = gb / nb, blk = gb % nb;
+    const long long row = ring > 0 ? (*at + trow) % ring : *at + trow;
+    const float* xr = x + (size_t) trow * n + blk * 32;
+    float amax = 0.f, mval = 0.f;
+#pragma unroll
+    for (int j = 0; j < 32; ++j) {
+        const float v = xr[j];
+        const float a = fabsf(v);
+        if (a > amax || (a == amax && v > mval)) {
+            amax = a;
+            mval = v;
+        }
+    }
+    const float d = mval / -8.0f;
+    const float id = d != 0.f ? 1.0f / d : 0.0f;
+    block_q4_0& b = out[(size_t) row * nb + blk];
+    const half hd = __float2half(d);
+    b.d = *reinterpret_cast<const uint16_t*>(&hd);
+#pragma unroll
+    for (int j = 0; j < 16; ++j) {
+        const float x0 = xr[j] * id + 8.5f;
+        const float x1 = xr[j + 16] * id + 8.5f;
+        const int q0 = __float2int_rz(x0);
+        const int q1 = __float2int_rz(x1);
+        const uint8_t c0 = (uint8_t) (q0 < 0 ? 0 : (q0 > 15 ? 15 : q0));
+        const uint8_t c1 = (uint8_t) (q1 < 0 ? 0 : (q1 > 15 ? 15 : q1));
+        b.qs[j] = (uint8_t) (c0 | (c1 << 4));
+    }
+}
+
+__global__ void dequant_q4_to_q8_kernel(const block_q4_0* __restrict__ in,
+                                        int8_t* __restrict__ codes,
+                                        half* __restrict__ scales,
+                                        int n, int rows, int nb, const long long* __restrict__ at) {
+    const int gb = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gb >= nb * rows) return;
+    const int trow = gb / nb, blk = gb % nb;
+    const long long row = at ? (*at + trow) : trow;
+    const block_q4_0& b = in[(size_t) row * nb + blk];
+    scales[(size_t) row * nb + blk] = *reinterpret_cast<const half*>(&b.d);
+    int8_t* cr = codes + (size_t) row * n + blk * 32;
+#pragma unroll
+    for (int j = 0; j < 16; ++j) {
+        const uint8_t byte = b.qs[j];
+        cr[j]      = (int8_t) ((int) (byte & 0x0F) - 8);
+        cr[j + 16] = (int8_t) ((int) (byte >> 4)   - 8);
+    }
+}
+
 // Rows from the position the card holds when the launch runs.
 __global__ void store_q8_at_kernel(const float* __restrict__ x, int8_t* __restrict__ codes,
                                    half* __restrict__ scales, int n, int rows, int nb,
@@ -1191,11 +1279,14 @@ __global__ void add_bias_kernel(const float* __restrict__ b, float* __restrict__
 // One block per head and token.  The pairs of the rotation are i and i + n_rot / 2 for i below n_rot / 2.  With
 // axes, a token has a position on each of three axes, and pair j turns by the one on axis (j % sections) % 3.
 // With `at`, the first token's position is what the card holds there when the launch runs.
+// YARN (head_norm_rope_yarn, laguna's full layers): the angle and the magnitude as ggml's rope_yarn makes them; the
+// other instantiation is the kernel as it was, which every other caller runs.
+template <bool YARN>
 __global__ void head_norm_rope_kernel(const float* __restrict__ x, int x_stride, const float* __restrict__ w,
                                       float* __restrict__ y, int dim, int heads, int n_rot, float theta_scale,
                                       const float* __restrict__ freq, long long pos, float eps,
                                       const int* __restrict__ axes, int sections,
-                                      const long long* __restrict__ at, int at_stride = 0) {
+                                      const long long* __restrict__ at, int at_stride, RopeYarn yarn) {
     __shared__ float part[8];
     const float* xr = x + size_t(blockIdx.x) * x_stride;
     float* yr = y + size_t(blockIdx.x) * dim;
@@ -1218,7 +1309,22 @@ __global__ void head_norm_rope_kernel(const float* __restrict__ x, int x_stride,
         const float theta = freq ? turn / freq[j] : turn;
         const float x0 = w ? xr[j] * scale * w[j] : xr[j] * scale;
         const float x1 = w ? xr[j + half] * scale * w[j + half] : xr[j + half] * scale;
-        yr[i] = i < half ? x0 * cosf(theta) - x1 * sinf(theta) : x0 * sinf(theta) + x1 * cosf(theta);
+        if constexpr (YARN) {
+            // ggml's rope_yarn: the interpolated angle, mixed with the extrapolated one by the ramp over the pairs
+            // (rope_yarn_ramp: pair j's place between corr_low and corr_high), and the magnitude on cos and sin
+            const float interp = yarn.freq_scale * theta;
+            float angle = interp;
+            if (yarn.ext_factor != 0.0f) {
+                const float ramp_y = (float(j) - yarn.corr_low) / fmaxf(0.001f, yarn.corr_high - yarn.corr_low);
+                const float ramp = (1.0f - fminf(1.0f, fmaxf(0.0f, ramp_y))) * yarn.ext_factor;
+                angle = interp * (1.0f - ramp) + theta * ramp;
+            }
+            const float c = cosf(angle) * yarn.mscale, s = sinf(angle) * yarn.mscale;
+            yr[i] = i < half ? x0 * c - x1 * s : x0 * s + x1 * c;
+        } else {
+            (void) yarn;
+            yr[i] = i < half ? x0 * cosf(theta) - x1 * sinf(theta) : x0 * sinf(theta) + x1 * cosf(theta);
+        }
     }
 }
 
@@ -1442,7 +1548,7 @@ attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcac
 // a block of the group's queries side by side (per: the group's heads).
 __device__ __forceinline__ void attn_softmax_body(float* score, int n_keys, long long pos, int first, int tokens,
                                                   int window, long long last, const long long* __restrict__ at,
-                                                  float* __restrict__ wt, int per, const float* __restrict__ sinks) {
+                                                  float* __restrict__ wt, int per, const float* __restrict__ sinks, float* __restrict__ ml_out) {
     __shared__ float part[8];
     const long long p = (at ? *at : pos) + first;
     last = attn_last(p, tokens, last);
@@ -1457,12 +1563,17 @@ __device__ __forceinline__ void attn_softmax_body(float* score, int n_keys, long
     if (sinks) mx = fmaxf(mx, sinks[blockIdx.x]);
     float sum = 0.0f;
     for (int j = threadIdx.x; j < n; j += blockDim.x) {
-        row[j] = expf(row[j] - mx);
+        row[j] = mx == -INFINITY ? 0.0f : expf(row[j] - mx);
         sum += row[j];
     }
     sum = block_sum(sum, part);
     if (sinks) sum += expf(sinks[blockIdx.x] - mx);
-    const float inv = 1.0f / sum;
+    if (ml_out && threadIdx.x == 0) {
+        const size_t idx = (size_t(first + blockIdx.y) * gridDim.x + blockIdx.x) * 2;
+        ml_out[idx + 0] = mx;
+        ml_out[idx + 1] = sum;
+    }
+    const float inv = sum > 0.0f ? 1.0f / sum : 0.0f;
     if (!wt) {
         for (int j = threadIdx.x; j < n; j += blockDim.x) row[j] *= inv;
         for (int j = threadIdx.x; j < own; j += blockDim.x) all[j] = 0.0f;
@@ -1479,8 +1590,8 @@ __device__ __forceinline__ void attn_softmax_body(float* score, int n_keys, long
 
 __global__ void attn_softmax_kernel(float* score, int n_keys, long long pos, int first, int tokens, int window,
                                     long long last, const long long* __restrict__ at, float* __restrict__ wt,
-                                    int per, const float* __restrict__ sinks) {
-    attn_softmax_body(score, n_keys, pos, first, tokens, window, last, at, wt, per, sinks);
+                                    int per, const float* __restrict__ sinks, float* __restrict__ ml_out = nullptr) {
+    attn_softmax_body(score, n_keys, pos, first, tokens, window, last, at, wt, per, sinks, ml_out);
 }
 
 // A thread's sums of attn_value_kernel for N queries: over its share of the span's rows from `row` of the cache
@@ -1702,7 +1813,8 @@ constexpr int JOIN_WARPS = 16;
 template <int DIM>
 __global__ void __launch_bounds__(JOIN_WARPS * WARP)
 attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_head, long long pos, int first,
-                 int tokens, int blocks, const long long* __restrict__ at, const float* __restrict__ sinks) {
+                 int tokens, int blocks, const long long* __restrict__ at, const float* __restrict__ sinks,
+                 float* __restrict__ ml_out = nullptr) {
     constexpr int VALS = DIM / WARP;
     __shared__ float top[JOIN_WARPS], sl[JOIN_WARPS], so[JOIN_WARPS][DIM];
     const int h = blockIdx.x, t = blockIdx.y, lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
@@ -1739,9 +1851,16 @@ attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_
         sum += sl[k];
     }
     if (sinks) sum += expf(sinks[h] - mx);
-    float* y = out + ((size_t(first) + t) * n_head + h) * DIM;
+    const size_t out_row = (size_t(first) + t) * n_head + h;
+    if (ml_out && lane == 0) {
+        ml_out[2 * out_row + 0] = mx;
+        ml_out[2 * out_row + 1] = sum;
+    }
+    float* y = out + out_row * DIM;
+    // a streamed piece's token may attend none of its rows (sum 0); every other token divides as before, so the
+    // bits of a call that is not streamed stay what they were
 #pragma unroll
-    for (int u = 0; u < VALS; ++u) y[VALS * lane + u] = s[u] / sum;
+    for (int u = 0; u < VALS; ++u) y[VALS * lane + u] = sum > 0.0f ? s[u] / sum : 0.0f;
 }
 
 // attn_value_kernel with the weights as attn_softmax_kernel leaves them with `wt`: a row's queries side by side,
@@ -1849,7 +1968,7 @@ attn_score_seqs_kernel(const AttnSeqs a, int n_head, int kv_heads, float scale) 
 __global__ void attn_softmax_seqs_kernel(const AttnSeqs a, int per) {
     const int k = blockIdx.z;
     if (int(blockIdx.y) >= a.tokens[k]) return;
-    attn_softmax_body(a.score[k], a.keys[k], 0, 0, a.tokens[k], 0, -1, a.at[k], a.wt[k], per, nullptr);
+    attn_softmax_body(a.score[k], a.keys[k], 0, 0, a.tokens[k], 0, -1, a.at[k], a.wt[k], per, nullptr, nullptr);
 }
 
 template <int TILES>
@@ -1880,10 +1999,45 @@ __global__ void attn_group_kernel(const float* __restrict__ src, half* __restric
 
 // The results back to the engine's order.
 __global__ void attn_ungroup_kernel(const float* __restrict__ src, float* __restrict__ dst, int dim, int n_head,
-                                    int kv_heads, int tokens) {
+                                    int kv_heads, int tokens, const float* __restrict__ top = nullptr,
+                                    const float* __restrict__ sum = nullptr, float* __restrict__ ml_out = nullptr) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= dim) return;
-    dst[size_t(blockIdx.y) * dim + i] = src[attn_by_group(blockIdx.y, n_head, kv_heads, tokens) * dim + i];
+    const size_t g_idx = attn_by_group(blockIdx.y, n_head, kv_heads, tokens);
+    dst[size_t(blockIdx.y) * dim + i] = src[g_idx * dim + i];
+    if (ml_out && i == 0) {
+        ml_out[2 * size_t(blockIdx.y) + 0] = top[g_idx];
+        ml_out[2 * size_t(blockIdx.y) + 1] = sum[g_idx];
+    }
+}
+
+__global__ void merge_attn_piece_kernel(float* __restrict__ acc_out, float* __restrict__ acc_ml,
+                                        const float* __restrict__ piece_out, const float* __restrict__ piece_ml,
+                                        int dim) {
+    const size_t row = blockIdx.x;
+    const float m0 = acc_ml[2 * row + 0], s0 = acc_ml[2 * row + 1];
+    const float m1 = piece_ml[2 * row + 0], s1 = piece_ml[2 * row + 1];
+    if (s1 <= 0.0f || m1 == -INFINITY) return;
+    __syncthreads();
+    if (s0 <= 0.0f || m0 == -INFINITY) {
+        for (int i = threadIdx.x; i < dim; i += blockDim.x) acc_out[row * dim + i] = piece_out[row * dim + i];
+        if (threadIdx.x == 0) {
+            acc_ml[2 * row + 0] = m1;
+            acc_ml[2 * row + 1] = s1;
+        }
+        return;
+    }
+    const float mx = fmaxf(m0, m1);
+    const float w0 = s0 * expf(m0 - mx);
+    const float w1 = s1 * expf(m1 - mx);
+    const float s = w0 + w1;
+    for (int i = threadIdx.x; i < dim; i += blockDim.x) {
+        acc_out[row * dim + i] = s > 0.0f ? (w0 * acc_out[row * dim + i] + w1 * piece_out[row * dim + i]) / s : 0.0f;
+    }
+    if (threadIdx.x == 0) {
+        acc_ml[2 * row + 0] = mx;
+        acc_ml[2 * row + 1] = s;
+    }
 }
 
 // A softmax over a chunk's rows a block of rows at a time, for scores in the order of the groups: blockIdx.x
@@ -1935,7 +2089,7 @@ __global__ void attn_scale_kernel(float* out, const float* __restrict__ factor, 
     const float f = factor[blockIdx.y];
     // a row whose largest score this block of keys did not raise is times 1: it is not read or written
     if (!divide && f == 1.0f) return;
-    out[size_t(blockIdx.y) * dim + i] *= divide ? 1.0f / f : f;
+    out[size_t(blockIdx.y) * dim + i] = (divide && f == 0.0f) ? 0.0f : out[size_t(blockIdx.y) * dim + i] * (divide ? 1.0f / f : f);
 }
 
 #if defined(STRATA_USE_HIP)
@@ -2367,6 +2521,17 @@ __global__ void mul_sigmoid_kernel(float* __restrict__ acc, const float* __restr
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     acc[size_t(blockIdx.y) * n + i] *= sigmoid(g[size_t(blockIdx.y) * g_stride + (one_gate ? 0 : i)]);
+}
+
+// ggml's softplus (op_softplus in ggml-cuda/unary.cu): x above 20 as it is, else log1p(exp(x)).
+__device__ __forceinline__ float softplus_ggml(float x) { return x > 20.0f ? x : log1pf(expf(x)); }
+
+// mul_sigmoid_kernel with softplus: laguna's attention output gate.
+__global__ void mul_softplus_kernel(float* __restrict__ acc, const float* __restrict__ g, int n, int g_stride,
+                                    bool one_gate) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    acc[size_t(blockIdx.y) * n + i] *= softplus_ggml(g[size_t(blockIdx.y) * g_stride + (one_gate ? 0 : i)]);
 }
 
 // Where a token leaves the recurrent state as it is after it: `snaps` has a bit for each of a call's tokens that
@@ -3162,6 +3327,32 @@ void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const l
                                                                rs ? rs : (size_t) n);
 }
 
+void store_q4(const float* x, block_q4_0* out, int n, int64_t pos, int rows, void* stream) {
+    if ((n & 31) != 0) throw std::invalid_argument("store_q4: n is not a multiple of 32");
+    const int nb = n >> 5;
+    const size_t all = (size_t) nb * rows;
+    if (!all) return;
+    store_q4_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(x, out + (size_t) pos * nb, n, rows, nb);
+}
+
+void store_q4_at(const float* x, block_q4_0* out, int n, const long long* at, int rows, int ring,
+                 void* stream) {
+    if ((n & 31) != 0) throw std::invalid_argument("store_q4_at: n is not a multiple of 32");
+    const int nb = n >> 5;
+    const size_t all = (size_t) nb * rows;
+    if (!all) return;
+    store_q4_at_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(x, out, n, rows, nb, at, ring);
+}
+
+void dequant_q4_to_q8(const block_q4_0* in, int8_t* codes, uint16_t* scales, int n, int rows, void* stream,
+                      const long long* at) {
+    if ((n & 31) != 0) throw std::invalid_argument("dequant_q4_to_q8: n is not a multiple of 32");
+    const int nb = n >> 5;
+    const size_t all = (size_t) nb * rows;
+    if (!all) return;
+    dequant_q4_to_q8_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(in, codes, (half*) scales, n, rows, nb, at);
+}
+
 void dsa_attend(void* blas, const float* q, const uint16_t* cache, const int32_t* sel, int sel_stride, int top_rows,
                 int kpool, int64_t pos, int rows, int dense_rows, float* keys, float* score, int chunk, float* out,
                 int rank, int n_head, float scale, void* stream) {
@@ -3378,20 +3569,27 @@ void add_bias(const float* b, float* acc, int n, int rows, void* stream) {
 void head_norm_rope(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
                     float theta_scale, int64_t pos, int rows, float eps, void* stream, const float* freq,
                     const int32_t* axes, int sections, const long long* at) {
-    head_norm_rope_kernel<<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
-        x, x_stride, w, y, dim, heads, n_rot, theta_scale, freq, (long long) pos, eps, axes, sections, at);
+    head_norm_rope_kernel<false><<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
+        x, x_stride, w, y, dim, heads, n_rot, theta_scale, freq, (long long) pos, eps, axes, sections, at, 0, RopeYarn{});
+}
+
+void head_norm_rope_yarn(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
+                         float theta_scale, int64_t pos, int rows, float eps, void* stream, const RopeYarn& yarn,
+                         const long long* at) {
+    head_norm_rope_kernel<true><<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
+        x, x_stride, w, y, dim, heads, n_rot, theta_scale, nullptr, (long long) pos, eps, nullptr, 1, at, 0, yarn);
 }
 
 void head_norm_rope_rows(const float* x, int x_stride, const float* w, float* y, int dim, int heads, int n_rot,
                          float theta_scale, int rows, float eps, void* stream, int sections, const long long* turns) {
-    head_norm_rope_kernel<<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
-        x, x_stride, w, y, dim, heads, n_rot, theta_scale, nullptr, 0LL, eps, nullptr, sections, turns, 2);
+    head_norm_rope_kernel<false><<<rows * heads, dim >= 256 ? 256 : 128, 0, cs(stream)>>>(
+        x, x_stride, w, y, dim, heads, n_rot, theta_scale, nullptr, 0LL, eps, nullptr, sections, turns, 2, RopeYarn{});
 }
 
 void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int64_t pos, int rows, float* score,
             int chunk, float* out, int dim, int n_head, int kv_heads, float scale, void* stream, int window,
             int ring, bool whole, const long long* at, int room, size_t score_floats, Kvq8 kq8, Kvq8 vq8,
-            const float* sinks, size_t part_floats) {
+            const float* sinks, size_t part_floats, float* ml_out) {
     if (at && (room < 1 || (whole && rows > chunk)))
         throw std::invalid_argument("attend: a position on the card needs its room, and with `whole` one launch");
     if (dim % SCORE_VALUES || uintptr_t(q) % (SCORE_VALUES * sizeof(float)) || uintptr_t(kcache) % (SCORE_VALUES * 2))
@@ -3407,7 +3605,7 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
 #if defined(STRATA_USE_HIP)
     // STRATA_HIP_SPLIT_ATTEND=1 (opt-in): up to 4 tokens over a long q8_0 cache, heads of 256 values in groups of 8, in one flash-decoding pass that
     // reads each key and value once for all the tokens (hip_split_attend.cuh).  `part_floats` of `score` hold its partial sums.
-    if (kq && vq && part_floats > 0 && hip_split_attend::requested(std::getenv("STRATA_HIP_SPLIT_ATTEND"))) {
+    if (!ml_out && kq && vq && part_floats > 0 && hip_split_attend::requested(std::getenv("STRATA_HIP_SPLIT_ATTEND"))) {
         const int all = int(at ? room : pos + rows);
         if (all >= 4096 && hip_split_attend::fits(dim, n_head, kv_heads, all, std::min(rows, hip_split_attend::kMaxRows), window, ring, whole,
                                                   sinks != nullptr, part_floats)) {
@@ -3432,13 +3630,13 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
                     q, (const half*) kcache, (const half*) vcache, score, n_head, kv_heads, (long long) pos, first, c,
                     scale, blocks, at);
                 attn_join_kernel<64><<<join, JOIN_WARPS * WARP, 0, cs(stream)>>>(score, out, n_head, (long long) pos,
-                                                                                 first, c, blocks, at, sinks);
+                                                                                 first, c, blocks, at, sinks, ml_out);
             } else {
                 attn_split_kernel<128, 8><<<split, 8 * WARP, 0, cs(stream)>>>(
                     q, (const half*) kcache, (const half*) vcache, score, n_head, kv_heads, (long long) pos, first, c,
                     scale, blocks, at);
                 attn_join_kernel<128><<<join, JOIN_WARPS * WARP, 0, cs(stream)>>>(score, out, n_head, (long long) pos,
-                                                                                  first, c, blocks, at, sinks);
+                                                                                  first, c, blocks, at, sinks, ml_out);
             }
         }
         return;
@@ -3484,7 +3682,7 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
         float* wt = per >= 4 && size_t(kv_heads) * blocks * VALUE_QUERIES <= size_t(chunk - c) * n_head
                         ? score + size_t(c) * n_head * keys : nullptr;
         attn_softmax_kernel<<<dim3(n_head, c), 256, 0, cs(stream)>>>(score, keys, (long long) pos, first, c, window,
-                                                                    last, at, wt, per, sinks);
+                                                                    last, at, wt, per, sinks, ml_out);
         // Two blocks of queries a launch block read the values half as often, where the launch still has
         // blocks for most of the card's 36 multiprocessors: for Qwen3.6's two tokens they are half as many and
         // slower, for three or four tokens and for Gemma 4's full layers faster.
@@ -3599,6 +3797,13 @@ void attend_seqs(const AttnSeqs& a, int dim, int n_head, int kv_heads, float sca
     else
         attn_value_seqs_kernel<1><<<dim3(kv_heads * dims, most_blocks, a.n), VALUE_DIMS * VALUE_SHARES, 0,
                                     cs(stream)>>>(a, dim, n_head, kv_heads);
+}
+
+void merge_attn_piece(float* acc_out, float* acc_ml, const float* piece_out, const float* piece_ml, int rows,
+                      int n_head, int dim, void* stream) {
+    if (rows <= 0 || n_head <= 0 || dim <= 0) return;
+    merge_attn_piece_kernel<<<rows * n_head, 256, 0, cs(stream)>>>(
+        acc_out, acc_ml, piece_out, piece_ml, dim);
 }
 
 // The rows of a q8_0 cache a batch product is about to read, dequantized into the fp16 workspace it reads
@@ -4258,11 +4463,11 @@ void probe_mma_speed(double* mma_ms, double* dp4a_ms) {
 void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint16_t* vcache, int64_t pos, int rows,
                   float* score, size_t score_floats, float* work, float* out, int dim, int n_head, int kv_heads,
                   float scale, void* stream, int window, int ring, bool whole, Kvq8 kq8, Kvq8 vq8, uint16_t* kwork,
-                  uint16_t* vwork, size_t work_halves, const float* sinks) {
+                  uint16_t* vwork, size_t work_halves, const float* sinks, float* ml_out) {
     const int per = n_head / kv_heads, width = kv_heads * dim;
     // The fp16-only dim==64 fast path reads the fp16 caches, which are null under q8 (a q8 cache is load-restricted
     // to qwen35moe's head_dim 128, so it never reaches here); guard explicitly so it is provably not taken for q8.
-    if (dim == 64 && per == 4 && window == 0 && ring == 0 && !whole && !sinks && kq8.codes == nullptr &&
+    if (dim == 64 && per == 4 && window == 0 && ring == 0 && !whole && !sinks && !ml_out && kq8.codes == nullptr &&
         vq8.codes == nullptr &&
         tensor_cores()) {
         attn_flash64_kernel<<<dim3(grid(rows, FLASH_TOKENS), kv_heads), 4 * WARP, 0, cs(stream)>>>(
@@ -4270,7 +4475,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
             scale * 1.44269504f);
         return;
     }
-    if (dim == 128 && per == 8 && !whole && kq8.codes == nullptr && vq8.codes == nullptr && kernels_ptx() >= 80) {
+    if (dim == 128 && per == 8 && !whole && !ml_out && kq8.codes == nullptr && vq8.codes == nullptr && kernels_ptx() >= 80) {
         // the device's own setting: asked on whichever card the call is for
         const cudaError_t e =
             cudaFuncSetAttribute(attn_flash128_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, FLASH128_SMEM);
@@ -4433,7 +4638,8 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
                                                                               int(cols));
         attn_scale_kernel<<<dim3(grid(dim, 256), c * n_head), 256, 0, cs(stream)>>>(og, sum, dim, true);
         attn_ungroup_kernel<<<dim3(grid(dim, 256), c * n_head), 256, 0, cs(stream)>>>(
-            og, out + size_t(first) * n_head * dim, dim, n_head, kv_heads, c);
+            og, out + size_t(first) * n_head * dim, dim, n_head, kv_heads, c, top, sum,
+            ml_out ? ml_out + 2 * size_t(first) * n_head : nullptr);
     }
 }
 
@@ -4448,6 +4654,12 @@ void likeliest(const float* logits, int n, Likeliest* out, void* stream) {
 void mul_sigmoid(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream) {
     for (int r = 0; r < rows; r += 65535)   // a grid has at most 65535 rows, and 4,096 tokens have 16 heads each
         mul_sigmoid_kernel<<<dim3(grid(n, 256), std::min(65535, rows - r)), 256, 0, cs(stream)>>>(
+            acc + size_t(r) * n, g + size_t(r) * g_stride, n, g_stride, one_gate);
+}
+
+void mul_softplus(float* acc, const float* g, int n, int rows, int g_stride, bool one_gate, void* stream) {
+    for (int r = 0; r < rows; r += 65535)   // a grid has at most 65535 rows: 1,024 tokens of 72 heads are 73,728
+        mul_softplus_kernel<<<dim3(grid(n, 256), std::min(65535, rows - r)), 256, 0, cs(stream)>>>(
             acc + size_t(r) * n, g + size_t(r) * g_stride, n, g_stride, one_gate);
 }
 

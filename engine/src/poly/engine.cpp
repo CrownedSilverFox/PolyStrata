@@ -9,6 +9,9 @@
 #include "kolibri1.hpp"
 #include "lfm2moe.hpp"
 #include "flint.hpp"
+#if !defined(STRATA_GPU_METAL)
+#include "laguna.hpp"   // CUDA and HIP: its YaRN turn and softplus gate have no Metal kernels yet
+#endif
 #include "mmq.hpp"
 #include "qwen35.hpp"
 #include "runtime.hpp"
@@ -1293,7 +1296,8 @@ void Engine::metal_cover(int64_t end) {
 
 void* Engine::kv_alloc(size_t bytes, int per) {
     if (again_ != SIZE_MAX) return bufs_.at(again_++).p;
-    const size_t all = (size_t) ((opt_.max_context + per - 1) / per) * bytes;
+    const int64_t cap_rows = opt_.kv_resident > 0 ? std::min<int64_t>(opt_.max_context, opt_.kv_resident) : opt_.max_context;
+    const size_t all = (size_t) ((cap_rows + per - 1) / per) * bytes;
 #if defined(STRATA_GPU_METAL)
     if (opt_.metal_balanced && opt_.kv_grow) {
         const size_t capacity = (size_t) ((kv_rows_for(1) + per - 1) / per) * bytes;
@@ -1437,6 +1441,7 @@ void Engine::cover(int64_t end) {
 #endif
     kv_reach_ = std::max(kv_reach_, end);
     if (kv_.empty() || end <= kv_rows_) return;
+    if (opt_.kv_resident > 0 && kv_rows_ >= opt_.kv_resident) return;
     const int64_t rows = kv_rows_for(end);
     const auto size = [rows](const Kv& k) { return (size_t) ((rows + k.per - 1) / k.per) * k.bytes; };
     size_t more = 0, held = arena_.mapped + other_rows();
@@ -1465,7 +1470,9 @@ void Engine::cover(int64_t end) {
 }
 
 int64_t Engine::kv_rows_for(int64_t end) const {
-    return std::min<int64_t>(opt_.max_context, (end + kv_ahead() + kv_grow() - 1) / kv_grow() * kv_grow());
+    int64_t cap = opt_.max_context;
+    if (opt_.kv_resident > 0) cap = std::min<int64_t>(cap, opt_.kv_resident);
+    return std::min<int64_t>(cap, (end + kv_ahead() + kv_grow() - 1) / kv_grow() * kv_grow());
 }
 
 int64_t Engine::kv_grow() const { return opt_.batch > 0 ? kKvGrowBatch : kKvGrow; }
@@ -1766,9 +1773,21 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     const std::string name = arch ? arch->s : std::string();
     // Clover is a qwen35moe model trained to also guess a block of tokens at once (Qwen35)
     const bool qwen35 = name == "qwen35moe" || name == "clover_moe";
-    if (o.kv_format == KvFmt::kQ8_0 && !qwen35 && name != "kolibri1" && name != "flint" && name != "lfm2moe")
-        throw std::runtime_error("--kv q8_0 is supported for qwen35moe, kolibri1, flint and lfm2moe models in v1; "
-                                 "this is a '" + name + "' model");
+    if (o.kv_format == KvFmt::kQ8_0 && !qwen35 && name != "kolibri1" && name != "flint" && name != "lfm2moe" &&
+        name != "laguna")
+        throw std::runtime_error("--kv q8_0 is supported for qwen35moe, kolibri1, flint, lfm2moe and laguna models in "
+                                 "v1; this is a '" + name + "' model");
+    // q4_0 is Qwen35's (the other architectures read a q8_0 cache, not this one, and would run fp16 without a word)
+    if (o.kv_format == KvFmt::kQ4_0 && !qwen35)
+        throw std::runtime_error("--kv q4_0 is supported for qwen35moe models in v1; this is a '" + name + "' model");
+    // --kv-resident streams the attention caches from host RAM: Qwen35's (kv_stage_, the pinned rows)
+    if (o.kv_resident > 0 && !qwen35)
+        throw std::runtime_error("--kv-resident is supported for qwen35moe models in v1; this is a '" + name + "' model");
+#if defined(STRATA_GPU_METAL)
+    // their kernels (store_q4, dequant_q4_to_q8, merge_attn_piece) are CUDA and HIP only (metal/src/poly/unported.cpp)
+    if (o.kv_format == KvFmt::kQ4_0 || o.kv_resident > 0)
+        throw std::runtime_error("--kv q4_0 and --kv-resident have no Metal kernels yet");
+#endif
     // int8 and int8k are Gemma 4's: their readers are not the arithmetic q8_0's are, so a model takes one
     // family or the other rather than a choice between them.
     if (name != "gemma4" && (o.kv_format == KvFmt::kInt8 || o.kv_format == KvFmt::kInt8K))
@@ -1785,6 +1804,9 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
         if (name == "lfm2moe") return std::make_unique<Lfm2Moe>();
         if (name == "flint") return std::make_unique<Flint>();
         if (name == "kolibri1") return std::make_unique<Kolibri1>();
+#if !defined(STRATA_GPU_METAL)
+        if (name == "laguna") return std::make_unique<Laguna>();
+#endif
         throw std::runtime_error(o.model + " is a '" + name + "' model, which this engine does not run");
     };
     int cards = 1, devices = 1;
@@ -2864,6 +2886,7 @@ void Engine::load(const Options& o) {
     gpu::metal::set_scoped_residency(o.metal_balanced);
 #endif
     opt_ = o;
+    if ((!opt_.kv_grow || opt_.batch > 0) && opt_.kv_resident > 0) opt_.kv_resident = 0;
     asked_reserve_mib_ = o.vram_reserve_mib;
     if (opt_.max_context < 16) throw std::runtime_error("the context must be at least 16 tokens");
     if (opt_.prompt_batch < 1 || opt_.prompt_batch > 4096)
@@ -5803,6 +5826,7 @@ void Engine::run(const int32_t* tokens, int n) {
     const size_t wn = (size_t) opt_.window, recs = 3 * wn + (size_t) opt_.batch + 1;   // step()'s rows after
     const auto up = [&](int il, int m, size_t rec) {
         Layer& L = layers_[(size_t) il];
+        prefetch_layer(il, m);
         const size_t head = (size_t) head_key(il, m) * recs + rec;
         if (replay && L.fixed) replayed(L.heads, head, [&] { layer_head(L, il, m); });
         else layer_head(L, il, m);

@@ -41,8 +41,9 @@ void store_q8_at(const float* x,int8_t* codes,uint16_t* scales,int n,const long 
 }
 void attend(const float* q,const uint16_t* k,const uint16_t* v,int64_t pos,int rows,float*,int,float* out,
             int dim,int heads,int kv,float scale,void* s,int window,int ring,bool whole,const long long* at,int room,size_t,
-            Kvq8 kq,Kvq8 vq,const float* sinks,size_t) {
+            Kvq8 kq,Kvq8 vq,const float* sinks,size_t,float* ml_out) {
     if(dim<=0 || dim>1024 || dim%4 || kv<=0 || heads%kv) throw std::invalid_argument("Metal attention shape");
+    if(ml_out) throw std::invalid_argument("Metal attention has no streamed pieces (--kv-resident)");
     if((kq.rs && kq.rs!=size_t(kv)*dim) || (vq.rs && vq.rs!=size_t(kv)*dim))
         throw std::invalid_argument("Metal q8 cache rows are kv_heads * dim codes apart");
     if(sinks) throw std::invalid_argument("Metal attention has no attention sinks (Flint)");
@@ -85,7 +86,8 @@ size_t attend_split_floats(int,int,int,int) { return 0; } // online softmax has 
 // else attend()
 void attend_batch(void*,const float* q,const uint16_t* k,const uint16_t* v,int64_t pos,int rows,float* score,
                   size_t score_n,float*,float* out,int dim,int heads,int kv,float scale,void* s,int window,int ring,
-                  bool whole,Kvq8 kq,Kvq8 vq,uint16_t*,uint16_t*,size_t,const float* sinks) {
+                  bool whole,Kvq8 kq,Kvq8 vq,uint16_t*,uint16_t*,size_t,const float* sinks,float* ml_out) {
+    if(ml_out) throw std::invalid_argument("Metal attention has no streamed pieces (--kv-resident)");
     static const std::string source=metal_detail::read_source(STRATA_POLY_FLASH_SOURCE);
     static const bool ready=[] {
         std::string error;
