@@ -152,10 +152,12 @@ struct VitGpuImpl {
     // on the GPU: Qwen3.6 on the M5 Ultra 972 ms at 8M, 808 at 32M, 778 at 64M, 856 at 256M (1,900 tokens: 711, 585, 590, 594; 1,024 tokens 154, 140)
     size_t kScoreElems = (size_t) 32 << 20;
     size_t kScoreElemsLarge = (size_t) 256 << 20;    // above 16,384 patches (512 MB of F16; the SYCL tower's choice; vit_gpu.cu takes 512M on CUDA / HIP)
-    // f32_scores(): 128M (512 MB of float32 scores, 256 MB of F16 probabilities) when the picture has that many.  A chunk of P V products is the queries
-    // of the chunk by a head's width (72): the 8M chunk's 64 queries left that product 32 groups on the GPU (Gemma 4, 8,928 patches on the M5 Ultra:
-    // attention 940 ms a picture at 16M, 780 at 32M, 690 at 64M, 640 at 128M; scores and probabilities pass through memory, which the time then follows)
-    size_t kScoreElemsF32 = (size_t) 128 << 20;
+    // Gemma 4's float32 scores: 64M (256 MB of scores, 128 MB of F16 probabilities).  A chunk of P V products is the queries of the chunk by a head's
+    // width (72), so a small chunk leaves the GPU idle; each 16M more is 96 MB more of the reader's peak.  Exact.png (8,928 patches) on the M5 Ultra, the
+    // whole picture / peak footprint: 32M 1,004 ms / 0.79 GiB, 48M 944 / 0.90, 64M 920 / 0.98, 128M 880 / 1.37; poly.10's reader 965 ms / 1.80 GiB.
+    // 64M keeps a few per cent of speed over poly.10's reader (48M is the smallest chunk still faster) at about half its memory.
+    // MiniCPM-V reads a tile of about a slice (1,024 patches, 17M scores) at a time: the 32M chunk of the F16 scores holds it.
+    size_t kScoreElemsF32 = (size_t) 64 << 20;
     bool scores_env = false;
     int n_pad = 0, q_align = 0;
     int pad_for(size_t n) const { return n_pad ? n_pad : n > 16384 ? 64 : 8; }
@@ -377,7 +379,7 @@ struct VitGpuImpl {
         const size_t N = (size_t) patches, D = (size_t) g.width, F = (size_t) std::max(g.ffn, g.merger_hidden);
         const size_t K0 = (size_t) 3 * g.patch * g.patch;
         const size_t Np = padded(N);
-        const size_t budget = scores_env ? kScoreElems : f32_scores() ? kScoreElemsF32 : N > 16384 ? kScoreElemsLarge : kScoreElems;
+        const size_t budget = scores_env ? kScoreElems : gemma() ? kScoreElemsF32 : N > 16384 ? kScoreElemsLarge : kScoreElems;
         sp_elems = std::min<size_t>((size_t) g.heads * N * Np, std::max<size_t>(budget, (size_t) g.heads * Np * 64));
         const size_t R = std::min<size_t>(N, (size_t) kRows);
         const size_t ctx_elems = std::max({N * D, N * K0, (N / 4) * (size_t) g.out_dim});
