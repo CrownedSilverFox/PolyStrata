@@ -122,6 +122,13 @@ FLINT_SEQUENCE = (
     r"|\s+",
 )
 
+# The `qwen2` pre-tokenizer (Qwen2 / Qwen3-Next; llama.cpp LLAMA_VOCAB_PRE_TYPE_QWEN2,
+# `.ref`-equivalent src/llama-vocab.cpp L391-398, fetched master 2026-11-12).  It is the `qwen35` pattern
+# WITHOUT `p{M}`: same contraction classes, same digit/punctuation/whitespace arms.  The two families differ
+# only in how combining marks group, which is exactly the difference the qwen35 note above says is invisible
+# to round-tripping on ASCII-shaped text - so the rule is transcribed, not inferred, and the pack's own
+# tokenizer is checked against the HF oracle's ids.  llama.cpp maps the names `qwen2`, `deepseek-r1-qwen`,
+# `kormo` and `f2llmv2` to this one rule; only names we have round-tripped are claimed here.
 # The `kolibri1` pre-tokenizer (Kolibri 1), from llama.cpp's LLAMA_VOCAB_PRE_TYPE_QWEN2: the patch that adds the
 # architecture gives its pre-tokenizer that type ("same split regex as qwen2"), so the letters are cut without the
 # combining marks that Qwen 3's pattern keeps with them.
@@ -136,7 +143,8 @@ QWEN2_PATTERN = (
 )
 
 PRE_PATTERNS = {"glm4": GLM4_PATTERN, "glm5": GLM4_PATTERN,   # every other name: QWEN35_PATTERN, as before
-                "gemma4": GEMMA4_PATTERN, "lfm2": GLM4_PATTERN, "kolibri1": QWEN2_PATTERN}
+                "gemma4": GEMMA4_PATTERN, "lfm2": GLM4_PATTERN, "kolibri1": QWEN2_PATTERN,
+                "qwen2": QWEN2_PATTERN}
 PRE_SEQUENCES = {"joyai-llm": DEEPSEEK3_SEQUENCE, "deepseek-v3": DEEPSEEK3_SEQUENCE, "flint": FLINT_SEQUENCE}
 IGNORE_MERGES = ("glm4", "glm5", "lfm2")
 RAW = ("gemma4",)                      # vocabularies of UTF-8 pieces
@@ -153,6 +161,8 @@ DEEPSEEK3_PATTERNS = (
     r"[!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~][A-Za-z]+|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+"
     r"| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
 )
+
+
 
 
 def _sequence_findall(patterns, text: str) -> list[str]:
@@ -179,11 +189,13 @@ class UnknownPreTokenizer(ValueError):
 
 
 def pre_tokenizer_kind(pre) -> str | None:
-    """The splitting rule `pre` (the GGUF's tokenizer.ggml.pre, or a pack's tokenizer.json "pre") stands for: "qwen35", "deepseek3", or
+    """The splitting rule `pre` (the GGUF's tokenizer.ggml.pre, or a pack's tokenizer.json "pre") stands for: "qwen35", "qwen2", "deepseek3", or
     None for a type this file does not know.  An empty or missing value is the qwen35 default, as it always was."""
     p = "qwen35" if pre is None or pre == "" else str(pre)
     if p == "qwen35":
         return "qwen35"
+    if p == "qwen2":
+        return "qwen2"
     if p.startswith("deepseek"):
         return "deepseek3"
     # the types PolyStrata's models name, each with its rule in the tables above (GLM, Flint, DeepSeek V4, LFM2, Gemma 4)
