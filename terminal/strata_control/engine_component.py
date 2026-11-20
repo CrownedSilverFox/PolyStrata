@@ -49,7 +49,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from strata_control import acquisition, longpath
+from strata_control import acquisition, longpath, paths
 from strata_control.targets import BACKEND_MATRIX, backend_supported, host_platform
 
 SCHEMA_VERSION = 2
@@ -185,8 +185,8 @@ def components_dir(environ=None, *, windows: bool | None = None, home: Path | No
     windows = os.name == "nt" if windows is None else windows
     home = Path.home() if home is None else home
     if windows:
-        return Path(environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) / "Strata" / "components"
-    return Path(environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")) / "strata" / "components"
+        return Path(environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) / paths.APP_NAME / "components"
+    return Path(environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")) / paths.XDG_NAME / "components"
 
 
 def engine_dir(root: Path | None = None) -> Path:

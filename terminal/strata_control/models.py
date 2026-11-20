@@ -45,8 +45,8 @@ SUPPORTED_SELECTIONS = frozenset({"qwen/Q2_0", "qwen/IQ2_XS", "qwen/IQ3_XXS", "q
 
 
 def settings_path() -> Path:
-    """The user's Strata settings file: the same place setup.py writes it (%APPDATA%/Strata/settings.json, or
-    $XDG_CONFIG_HOME/strata/settings.json). The desktop app sets STRATA_SETTINGS_FILE to a file of its own (in its data folder), so it
+    """The user's PolyStrata settings file: the same place setup.py writes it (%APPDATA%/PolyStrata/settings.json, or
+    $XDG_CONFIG_HOME/polystrata/settings.json). The desktop app sets STRATA_SETTINGS_FILE to a file of its own (in its data folder), so it
     never reads an older command-line install's list of Strata folders."""
     return discovery.own_settings_file()
 

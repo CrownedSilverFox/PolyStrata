@@ -7,14 +7,15 @@ Three kinds of place hold a model's run config (`strata-<tag>.json`), looked at 
 * here       the Terminal's own folder, when it has run configs (a source checkout that ran setup);
 * remembered the folders earlier Strata installs wrote into the user's settings file (``installs``);
 * app        the desktop app's install folder, which the Terminal shares: ``<components>/../install`` (Windows
-             ``%LOCALAPPDATA%\\Strata\\install``, Linux and Mac ``$XDG_DATA_HOME/strata/install``, default ``~/.local/share/strata/install``).
+             ``%LOCALAPPDATA%\\PolyStrata\\install``, Linux and Mac ``$XDG_DATA_HOME/polystrata/install``, default
+             ``~/.local/share/polystrata/install``; strata_control/paths.py names PolyStrata's folders).
              The app's own settings file (``app-settings.json`` beside it) names its data folder and installs.
 
 The desktop app itself (it sets STRATA_SETTINGS_FILE) never adopts an older command-line install, so for it only the explicit place, its
 own install folder and its own settings file count. Everything here is read-only: nothing is created, copied or moved.
 
 The data folder (models, packs, mtp) is found the same way: the person's own setting first, then the app's data folder, then a
-``Documents/Strata`` folder that holds models, then the default beside the install. A model that is installed tells where it really is
+``Documents/PolyStrata`` folder that holds models, then the default beside the install. A model that is installed tells where it really is
 (its run config names its files), which beats all of these.
 """
 
@@ -25,6 +26,8 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from strata_control.paths import APP_NAME, XDG_NAME
 
 # What setup still has to fetch for an installed model whose helper files are gone (setup.py: tools/mtp_fetch.py reads the 31 MTP tensors of
 # the pinned checkpoint, 5.214 GB, and packs them into a 0.9 GB draft layer; the picture reader is one 0.9 GB file).
@@ -63,7 +66,7 @@ def in_app_mode(environ=None) -> bool:
 
 
 def documents_dirs(environ=None, *, windows: bool | None = None, home: Path | None = None) -> list[Path]:
-    """The person's Documents folder(s): where the desktop app keeps ``Strata`` by default (Windows may redirect Documents to OneDrive)."""
+    """The person's Documents folder(s): where the desktop app keeps ``PolyStrata`` by default (Windows may redirect Documents to OneDrive)."""
     environ = os.environ if environ is None else environ
     home = _home(home)
     out: list[Path] = []
@@ -122,14 +125,15 @@ def _installs_in(settings: dict) -> list[Path]:
 
 
 def own_settings_file(environ=None, *, windows: bool | None = None, home: Path | None = None) -> Path:
-    """The settings file this process uses: the app's (STRATA_SETTINGS_FILE), else the command-line Strata's (%APPDATA% / ~/.config)."""
+    """The settings file this process uses: the app's (STRATA_SETTINGS_FILE), else the command-line install's (%APPDATA% / ~/.config), the one
+    setup.py writes (setup.settings_path() is this function)."""
     environ = os.environ if environ is None else environ
     if environ.get("STRATA_SETTINGS_FILE"):
         return Path(environ["STRATA_SETTINGS_FILE"])
     home = _home(home)
     if _windows(windows):
-        return Path(environ.get("APPDATA") or str(home / "AppData" / "Roaming")) / "Strata" / "settings.json"
-    return Path(environ.get("XDG_CONFIG_HOME") or str(home / ".config")) / "strata" / "settings.json"
+        return Path(environ.get("APPDATA") or str(home / "AppData" / "Roaming")) / APP_NAME / "settings.json"
+    return Path(environ.get("XDG_CONFIG_HOME") or str(home / ".config")) / XDG_NAME / "settings.json"
 
 
 def has_configs(directory: Path) -> bool:
@@ -271,13 +275,13 @@ def data_dir_choices(*, environ=None, windows: bool | None = None, home: Path | 
     out.extend((p, src) for p, src, _ in entries)
     if not in_app_mode(environ):
         for d in documents_dirs(environ, windows=windows, home=home):
-            out.append((d / "Strata", "documents"))
+            out.append((d / APP_NAME, "documents"))
     return out
 
 
 def data_dir(default: Path, *, environ=None, windows: bool | None = None, home: Path | None = None) -> tuple[Path, str]:
     """(the data folder, source). Of the Terminal's own setting and the app's folder the one changed last wins (the other file is brought up
-    to date); then a ``Documents/Strata`` that holds models; else `default`."""
+    to date); then a ``Documents/PolyStrata`` that holds models; else `default`."""
     sync_data_dir(environ=environ, windows=windows, home=home)
     choices = data_dir_choices(environ=environ, windows=windows, home=home)
     for path, source in choices:

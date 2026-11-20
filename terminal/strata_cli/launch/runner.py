@@ -546,7 +546,7 @@ def take_server_options(a_changes: dict) -> dict:
     return out
 
 
-#: #5858: run-defaults.json, user-wide server settings for every `strata launch` (beside launch-presets/: ~/.config/strata or %APPDATA%\\Strata).
+#: #5858: run-defaults.json, user-wide server settings for every `strata launch` (beside launch-presets/: ~/.config/polystrata or %APPDATA%\\PolyStrata).
 #: The Settings view's server keys (serve/runconfig.EDITABLE, checked with its rules) and undeclared_tool_calls; not "mtp", "open_browser" or
 #: engine options. Lowest precedence: the model's installed config, the Settings view's saved values and this launch's own choices come first.
 USER_DEFAULTS_FILE = "run-defaults.json"
@@ -1421,7 +1421,7 @@ class Runner:
                     src = Path(source).resolve()
                 except (OSError, TypeError):
                     continue
-                if here == src or here == src / "Strata-data":
+                if here == src or here == src / "PolyStrata-data":
                     return None                              # setup reuses it: the plan's installed answer is the start's
             return found
         except Exception:                                    # noqa: BLE001 - a plan line, never a reason to stop

@@ -247,9 +247,9 @@ class Where(unittest.TestCase):
         self.assertEqual(ec.components_dir({"STRATA_COMPONENTS_DIR": "/x/y"}), Path("/x/y"))
         win = ec.components_dir({"LOCALAPPDATA": "C:\\L"}, windows=True)
         self.assertEqual(win.name, "components")
-        self.assertEqual(win.parent.name, "Strata")
+        self.assertEqual(win.parent.name, "PolyStrata")
         posix = ec.components_dir({"XDG_DATA_HOME": "/d"}, windows=False)
-        self.assertEqual(posix.as_posix(), "/d/strata/components")
+        self.assertEqual(posix.as_posix(), "/d/polystrata/components")
 
     def test_backend_override_is_validated(self):
         self.assertEqual(ec.detect_backend({"STRATA_ENGINE_BACKEND": "HIP"}), ("hip", "environment"))

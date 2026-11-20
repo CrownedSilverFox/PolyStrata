@@ -7885,12 +7885,9 @@ def app_settings_file() -> Path | None:
 
 
 def settings_path() -> Path:
-    own = app_settings_file()
-    if own is not None:
-        return own
-    if WIN:
-        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "PolyStrata" / "settings.json"
-    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "polystrata" / "settings.json"
+    """The app's STRATA_SETTINGS_FILE, else PolyStrata's own settings file: the Terminal reads the same one (one definition)."""
+    from strata_control import discovery
+    return discovery.own_settings_file(windows=WIN)
 
 
 def load_settings() -> dict:

@@ -159,9 +159,9 @@ class Lifeline(unittest.TestCase):
         self.assertTrue(self.wait_gone(info["child"]), "end_children at exit must stop what is still running")
 
     def test_the_child_is_recorded_while_it_runs_and_forgotten_after(self):
-        from strata_control import procs
+        from strata_control import paths, procs
         proc, info = self.launch("sleep")
-        base = Path(self.temp.name) / "PolyStrata" / "procs" if not POSIX else Path(self.temp.name) / "strata" / "procs"
+        base = Path(self.temp.name) / (paths.XDG_NAME if POSIX else paths.APP_NAME) / "procs"
         record = base / f"{info['child']}.json"
         deadline = time.monotonic() + 5
         while not record.exists() and time.monotonic() < deadline:

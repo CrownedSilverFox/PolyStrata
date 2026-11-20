@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from strata_control import paths
+
 ENV_GUARD = "STRATA_HANDOVER"
 ENV_OFF = "STRATA_NO_HANDOVER"
 ENV_CHECKOUT = "STRATA_HANDOVER_IN_CHECKOUT"         # tests only: allow a hand-over from a source checkout
@@ -38,8 +40,8 @@ def components_dir(environ=None) -> Path:
         return Path(environ["STRATA_COMPONENTS_DIR"])
     home = Path.home()
     if os.name == "nt":
-        return Path(environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) / "Strata" / "components"
-    return Path(environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")) / "strata" / "components"
+        return Path(environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) / paths.APP_NAME / "components"
+    return Path(environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")) / paths.XDG_NAME / "components"
 
 
 def version_key(text) -> tuple[int, ...] | None:
