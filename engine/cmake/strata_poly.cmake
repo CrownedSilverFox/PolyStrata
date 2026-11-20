@@ -239,6 +239,11 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_include_directories(poly_attend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                      ${_strata_gpu_include_directories})
   target_link_libraries(poly_attend_test PRIVATE ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+  # a streamed cache's attention (--kv-resident): pieces merged by their (max, sum) against one call; needs a card
+  add_executable(poly_merge_attn_test src/poly/merge_attn_test.cu src/poly/kernels.cu)
+  target_include_directories(poly_merge_attn_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                          ${_strata_gpu_include_directories})
+  target_link_libraries(poly_merge_attn_test PRIVATE ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
   add_executable(poly_hip_value_split_test src/poly/hip_value_split_test.cu src/poly/kernels.cu)
   target_include_directories(poly_hip_value_split_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                             ${_strata_gpu_include_directories})
