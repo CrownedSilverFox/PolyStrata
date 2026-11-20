@@ -1098,13 +1098,37 @@ class StrataEngine:
                 except (IndexError, ValueError):
                     pass
             lines.put(line)
+        unasked = False
         if self.proc is proc:                           # a killed engine's pump must not mark its successor dead
+            # the server sets one of these before it ends the engine itself (close, restart, a lost step, FATAL)
+            unasked = not getattr(self, "ended", False) and not getattr(self, "closing", False)
             self.ended = True                           # its output closed: it is gone, even before the OS says so
             if line and line.startswith("ERR"):         # #997 #890: why it exited, though no request may read it
                 self.last_err = line[4:].strip()        # (a failed batch window: every request reads its slot)
         lines.put(None)
         for q in slot_q:
             q.put(None)
+        if unasked:
+            self._note_unasked_exit(proc, log)
+
+    @staticmethod
+    def _note_unasked_exit(proc, log) -> None:
+        """#195: an engine that ended while the server was not ending it, idle or not, is named with the time and its
+        exit status in the server's output and in its own log.  An idle one left nothing behind before: /health said
+        loaded until it did not, and the engine log just stopped."""
+        try:
+            words = engine_exit_words(proc.wait(timeout=5))
+        except Exception:                               # noqa: BLE001 - a note must never stop the pump's end
+            words = ""
+        msg = (f"[strata] {time.strftime('%Y-%m-%d %H:%M:%S')} the engine ended without the server asking it to "
+               f"({words or 'its exit status could not be read'}); the next request starts it again")
+        print(msg, flush=True)
+        if log not in (None, subprocess.DEVNULL):
+            try:
+                log.write(msg + "\n")
+                log.flush()
+            except (OSError, ValueError):               # a closed log: the line above is what is left
+                pass
 
     def death_note(self) -> str:
         """Why the engine most likely ended, from the end of its log: its own watchdog (issue #29), else RAM."""

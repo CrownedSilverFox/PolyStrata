@@ -688,6 +688,11 @@ protected:
     Mapped prompt_map_;
     size_t prompt_bytes_ = 0;
     bool prompt_lends_ = false, prompt_lent_ = false;
+    /// The prompt products' work memory (Mmq::give()) where the prompt's buffers are lent: lent with them, and
+    /// from the start (alloc()).
+    Mapped work_map_;
+    size_t work_bytes_ = 0;
+    bool work_lent_ = false;
     void take_prompt();
     void lend_prompt();
     /// The scratch in two layouts (scratch_layouts()): one for a call of fewer than kStageRows tokens, which stays,
@@ -953,6 +958,7 @@ protected:
     float *r_ = nullptr, *cur_ = nullptr, *xn_ = nullptr, *ao_ = nullptr, *fo_ = nullptr;
     float* wf_ = nullptr;      ///< the largest BF16 matrix as floats: lin() multiplies a prompt batch by cuBLAS
     size_t bf16_max_ = 0;      ///< that matrix's values
+    std::vector<Dev> mats_;    ///< the quantized matrices upload() put in VRAM, lin()'s (alloc() makes room for them)
     float *g_ = nullptr, *u_ = nullptr, *h_ = nullptr, *d_ = nullptr, *rl_ = nullptr,
           *logits_ = nullptr;
     void *xq_ = nullptr, *q8_ = nullptr;
