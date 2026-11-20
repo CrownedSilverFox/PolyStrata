@@ -159,7 +159,7 @@ class MacReader(unittest.TestCase):
     def test_cpu_asked_is_kept_with_the_time_it_takes(self):
         r = VR.choose(folder("strata-vision"), "cpu", windows=False, mac=True)
         self.assertEqual((r.mode, r.exe.name, r.cpu_exe), ("cpu", "strata-vision", None))
-        self.assertIn("50 seconds", r.note)
+        self.assertIn("on the CPU takes about a second", r.note)
         self.assertFalse(VR.vision_section(r, {})["gpu"])
 
     def test_an_engine_without_the_reader_gets_pictures_off(self):

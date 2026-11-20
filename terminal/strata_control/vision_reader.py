@@ -8,11 +8,11 @@ reader as its fallback (`vision.cpu_exe`); the server (serve/server.py, Vision) 
 log line, when the GPU reader does not start: the HIP runtime does not load, the card is not one the build has code for
 (the reader says so before it runs a kernel), or the card is busy.  Nothing is asked of the user.
 
-A Mac has one program for both: `strata-vision` is built with Metal, `--gpu` reads on the Mac's GPU and without it on the CPU, so the
-CPU reader is the same file and the fallback needs no second program.  Unified memory changes the 24 GB rule: nothing is taken from a
-separate card, the reader's ~1.1 GB is the mmproj file itself on either side (measured on an M4, footprint 1,050 MB on the CPU, 1,179 MB
-on the GPU), and the CPU reader takes ~50 s for a 260-token picture where the GPU one takes 0.45 s (ggml has no BF16 vector kernel on
-ARM).  So a Mac reads on the GPU unless the person asks for the CPU.
+A Mac has one program for both: `strata-vision` is Strata's own vision towers with their Metal kernels built in, `--gpu` reads on the
+Mac's GPU and without it on the CPU, so the CPU reader is the same file and the fallback needs no second program.  Unified memory changes
+the 24 GB rule: nothing is taken from a separate card.  Measured on an M5 Ultra with Qwen3.6's mmproj (F16, 899 MB) and a 256-token
+picture: peak footprint 1,032 MB on the CPU and 1,703 MB on the GPU, 0.85 s a picture on the CPU and 0.03 s on the GPU.  So a Mac
+reads on the GPU unless the person asks for the CPU.
 
 An Intel Arc engine folder (engine-sycl/) carries the CPU reader; `strata-vision-sycl` (llama.cpp's SYCL backend, tools/vision with
 STRATA_VISION_SYCL, built by `setup --backend sycl --vision gpu` on a PC that has the oneAPI compiler) is the GPU reader there.
@@ -99,8 +99,8 @@ class Reader:
     note: str = ""                # one plain sentence for the setup output when it is not what was asked for
 
 
-MAC_CPU_NOTE = ("the picture reader on the CPU takes about 50 seconds for one picture on a Mac (the GPU reader: under a second): kept as "
-                "you chose; --vision gpu reads on the Mac's GPU")
+MAC_CPU_NOTE = ("the picture reader on the CPU takes about a second for one picture on an M5 Ultra and longer on a Mac with fewer "
+                "cores (the GPU reader: a few hundredths of a second): kept as you chose; --vision gpu reads on the Mac's GPU")
 
 
 def choose(folder: Path | str, asked: str, *, windows: bool, gpu_arch: str = "", archs: list | None = None, mac: bool = False) -> Reader:
