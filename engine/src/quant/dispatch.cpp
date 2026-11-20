@@ -63,6 +63,14 @@ const DotKernel* dot_kernel(Type w, Arith a, Isa max_isa) noexcept {
 
 const DotKernel* dot_kernel(Type w, Arith a) noexcept { return dot_kernel(w, a, best_isa()); }
 
+DotRowsFn dot_rows_kernel(Type w, Arith a) noexcept {
+#ifdef STRATA_QUANT_X86_TIERS
+    if (a == Arith::Avx2 && isa_ok(Isa::Avx2)) return avx2_dot_rows(w);
+#endif
+    (void) w, (void) a;
+    return nullptr;
+}
+
 const ActKernel* act_kernel(Type act, Arith a, Isa max_isa) noexcept {
     const ActKernel* v[kMaxK];
     const int n = collect_acts(act, a, v, kMaxK);

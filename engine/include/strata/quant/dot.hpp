@@ -34,4 +34,10 @@ int dot_kernels(Type w, Arith a, const DotKernel** out, int cap) noexcept;
 /// The Generic scalar reference.  Aborts for a type without one.
 void dot_ref(Type w, int n, float* s, const void* wrow, const void* act);
 
+/// s[r] = dot(weight row w, activation row a[r]) for r < rows: each the bits dot_kernel(w, contract)->fn gives for
+/// that pair, with the weight row's blocks decoded once for all the rows.  nullptr where the layer has no such kernel
+/// for (w, contract) on this CPU: the caller then calls the one-row kernel rows times.
+using DotRowsFn = void (*)(int n, int rows, float* s, const void* w, const void* const* a);
+DotRowsFn dot_rows_kernel(Type w, Arith a) noexcept;
+
 }  // namespace strata::quant
