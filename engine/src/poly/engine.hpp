@@ -600,6 +600,7 @@ protected:
     ExpertScales expert_scales(const Layer& L, const int32_t* ids = nullptr) const;
     void fill_expert_cache();
     void ensure_stage();
+    void stage_pins();   ///< h_stage_, once an expert is staged
     void start_swaps();
     void plan_ahead(Layer& L, int il);
     void run(const int32_t* tokens, int n);
