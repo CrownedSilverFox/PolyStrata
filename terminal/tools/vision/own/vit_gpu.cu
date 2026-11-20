@@ -475,13 +475,13 @@ __global__ void k_cast(const float* __restrict__ in, size_t n, void* out, int ki
     for (size_t i = (size_t) blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (size_t) gridDim.x * blockDim.x) store_kind(out, i, in[i], kind);
 }
 
+#if defined(STRATA_VIT_HIP)
 // n 16-bit values (K_F16: F16, else BF16) to float32 (STRATA_VIT_HPA16: a product computed with float32 accumulation and a 16-bit result, widened back)
 __global__ void k_widen16(const uint16_t* __restrict__ in, size_t n, float* __restrict__ out, int kind) {
     for (size_t i = (size_t) blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (size_t) gridDim.x * blockDim.x)
         out[i] = kind == K_F16 ? __half2float(__ushort_as_half(in[i])) : __uint_as_float((uint32_t) in[i] << 16);
 }
 
-#if defined(STRATA_VIT_HIP)
 // The fused attention for gfx11 (RDNA3 / RDNA3.5: gfx1100-1103, gfx1150, gfx1151; STRATA_VIT_FA=1): S = Q K^T, the softmax and O = P V of a chunk of queries for
 // every head in one launch, flash-attention style, with the gfx11 WMMA instruction (16x16x16, F16 in, float32 accumulate, wave32).  One block = 4 waves =
 // 64 queries of one head; each wave owns 16 queries and walks the keys in tiles of kFaKeys.  Per tile: the scores of the wave's 16 queries (float32, never
