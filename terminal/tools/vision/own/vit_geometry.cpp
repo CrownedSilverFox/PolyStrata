@@ -77,6 +77,64 @@ bool gemma4_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
     return shape_is(gg, "mm.input_projection.weight", {W, g.out_dim}, err);
 }
 
+// MiniCPM-V 4.7's tower (mtmd's clip_graph_minicpmv4_6 with n_merge 4, llama.cpp 69f201a2): a SigLIP ViT (LayerNorm, q / k / v with
+// biases, a tanh-GELU MLP, a patch bias) with a learned position table of side pos_grid read through buckets; after layer insert_layer a
+// window merger (attention inside each 2x2 window, then the 2x2 windows' four rows concatenated through a LayerNorm and an MLP, plus
+// their mean); the remaining layers on the quarter grid; a post norm; a final 2x2 merger (LayerNorm, MLP with the erf GELU).  The text
+// separators between a picture's tiles are rows of v.tok_embd_sep.
+bool minicpmv47_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
+    g.fused_qkv = false;
+    g.patch_taps = 1;
+    g.merge = 4;
+    uint32_t u = 0;
+    if (gg.get_u32("clip.vision.projector.scale_factor", u)) g.merge = (int) u;
+    if (g.merge != 4) { err = "a minicpmv4_7 tower without the window merger (scale factor " + std::to_string(g.merge) + "), which this tower does not read"; return false; }
+    std::vector<int64_t> wa;
+    if (!gg.get_int_array("clip.vision.wa_layer_indexes", wa) || wa.empty() || wa[0] < 0 || wa[0] >= g.layers - 1) {
+        err = "the minicpmv4_7 tower names no usable layer for its window merger (clip.vision.wa_layer_indexes)";
+        return false;
+    }
+    g.insert_layer = (int) wa[0];
+    g.slice_size = g.image_size;
+    if (g.slice_size <= 0 || g.slice_size % g.align() != 0) { err = "the minicpmv4_7 tile size (clip.vision.image_size) is not a multiple of patch * 4"; return false; }
+    if (gg.get_u32("clip.vision.max_slice_nums", u) && u > 0 && u <= 64) g.max_slices = (int) u;
+    if (gg.tensor("v.pre_ln.weight")) { err = "a minicpmv4_7 tower with a norm before its first layer, which this tower does not read"; return false; }
+    const int64_t W = g.width, F = g.ffn, W4 = 4 * W;
+    if (!shape_is(gg, "v.patch_embd.weight", {g.patch, g.patch, 3, W}, err) || !shape_is(gg, "v.patch_embd.bias", {W}, err)) return false;
+    const GgufTensorInfo* pos = gg.tensor("v.position_embd.weight");
+    if (!pos || pos->ne.size() != 2 || pos->ne[0] != W) { err = "the vision projector's position table is missing or not [width, rows]"; return false; }
+    g.pos_grid = (int) std::lround(std::sqrt((double) pos->ne[1]));
+    if ((int64_t) g.pos_grid * g.pos_grid != pos->ne[1]) { err = "the position table's rows are not a square grid"; return false; }
+    auto ln = [&](const std::string& p, int64_t n) { return shape_is(gg, p + ".weight", {n}, err) && shape_is(gg, p + ".bias", {n}, err); };
+    auto lin = [&](const std::string& p, int64_t in, int64_t out) { return shape_is(gg, p + ".weight", {in, out}, err) && shape_is(gg, p + ".bias", {out}, err); };
+    for (int il = 0; il < g.layers; ++il) {
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        if (!ln(p + "ln1", W) || !ln(p + "ln2", W) || !lin(p + "attn_q", W, W) || !lin(p + "attn_k", W, W) || !lin(p + "attn_v", W, W) ||
+            !lin(p + "attn_out", W, W) || !lin(p + "ffn_up", W, F) || !lin(p + "ffn_down", F, W))
+            return false;
+        if (gg.tensor(p + "ffn_gate.weight") || gg.tensor(p + "ls1.weight") || gg.tensor(p + "ls2.weight")) {
+            err = "a minicpmv4_7 layer with a gate or layer scales, which this tower does not read";
+            return false;
+        }
+    }
+    const GgufTensorInfo* ds = gg.tensor("v.vit_merger.ds_ffn_up.weight");
+    if (!ds || ds->ne.size() != 2) { err = "the minicpmv4_7 tower lacks v.vit_merger.ds_ffn_up.weight"; return false; }
+    g.ds_ffn = (int) ds->ne[1];
+    if (!ln("v.vit_merger.ln1", W) || !lin("v.vit_merger.attn_q", W, W) || !lin("v.vit_merger.attn_k", W, W) || !lin("v.vit_merger.attn_v", W, W) ||
+        !lin("v.vit_merger.attn_out", W, W) || !ln("v.vit_merger.ds_ln", W4) || !lin("v.vit_merger.ds_ffn_up", W4, g.ds_ffn) ||
+        !lin("v.vit_merger.ds_ffn_down", g.ds_ffn, W) || !ln("v.post_ln", W) || !ln("mm.input_norm", W4))
+        return false;
+    const GgufTensorInfo* up = gg.tensor("mm.up.weight");
+    if (!up || up->ne.size() != 2 || up->ne[0] != W4) { err = "the minicpmv4_7 tower's mm.up.weight is missing or not [width * 4, hidden]"; return false; }
+    g.merger_in = (int) W4;
+    g.merger_hidden = (int) up->ne[1];
+    if (!lin("mm.up", W4, g.merger_hidden) || !lin("mm.down", g.merger_hidden, g.out_dim)) return false;
+    const GgufTensorInfo* sep = gg.tensor("v.tok_embd_sep");
+    if (!sep || sep->ne.size() != 2 || sep->ne[0] != g.out_dim || sep->ne[1] < 4) { err = "the minicpmv4_7 tower's separators (v.tok_embd_sep) are missing or not [width, 4]"; return false; }
+    g.seps = (int) sep->ne[1];
+    return true;
+}
+
 }  // namespace
 
 bool vit_geometry_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
@@ -112,6 +170,7 @@ bool vit_geometry_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
     g.act = use_gelu ? ActKind::GeluTanh : use_silu ? ActKind::Silu : ActKind::GeluQuick;   // llama.cpp's own default when neither is set
     g.norm = g.projector == "qwen2.5vl_merger" ? NormKind::RMSNorm : NormKind::LayerNorm;
     if (g.projector == "gemma4v") return gemma4_from_gguf(gg, g, err);
+    if (g.minicpmv()) return minicpmv47_from_gguf(gg, g, err);
 
     // the layer layout, from which tensors exist
     g.fused_qkv = gg.tensor(blk(0, "attn_qkv", "weight")) != nullptr;
@@ -168,6 +227,10 @@ bool vit_geometry_supported(const VitGeometry& g, std::string& why) {
     if (g.projector == "gemma4v") {
         if (g.head_dim % 4 != 0) { why = "a head size that is not a multiple of 4 (the 2D rotary turns half a head by each coordinate)"; return false; }
         if (g.pool < 1) { why = "no pool size"; return false; }
+        return true;
+    }
+    if (g.minicpmv()) {
+        if (g.act != ActKind::GeluTanh) { why = "an activation other than the tanh GELU"; return false; }
         return true;
     }
     if (g.projector != "qwen3vl_merger") { why = "projector type " + g.projector + " is not one of this tower's families"; return false; }

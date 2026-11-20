@@ -55,4 +55,17 @@ bool prepare_image(const ImageU8& src, const VitGeometry& g, int min_tokens, int
 // the size prepare_image would give (no pixels touched)
 Size2 prepared_size(int w, int h, const VitGeometry& g, int min_tokens, int max_tokens);
 
+// MiniCPM-V 4.7 (g.minicpmv()): mtmd's llava-uhd slicing for MiniCPM-V (mtmd_image_preprocessor_minicpmv).  A picture of at most one tile's
+// area becomes the overview alone, stretched (no padding) to the tile-sized shape of its aspect; a larger one an overview of that shape plus
+// grid_x * grid_y slices of one refined picture, row by row.  Sides are multiples of patch * 4, rounded half to even as Python's round().
+struct TiledImage {
+    PreparedImage overview;
+    std::vector<PreparedImage> slices;   // grid_y rows of grid_x, empty for a picture of one tile
+    int grid_x = 0, grid_y = 0;
+};
+bool prepare_tiles(const ImageU8& src, const VitGeometry& g, TiledImage& out, std::string& err);
+
+// the sizes prepare_tiles would give: the overview's, then one slice's (0 x 0 without slices) and the grid
+void tile_sizes(int w, int h, const VitGeometry& g, Size2& overview, Size2& slice, int& grid_x, int& grid_y);
+
 }  // namespace strata_vit

@@ -4,8 +4,9 @@
 // width, the norm, the activation and the image limits all come from the file.  What the code does know is the list of *operations* a
 // tower may be made of (see supported()): the Qwen3-VL family ("qwen3vl_merger": LayerNorm, fused QKV, 2D rotary, global
 // attention, a plain tanh-GELU MLP, a 2x2 merger) and Gemma 4's ("gemma4v": RMS norms, separate q/k/v with per-head norms, a 2D NeoX
-// rotary, post-norms, a gated FFN, x/y position tables, an average pool and a projection).  A tower of either family with other
-// numbers is a new file, not new code.
+// rotary, post-norms, a gated FFN, x/y position tables, an average pool and a projection) and MiniCPM-V 4.7's ("minicpmv4_7": a SigLIP
+// tower with a bucketed position table, a 2x2 window attention and downsample after one layer, then a 2x2 merger; a picture is cut into
+// tiles, see image_prep.h).  A tower of these families with other numbers is a new file, not new code.
 #pragma once
 
 #include "gguf_lite.h"
@@ -48,7 +49,13 @@ struct VitGeometry {
     int merger_hidden = 0;            // mm.0's output width
     int pool = 0;                     // gemma4v: the tokens averaged into one, pool x pool (= merge, clip.vision.projector.scale_factor); 0 none
     bool std_norm = false;            // gemma4v: v.std_bias and v.std_scale after the pool
+    int insert_layer = -1;            // minicpmv4_7: the window merger runs after this layer (clip.vision.wa_layer_indexes[0])
+    int ds_ffn = 0;                   // minicpmv4_7: the window merger's downsample MLP width
+    int slice_size = 0;               // minicpmv4_7: a tile's side in pixels (clip.vision.image_size)
+    int max_slices = 9;               // minicpmv4_7: tiles at most (clip.vision.max_slice_nums)
+    int seps = 0;                     // minicpmv4_7: rows of v.tok_embd_sep, the text separators written between tiles
 
+    bool minicpmv() const { return projector == "minicpmv4_7"; }
     // tokens a patch grid gives: (w / merge) * (h / merge) for a w x h patch grid
     int align() const { return patch * merge; }   // image sides are multiples of this
 };

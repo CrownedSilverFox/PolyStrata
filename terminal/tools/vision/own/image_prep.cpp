@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 #define STBI_NO_STDIO
 #define STB_IMAGE_STATIC            // private to this file: the mtmd build of strata-vision has its own copy of stb_image
@@ -209,18 +211,107 @@ Size2 prepared_size(int w, int h, const VitGeometry& g, int min_tokens, int max_
     return smart_resize(w, h, g.align(), min_px, max_px);
 }
 
+namespace {
+
+void normalise(const ImageU8& r, const VitGeometry& g, PreparedImage& out) {
+    out.w = r.w;
+    out.h = r.h;
+    const size_t n = (size_t) r.w * r.h;
+    out.chw.resize(3 * n);
+    for (size_t i = 0; i < n; ++i)
+        for (int c = 0; c < 3; ++c) out.chw[c * n + i] = ((float) r.rgb[i * 3 + c] / 255.0f - g.mean[c]) / g.stdv[c];
+}
+
+// mtmd_image_preprocessor_llava_uhd's helpers with MiniCPM-V's rounding (Python's round(): halves to even)
+int round_even(double v) {
+    const double fl = std::floor(v), diff = v - fl;
+    if (diff > 0.5) return (int) fl + 1;
+    if (diff < 0.5) return (int) fl;
+    return ((int64_t) fl % 2 == 0) ? (int) fl : (int) fl + 1;
+}
+
+int ensure_divide(int length, int align) { return std::max(round_even((double) length / align) * align, align); }
+
+Size2 best_resize(Size2 s, int side, int align, bool allow_upscale) {
+    int w = s.w, h = s.h;
+    if (w * h > side * side || allow_upscale) {
+        const float r = static_cast<float>(w) / h;
+        h = static_cast<int>(side / std::sqrt(r));
+        w = static_cast<int>(h * r);
+    }
+    return {ensure_divide(w, align), ensure_divide(h, align)};
+}
+
+Size2 best_grid(int max_slices, int multiple, float log_ratio) {
+    Size2 best{1, 1};
+    float min_error = std::numeric_limits<float>::infinity();
+    for (int n : {multiple - 1, multiple, multiple + 1}) {
+        if (n == 1 || n > max_slices) continue;
+        for (int m = 1; m <= n; ++m) {
+            if (n % m) continue;
+            const float error = std::abs(log_ratio - std::log(1.0 * m / (n / m)));
+            if (error < min_error) { best = {m, n / m}; min_error = error; }
+        }
+    }
+    return best;
+}
+
+}  // namespace
+
+void tile_sizes(int w, int h, const VitGeometry& g, Size2& overview, Size2& slice, int& grid_x, int& grid_y) {
+    const int side = g.slice_size, align = g.patch * 4;
+    const float ratio = (float) w * h / (side * side);
+    slice = {0, 0};
+    grid_x = grid_y = 0;
+    if (ratio <= 1.0f) {   // overview only (MiniCPM-V's override of llava-uhd, which slices once one side exceeds the tile)
+        overview = best_resize({w, h}, side, align, true);
+        return;
+    }
+    overview = best_resize({w, h}, side, align, false);
+    const float log_ratio = std::log((float) w / h);
+    const int multiple = (int) std::fmin(std::ceil(ratio), g.max_slices);
+    const Size2 grid = best_grid(g.max_slices, multiple, log_ratio);
+    const Size2 cell = best_resize({ensure_divide(w, grid.w) / grid.w, ensure_divide(h, grid.h) / grid.h}, side, align, true);
+    slice = cell;
+    grid_x = grid.w;
+    grid_y = grid.h;
+}
+
+bool prepare_tiles(const ImageU8& src, const VitGeometry& g, TiledImage& out, std::string& err) {
+    if (src.w <= 0 || src.h <= 0 || src.rgb.size() != (size_t) src.w * src.h * 3) { err = "the picture is empty"; return false; }
+    Size2 ov, cell;
+    int gx = 0, gy = 0;
+    tile_sizes(src.w, src.h, g, ov, cell, gx, gy);
+    ImageU8 r;
+    resize_bicubic(src, r, ov.w, ov.h);     // stretched: MiniCPM-V pads neither the overview nor the refined picture
+    normalise(r, g, out.overview);
+    out.grid_x = gx;
+    out.grid_y = gy;
+    out.slices.clear();
+    if (gx == 0) return true;
+    ImageU8 refined;
+    resize_bicubic(src, refined, cell.w * gx, cell.h * gy);
+    ImageU8 tile;
+    tile.w = cell.w;
+    tile.h = cell.h;
+    tile.rgb.resize((size_t) cell.w * cell.h * 3);
+    for (int ty = 0; ty < gy; ++ty)
+        for (int tx = 0; tx < gx; ++tx) {
+            for (int y = 0; y < cell.h; ++y)
+                std::memcpy(&tile.rgb[(size_t) y * cell.w * 3], &refined.rgb[((size_t) (ty * cell.h + y) * refined.w + (size_t) tx * cell.w) * 3], (size_t) cell.w * 3);
+            out.slices.emplace_back();
+            normalise(tile, g, out.slices.back());
+        }
+    return true;
+}
+
 bool prepare_image(const ImageU8& src, const VitGeometry& g, int min_tokens, int max_tokens, PreparedImage& out, std::string& err, ImageU8* resized) {
     if (src.w <= 0 || src.h <= 0 || src.rgb.size() != (size_t) src.w * src.h * 3) { err = "the picture is empty"; return false; }
     const Size2 t = prepared_size(src.w, src.h, g, min_tokens, max_tokens);
     if (t.w <= 0 || t.h <= 0) { err = "the picture has no usable size"; return false; }
     ImageU8 r;
     resize_pad_ceil(src, r, t);
-    out.w = t.w;
-    out.h = t.h;
-    const size_t n = (size_t) t.w * t.h;
-    out.chw.resize(3 * n);
-    for (size_t i = 0; i < n; ++i)
-        for (int c = 0; c < 3; ++c) out.chw[c * n + i] = ((float) r.rgb[i * 3 + c] / 255.0f - g.mean[c]) / g.stdv[c];
+    normalise(r, g, out);
     if (resized) *resized = std::move(r);
     return true;
 }

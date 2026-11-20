@@ -38,6 +38,19 @@ struct GemmaLayer {   // gemma4v: RMS norm weights, the per-head q / k norms, no
     Mat q, k, v, o, gate, up, down;
 };
 
+struct MiniLayer {    // minicpmv4_7: a SigLIP layer (LayerNorms, q / k / v / o with biases, a tanh-GELU MLP); the window merger's attention uses ln1, q..o
+    std::vector<float> ln1_w, ln1_b, ln2_w, ln2_b, q_b, k_b, v_b, o_b, up_b, down_b;
+    Mat q, k, v, o, up, down;
+};
+
+// ggml's erf GELU (FFN_GELU_ERF): 0.5 x (1 + erf(x / sqrt 2))
+void gelu_erf_rows(float* x, size_t ld, int rows, int n) {
+    for (int r = 0; r < rows; ++r) {
+        float* p = x + (size_t) r * ld;
+        for (int i = 0; i < n; ++i) p[i] = 0.5f * p[i] * (1.0f + std::erf(p[i] * 0.70710678118654752f));
+    }
+}
+
 // y = x / sqrt(mean(x^2) + eps) (* w), ggml_rms_norm's order: the sum in double, the scale in float
 void rms_row(const float* x, float* y, int n, const float* w, float eps) {
     double s = 0.0;
@@ -60,6 +73,10 @@ struct VitCpu::Impl {
     std::vector<GemmaLayer> glayers;          // gemma4v
     std::vector<float> std_bias, std_scale;   // gemma4v, when the file has them
     Mat proj;                                 // gemma4v: mm.input_projection
+    std::vector<MiniLayer> mlayers;           // minicpmv4_7
+    MiniLayer wm;                             // minicpmv4_7: the window merger's attention
+    std::vector<float> ds_ln_w, ds_ln_b, ds_up_b, ds_down_b, mmn_w, mmn_b, mm_up_b, mm_down_b;
+    Mat ds_up, ds_down, mm_up, mm_down;
     std::unique_ptr<Team> team;
     int team_threads = 0;
 
@@ -151,8 +168,53 @@ struct VitCpu::Impl {
         });
     }
 
+    // softmax(q k^T) v of every head over N tokens, the scale already in q: qkv rows [q | k | v] of 3 D floats (and a tile of slack after the
+    // last), ctx [N][D].  KT [H][HD][Np] and VP [H][N][HD] are scratch sized for N; sscr per thread.
+    void attention(const float* qkv, int N, float* ctx, std::vector<float>& KT, std::vector<float>& VP, std::vector<std::vector<float>>& sscr) {
+        const int D = g.width, H = g.heads, HD = g.head_dim, Np = (N + 63) / 64 * 64, OD = (HD + 15) / 16 * 16, QB = kQBDefault, tasks_q = (N + QB - 1) / QB;
+        const size_t D3 = (size_t) 3 * D;
+        const CpuOps& o = *ops;
+        {   // K transposed per head (KT[h][d][j]) and V packed per head (VP[h][j][d])
+            const int jb = 64, njb = (N + jb - 1) / jb;
+            team->run(H * njb, [&](int task, int) {
+                const int hh = task / njb, j0 = (task % njb) * jb, j1 = std::min(N, j0 + jb);
+                for (int j = j0; j < j1; ++j) {
+                    const float* kr = qkv + (size_t) j * D3 + D + (size_t) hh * HD;
+                    float* kt = KT.data() + (size_t) hh * HD * Np + j;
+                    for (int d = 0; d < HD; ++d) kt[(size_t) d * Np] = kr[d];
+                    std::memcpy(VP.data() + ((size_t) hh * N + j) * HD, kr + D, sizeof(float) * (size_t) HD);
+                }
+            });
+        }
+        team->run(H * tasks_q, [&](int task, int thr) {
+            const int hh = task / tasks_q, q0 = (task % tasks_q) * QB, qr = std::min(QB, N - q0);
+            float* S = sscr[(size_t) thr].data();
+            float* O = S + (size_t) QB * kTK;
+            float* mx = O + (size_t) QB * OD;
+            float* ls = mx + QB;
+            std::memset(O, 0, sizeof(float) * (size_t) QB * OD);
+            for (int r = 0; r < QB; ++r) { mx[r] = -3.0e38f; ls[r] = 0.0f; }
+            const float* Q = qkv + (size_t) q0 * D3 + (size_t) hh * HD;
+            const float* KTh = KT.data() + (size_t) hh * HD * Np;
+            const float* Vh = VP.data() + (size_t) hh * N * HD;
+            for (int j0 = 0; j0 < N; j0 += kTK) {
+                const int tk = std::min(kTK, N - j0);
+                o.gemm(Q, D3, qr, KTh + j0, (size_t) Np, HD, tk, S, (size_t) kTK, 0, nullptr);
+                o.softmax_update(S, (size_t) kTK, qr, tk, mx, ls, O, (size_t) OD, HD);
+                o.gemm(S, (size_t) kTK, qr, Vh + (size_t) j0 * HD, (size_t) HD, tk, HD, O, (size_t) OD, 1, nullptr);
+            }
+            for (int r = 0; r < qr; ++r) {
+                const float inv = 1.0f / ls[r];
+                float* dst = ctx + (size_t) (q0 + r) * D + (size_t) hh * HD;
+                for (int d = 0; d < HD; ++d) dst[d] = O[(size_t) r * OD + d] * inv;
+            }
+        });
+    }
+
     bool load_gemma4(const Gguf& gg, std::string& err);
     bool encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
+    bool load_minicpmv(const Gguf& gg, std::string& err);
+    bool encode_minicpmv(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
 };
 
 VitCpu::VitCpu() : impl_(new Impl()) {}
@@ -167,6 +229,7 @@ bool VitCpu::load(const Gguf& gg, const VitGeometry& g, std::string& err) {
     m.g = g;
     m.ops = &cpu_ops(quant::best_isa());
     if (g.projector == "gemma4v") return m.load_gemma4(gg, err);
+    if (g.minicpmv()) return m.load_minicpmv(gg, err);
     // the patch embedding: the two temporal taps summed (a still picture is fed to both), kept float32 (a small matrix)
     {
         const GgufTensorInfo* t0 = gg.tensor("v.patch_embd.weight");
@@ -216,11 +279,11 @@ int vit_cpu_round_kind(int weight_kind, const char* env) {
 bool VitCpu::encode(const PreparedImage& img, int threads, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
     Impl& m = *impl_;
     const VitGeometry& g = m.g;
-    if (g.projector == "gemma4v") {
-        if (m.glayers.empty()) { err = "the tower is not loaded"; return false; }
+    if (g.projector == "gemma4v" || g.minicpmv()) {
+        if (m.glayers.empty() && m.mlayers.empty()) { err = "the tower is not loaded"; return false; }
         const int nth = threads > 0 ? threads : (int) std::max(1u, std::min(16u, std::thread::hardware_concurrency() / 2));
         if (!m.team || m.team_threads != nth) { m.team.reset(new Team(nth)); m.team_threads = nth; }
-        return m.encode_gemma4(img, rows, nx, ny, err);
+        return g.minicpmv() ? m.encode_minicpmv(img, rows, nx, ny, err) : m.encode_gemma4(img, rows, nx, ny, err);
     }
     if (m.layers.empty()) { err = "the tower is not loaded"; return false; }
     const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn;
@@ -536,7 +599,7 @@ bool VitCpu::Impl::encode_gemma4(const PreparedImage& img, std::vector<float>& r
     const size_t slack = 256, D3 = (size_t) 3 * D;
     std::vector<float> qkv((size_t) N * D3 + slack, 0.0f), ctx((size_t) N * D), hbuf((size_t) R * D), tmp((size_t) R * D);
     std::vector<float> gb((size_t) R * F), ub((size_t) R * F);
-    const int Np = (N + 63) / 64 * 64, OD = (HD + 15) / 16 * 16, QB = kQBDefault, tasks_q = (N + QB - 1) / QB;
+    const int Np = (N + 63) / 64 * 64, OD = (HD + 15) / 16 * 16, QB = kQBDefault;
     std::vector<float> KT((size_t) H * HD * Np, 0.0f), VP((size_t) H * N * HD + slack, 0.0f);
     std::vector<std::vector<float>> sscr((size_t) nth, std::vector<float>((size_t) QB * kTK + (size_t) QB * OD + 2 * QB));
     const float eps = g.eps;
@@ -562,41 +625,7 @@ bool VitCpu::Impl::encode_gemma4(const PreparedImage& img, std::vector<float>& r
                 rms_row(v, v, HD, nullptr, eps);
             }
         });
-        {   // K transposed per head (KT[h][d][j]) and V packed per head (VP[h][j][d])
-            const int jb = 64, njb = (N + jb - 1) / jb;
-            team->run(H * njb, [&](int task, int) {
-                const int hh = task / njb, j0 = (task % njb) * jb, j1 = std::min(N, j0 + jb);
-                for (int j = j0; j < j1; ++j) {
-                    const float* kr = qkv.data() + (size_t) j * D3 + D + (size_t) hh * HD;
-                    float* kt = KT.data() + (size_t) hh * HD * Np + j;
-                    for (int d = 0; d < HD; ++d) kt[(size_t) d * Np] = kr[d];
-                    std::memcpy(VP.data() + ((size_t) hh * N + j) * HD, kr + D, sizeof(float) * (size_t) HD);
-                }
-            });
-        }
-        team->run(H * tasks_q, [&](int task, int thr) {   // softmax(q k^T) v, no scale (the graph's kq_scale is 1)
-            const int hh = task / tasks_q, q0 = (task % tasks_q) * QB, qr = std::min(QB, N - q0);
-            float* S = sscr[(size_t) thr].data();
-            float* O = S + (size_t) QB * kTK;
-            float* mx = O + (size_t) QB * OD;
-            float* ls = mx + QB;
-            std::memset(O, 0, sizeof(float) * (size_t) QB * OD);
-            for (int r = 0; r < QB; ++r) { mx[r] = -3.0e38f; ls[r] = 0.0f; }
-            const float* Q = qkv.data() + (size_t) q0 * D3 + (size_t) hh * HD;
-            const float* KTh = KT.data() + (size_t) hh * HD * Np;
-            const float* Vh = VP.data() + (size_t) hh * N * HD;
-            for (int j0 = 0; j0 < N; j0 += kTK) {
-                const int tk = std::min(kTK, N - j0);
-                o.gemm(Q, D3, qr, KTh + j0, (size_t) Np, HD, tk, S, (size_t) kTK, 0, nullptr);
-                o.softmax_update(S, (size_t) kTK, qr, tk, mx, ls, O, (size_t) OD, HD);
-                o.gemm(S, (size_t) kTK, qr, Vh + (size_t) j0 * HD, (size_t) HD, tk, HD, O, (size_t) OD, 1, nullptr);
-            }
-            for (int r = 0; r < qr; ++r) {
-                const float inv = 1.0f / ls[r];
-                float* dst = ctx.data() + (size_t) (q0 + r) * D + (size_t) hh * HD;
-                for (int d = 0; d < HD; ++d) dst[d] = O[(size_t) r * OD + d] * inv;
-            }
-        });
+        attention(qkv.data(), N, ctx.data(), KT, VP, sscr);   // no scale: the graph's kq_scale is 1
         for (int r0 = 0; r0 < N; r0 += R) {      // x += norm(o(ctx)); x += norm(down(gelu_quick(gate) * up))
             const int rn = std::min(R, N - r0);
             linear(L.o, ctx.data() + (size_t) r0 * D, (size_t) D, rn, tmp.data(), (size_t) D, 0, nullptr, false, scratch);
@@ -644,6 +673,198 @@ bool VitCpu::Impl::encode_gemma4(const PreparedImage& img, std::vector<float>& r
     linear(proj, pooled.data(), (size_t) D, M, rows.data(), (size_t) g.out_dim, 0, nullptr, false, scratch);
     nx = M;
     ny = 1;
+    return true;
+}
+
+bool VitCpu::Impl::load_minicpmv(const Gguf& gg, std::string& err) {
+    {   // the patch embedding, float32 (a small matrix)
+        const GgufTensorInfo* t = gg.tensor("v.patch_embd.weight");
+        patch_w.kind = 0;
+        patch_w.rows = g.width;
+        patch_w.cols = 3 * g.patch * g.patch;
+        patch_w.f32.resize((size_t) t->nelem());
+        if (!gg.read_f32(*t, patch_w.f32.data(), err)) return false;
+    }
+    auto attn = [&](const std::string& p, MiniLayer& L) {
+        return read_f(gg, p + "ln1.weight", L.ln1_w, err) && read_f(gg, p + "ln1.bias", L.ln1_b, err) && read_m(gg, p + "attn_q.weight", L.q, err) &&
+               read_f(gg, p + "attn_q.bias", L.q_b, err) && read_m(gg, p + "attn_k.weight", L.k, err) && read_f(gg, p + "attn_k.bias", L.k_b, err) &&
+               read_m(gg, p + "attn_v.weight", L.v, err) && read_f(gg, p + "attn_v.bias", L.v_b, err) && read_m(gg, p + "attn_out.weight", L.o, err) &&
+               read_f(gg, p + "attn_out.bias", L.o_b, err);
+    };
+    if (!read_f(gg, "v.patch_embd.bias", patch_b, err) || !read_f(gg, "v.position_embd.weight", pos, err) || !read_f(gg, "v.post_ln.weight", post_w, err) ||
+        !read_f(gg, "v.post_ln.bias", post_b, err) || !attn("v.vit_merger.", wm) || !read_f(gg, "v.vit_merger.ds_ln.weight", ds_ln_w, err) ||
+        !read_f(gg, "v.vit_merger.ds_ln.bias", ds_ln_b, err) || !read_m(gg, "v.vit_merger.ds_ffn_up.weight", ds_up, err) ||
+        !read_f(gg, "v.vit_merger.ds_ffn_up.bias", ds_up_b, err) || !read_m(gg, "v.vit_merger.ds_ffn_down.weight", ds_down, err) ||
+        !read_f(gg, "v.vit_merger.ds_ffn_down.bias", ds_down_b, err) || !read_f(gg, "mm.input_norm.weight", mmn_w, err) ||
+        !read_f(gg, "mm.input_norm.bias", mmn_b, err) || !read_m(gg, "mm.up.weight", mm_up, err) || !read_f(gg, "mm.up.bias", mm_up_b, err) ||
+        !read_m(gg, "mm.down.weight", mm_down, err) || !read_f(gg, "mm.down.bias", mm_down_b, err))
+        return false;
+    mlayers.assign((size_t) g.layers, MiniLayer{});
+    for (int il = 0; il < g.layers; ++il) {
+        MiniLayer& L = mlayers[(size_t) il];
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        if (!attn(p, L) || !read_f(gg, p + "ln2.weight", L.ln2_w, err) || !read_f(gg, p + "ln2.bias", L.ln2_b, err) || !read_m(gg, p + "ffn_up.weight", L.up, err) ||
+            !read_f(gg, p + "ffn_up.bias", L.up_b, err) || !read_m(gg, p + "ffn_down.weight", L.down, err) || !read_f(gg, p + "ffn_down.bias", L.down_b, err))
+            return false;
+    }
+    return true;
+}
+
+// MiniCPM-V 4.7's tower on one tile, mtmd's clip_graph_minicpmv4_6 (n_merge 4) step for step.  Patches in reading order with the patch bias,
+// plus the position table's row of each patch's bucket (pos_grid buckets a side).  Layers 0 .. insert_layer on every patch; then the window
+// merger: attention inside each 2x2 window of patches (as the graph's window-major reorder and block mask give), its residual, and the 2x2
+// downsample: the window's four rows side by side (top left, top right, bottom left, bottom right) through a LayerNorm and a tanh-GELU MLP,
+// plus their mean.  The other layers on that half-sided grid, the post norm, and the final merger: the same 2x2 gather through a LayerNorm and
+// an erf-GELU MLP.  The rows come out in reading order of a grid of (width / 4) x (height / 4) patches.
+bool VitCpu::Impl::encode_minicpmv(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
+    const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn, T = g.pos_grid, D4 = 4 * D;
+    if (HD > 128) { err = "this head size is not handled by the CPU tower"; return false; }
+    if (img.w <= 0 || img.h <= 0 || img.w % (P * 4) != 0 || img.h % (P * 4) != 0) { err = "the tile size is not a multiple of patch * 4"; return false; }
+    const int pw = img.w / P, ph = img.h / P, N = pw * ph;
+    const CpuOps& o = *ops;
+    const int nth = team->size();
+    std::vector<std::vector<float>> scratch((size_t) nth, std::vector<float>((size_t) kKC * 2 * o.NR));
+    const int R = std::min(N, kRowsChunk);
+    const float eps = g.eps, kq_scale = 1.0f / std::sqrt((float) HD);
+
+    const int K0 = 3 * P * P;
+    std::vector<float> x((size_t) N * D);
+    {
+        std::vector<float> A((size_t) R * K0);
+        const size_t plane = (size_t) img.w * img.h;
+        for (int r0 = 0; r0 < N; r0 += R) {
+            const int rn = std::min(R, N - r0);
+            rows_par(rn, [&](int i) {
+                const int t = r0 + i, py = t / pw, px = t % pw;
+                float* a = &A[(size_t) i * K0];
+                for (int c = 0; c < 3; ++c)
+                    for (int ky = 0; ky < P; ++ky)
+                        std::memcpy(a + (size_t) c * P * P + (size_t) ky * P, &img.chw[c * plane + (size_t) (py * P + ky) * img.w + (size_t) px * P], (size_t) P * sizeof(float));
+            });
+            linear(patch_w, A.data(), (size_t) K0, rn, x.data() + (size_t) r0 * D, (size_t) D, 0, patch_b.data(), false, scratch);
+        }
+    }
+    rows_par(N, [&](int t) {   // SigLIP's position buckets: floor(T i / ph) * T + floor(T j / pw)
+        const int bi = (int) std::floor((double) T * (t / pw) / ph), bj = (int) std::floor((double) T * (t % pw) / pw);
+        const float* pr = &pos[((size_t) bi * T + (size_t) bj) * D];
+        float* r = &x[(size_t) t * D];
+        for (int d = 0; d < D; ++d) r[d] += pr[d];
+    });
+
+    const size_t slack = 256, D3 = (size_t) 3 * D;
+    std::vector<float> qkv((size_t) N * D3 + slack, 0.0f), ctx((size_t) N * D), hbuf((size_t) R * D), up((size_t) R * F);
+    const int OD = (HD + 15) / 16 * 16, QB = kQBDefault;
+    std::vector<float> KT((size_t) H * HD * ((N + 63) / 64 * 64), 0.0f), VP((size_t) H * N * HD + slack, 0.0f);
+    std::vector<std::vector<float>> sscr((size_t) nth, std::vector<float>((size_t) QB * kTK + (size_t) QB * OD + 2 * QB));
+    // q, k, v (with the attention's scale on q) of n rows of x after the LayerNorm of L
+    auto project = [&](const MiniLayer& L, int n) {
+        for (int r0 = 0; r0 < n; r0 += R) {
+            const int rn = std::min(R, n - r0);
+            rows_par(rn, [&](int i) { o.layernorm(&x[(size_t) (r0 + i) * D], &hbuf[(size_t) i * D], D, L.ln1_w.data(), L.ln1_b.data(), eps); });
+            float* dst = qkv.data() + (size_t) r0 * D3;
+            linear(L.q, hbuf.data(), (size_t) D, rn, dst, D3, 0, L.q_b.data(), false, scratch);
+            linear(L.k, hbuf.data(), (size_t) D, rn, dst + D, D3, 0, L.k_b.data(), false, scratch);
+            linear(L.v, hbuf.data(), (size_t) D, rn, dst + 2 * D, D3, 0, L.v_b.data(), false, scratch);
+        }
+        rows_par(n, [&](int t) {
+            float* q = qkv.data() + (size_t) t * D3;
+            for (int i = 0; i < D; ++i) q[i] *= kq_scale;
+        });
+    };
+    auto layer = [&](const MiniLayer& L, int n) {
+        project(L, n);
+        attention(qkv.data(), n, ctx.data(), KT, VP, sscr);
+        for (int r0 = 0; r0 < n; r0 += R) {      // x += o(ctx); x += down(gelu(up(LN2 x)))
+            const int rn = std::min(R, n - r0);
+            linear(L.o, ctx.data() + (size_t) r0 * D, (size_t) D, rn, x.data() + (size_t) r0 * D, (size_t) D, 2, L.o_b.data(), false, scratch);
+            rows_par(rn, [&](int i) { o.layernorm(&x[(size_t) (r0 + i) * D], &hbuf[(size_t) i * D], D, L.ln2_w.data(), L.ln2_b.data(), eps); });
+            linear(L.up, hbuf.data(), (size_t) D, rn, up.data(), (size_t) F, 0, L.up_b.data(), true, scratch);
+            linear(L.down, up.data(), (size_t) F, rn, x.data() + (size_t) r0 * D, (size_t) D, 2, L.down_b.data(), false, scratch);
+        }
+    };
+    // the four rows of each 2x2 window of a gw x gh grid side by side, in the gather order of the graph's ds indices
+    auto gather = [&](const float* src, int gw, int gh, std::vector<float>& cat) {
+        const int qw = gw / 2, M = qw * (gh / 2);
+        cat.resize((size_t) M * D4);
+        rows_par(M, [&](int t) {
+            const int i = t / qw, j = t % qw;
+            const int at[4] = {(2 * i) * gw + 2 * j, (2 * i) * gw + 2 * j + 1, (2 * i + 1) * gw + 2 * j, (2 * i + 1) * gw + 2 * j + 1};
+            for (int s = 0; s < 4; ++s) std::memcpy(&cat[(size_t) t * D4 + (size_t) s * D], src + (size_t) at[s] * D, sizeof(float) * (size_t) D);
+        });
+    };
+    // LN(cat) through up (+bias), the activation and down (+bias) into out [M][od], in chunks of rows (the up product is wide)
+    auto mlp = [&](const std::vector<float>& cat, int M, const std::vector<float>& lw, const std::vector<float>& lb, const Mat& wu, const std::vector<float>& bu,
+                   const Mat& wd, const std::vector<float>& bd, bool erf, float* out, int od) {
+        const int RC = std::max(1, std::min(M, (int) ((size_t) 64 << 20) / (int) (sizeof(float) * (size_t) wu.rows)));
+        std::vector<float> nb((size_t) RC * D4), ub((size_t) RC * wu.rows);
+        for (int r0 = 0; r0 < M; r0 += RC) {
+            const int rn = std::min(RC, M - r0);
+            rows_par(rn, [&](int i) { o.layernorm(&cat[(size_t) (r0 + i) * D4], &nb[(size_t) i * D4], D4, lw.data(), lb.data(), eps); });
+            linear(wu, nb.data(), (size_t) D4, rn, ub.data(), (size_t) wu.rows, 0, bu.data(), !erf, scratch);
+            if (erf)
+                rows_par(rn, [&](int i) { gelu_erf_rows(&ub[(size_t) i * wu.rows], (size_t) wu.rows, 1, wu.rows); });
+            linear(wd, ub.data(), (size_t) wu.rows, rn, out + (size_t) r0 * od, (size_t) od, 0, bd.data(), false, scratch);
+        }
+    };
+
+    for (int il = 0; il <= g.insert_layer; ++il) layer(mlayers[(size_t) il], N);
+
+    {   // the window merger: attention inside each 2x2 window of patches, then its residual
+        project(wm, N);
+        const int hw = pw / 2, wins = hw * (ph / 2);
+        rows_par(wins, [&](int w) {
+            const int i = w / hw, j = w % hw;
+            const int at[4] = {(2 * i) * pw + 2 * j, (2 * i) * pw + 2 * j + 1, (2 * i + 1) * pw + 2 * j, (2 * i + 1) * pw + 2 * j + 1};
+            for (int h = 0; h < H; ++h)
+                for (int a = 0; a < 4; ++a) {
+                    const float* q = qkv.data() + (size_t) at[a] * D3 + (size_t) h * HD;
+                    float s[4], mx = -3.0e38f, sum = 0.0f;
+                    for (int b = 0; b < 4; ++b) {
+                        const float* k = qkv.data() + (size_t) at[b] * D3 + D + (size_t) h * HD;
+                        float acc = 0.0f;
+                        for (int d = 0; d < HD; ++d) acc += q[d] * k[d];
+                        s[b] = acc;
+                        mx = std::max(mx, acc);
+                    }
+                    for (int b = 0; b < 4; ++b) { s[b] = std::exp(s[b] - mx); sum += s[b]; }
+                    float* dst = ctx.data() + (size_t) at[a] * D + (size_t) h * HD;
+                    for (int d = 0; d < HD; ++d) {
+                        float acc = 0.0f;
+                        for (int b = 0; b < 4; ++b) acc += s[b] * qkv[(size_t) at[b] * D3 + 2 * (size_t) D + (size_t) h * HD + d];
+                        dst[d] = acc / sum;
+                    }
+                }
+        });
+        for (int r0 = 0; r0 < N; r0 += R) {
+            const int rn = std::min(R, N - r0);
+            linear(wm.o, ctx.data() + (size_t) r0 * D, (size_t) D, rn, x.data() + (size_t) r0 * D, (size_t) D, 2, wm.o_b.data(), false, scratch);
+        }
+    }
+    const int hw = pw / 2, hh = ph / 2, N2 = hw * hh;
+    {   // the 2x2 downsample: MLP(LN(the window's four rows)) + their mean, on the half-sided grid
+        std::vector<float> cat;
+        gather(x.data(), pw, ph, cat);
+        std::vector<float> x2((size_t) N2 * D);
+        mlp(cat, N2, ds_ln_w, ds_ln_b, ds_up, ds_up_b, ds_down, ds_down_b, false, x2.data(), D);
+        rows_par(N2, [&](int t) {
+            const float* c = &cat[(size_t) t * D4];
+            float* r = &x2[(size_t) t * D];
+            for (int d = 0; d < D; ++d) r[d] += (((c[d] + c[D + d]) + c[2 * D + d]) + c[3 * D + d]) * 0.25f;
+        });
+        x.swap(x2);
+        std::fill(KT.begin(), KT.end(), 0.0f);   // the quarter grid's rows of K are shorter: no stale keys past them
+    }
+    for (int il = g.insert_layer + 1; il < g.layers; ++il) layer(mlayers[(size_t) il], N2);
+
+    std::vector<float>& hpost = ctx;       // the post norm's output in the context's place
+    rows_par(N2, [&](int t) { o.layernorm(&x[(size_t) t * D], &hpost[(size_t) t * D], D, post_w.data(), post_b.data(), eps); });
+    std::vector<float> cat;
+    gather(hpost.data(), hw, hh, cat);
+    const int M = (hw / 2) * (hh / 2);
+    rows.assign((size_t) M * g.out_dim, 0.0f);
+    mlp(cat, M, mmn_w, mmn_b, mm_up, mm_up_b, mm_down, mm_down_b, true, rows.data(), g.out_dim);
+    nx = hw / 2;
+    ny = hh / 2;
     return true;
 }
 
