@@ -300,6 +300,58 @@ void drop_pages(const uint8_t* p, size_t n) {
 #endif
 }
 
+#ifndef _WIN32
+// A file's handle whose reads skip the file cache: O_DIRECT (whole 4 KiB blocks into aligned memory), F_NOCACHE on
+// macOS; -1 where neither is there.
+int open_uncached(const char* path) {
+#if defined(O_DIRECT)
+    return ::open(path, O_RDONLY | O_CLOEXEC | O_DIRECT);
+#elif defined(F_NOCACHE)
+    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0 && fcntl(fd, F_NOCACHE, 1) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+#else
+    (void) path;
+    return -1;
+#endif
+}
+
+// n bytes at off of open_uncached()'s fd into dst: the blocks around them into a buffer of the thread's, then dst.
+// macOS serves an F_NOCACHE read from the file cache all the same unless it is in whole 16 KiB pages.
+bool read_uncached(int fd, uint8_t* dst, uint64_t off, size_t n) {
+#if defined(__APPLE__)
+    constexpr size_t kBlock = 16384;
+#else
+    constexpr size_t kBlock = 4096;
+#endif
+    struct Buf {
+        uint8_t* p = nullptr;
+        size_t n = 0;
+        ~Buf() { std::free(p); }
+    };
+    thread_local Buf b;
+    const uint64_t lo = off / kBlock * kBlock, hi = (off + n + kBlock - 1) / kBlock * kBlock;
+    const size_t span = (size_t) (hi - lo), need = (size_t) (off + n - lo);
+    if (b.n < span) {
+        std::free(b.p);
+        b.p = (uint8_t*) std::aligned_alloc(kBlock, span);
+        b.n = b.p ? span : 0;
+        if (!b.p) return false;
+    }
+    size_t done = 0;
+    while (done < need) {   // the file's last block may end short of hi
+        const ssize_t got = ::pread(fd, b.p + done, span - done, (off_t) (lo + done));
+        if (got <= 0) return false;
+        done += (size_t) got;
+    }
+    std::memcpy(dst, b.p + (off - lo), n);
+    return true;
+}
+#endif
+
 // Options::lock_experts: a span's pages locked into RAM, where the file cache cannot hand them to another program,
 // reading in the ones it had already dropped; false when the system refuses (Linux past `ulimit -l`, Windows past
 // the working-set minimum lock_outside() raised).  Unlocking takes the span's whole pages only: one it shares with
@@ -3754,6 +3806,14 @@ bool Engine::read_file(uint8_t* dst, const uint8_t* src, size_t n) const {
         }
     };
     thread_local Fds mine;
+    // Under a RAM budget (pool_) the experts it leaves out are read past the file cache: their pages there took the
+    // budget's RAM a second time, and the system made room for them by dropping the pages of the ones it keeps.
+    if (pool_) {
+        thread_local Fds raw;
+        auto it = raw.fd.find(v->path);
+        if (it == raw.fd.end()) it = raw.fd.emplace(v->path, open_uncached(v->path.c_str())).first;
+        if (it->second >= 0 && read_uncached(it->second, dst, off, n)) return true;
+    }
     auto it = mine.fd.find(v->path);
     if (it == mine.fd.end()) it = mine.fd.emplace(v->path, ::open(v->path.c_str(), O_RDONLY | O_CLOEXEC)).first;
     if (it->second < 0) return false;
