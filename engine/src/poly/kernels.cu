@@ -113,6 +113,47 @@ __global__ void gemv_pair_kernel(const W* __restrict__ w1, const W* __restrict__
     if (threadIdx.x == 0) (second ? y2 : y1)[tok * n_out + o] = acc;
 }
 
+// gemv_kernel and gemv_pair_kernel for a few tokens with a block an output, not an output and a token: the block
+// reads its row of the weights once and takes every token's input against it.  A token's sum is the one those
+// kernels make for it, term for term and in the same order, and so is the block's sum over its warps.  Qwen3.6's
+// router at 6 GB was a block an output and a token for four tokens: its 2 MB read four times took 6 us, and the
+// pair with the next layer's router 8 us of each layer's wait for its scores.
+constexpr int GEMV_ROWS = 16, GEMV_VALS = 8;   // tokens a block at most; a thread's weights at most
+
+template<typename W>
+__global__ void gemv_rows_kernel(const W* __restrict__ w1, const W* __restrict__ w2, const float* __restrict__ x,
+                                 float* __restrict__ y1, float* __restrict__ y2, int n_in, int n_out1, int n_out2,
+                                 int rows) {
+    __shared__ float part[32][GEMV_ROWS];
+    const bool second = int(blockIdx.x) >= n_out1;
+    const int o = second ? int(blockIdx.x) - n_out1 : int(blockIdx.x);
+    const int n_out = second ? n_out2 : n_out1;
+    const W* wr = (second ? w2 : w1) + size_t(o) * n_in;
+    float wv[GEMV_VALS];
+#pragma unroll
+    for (int k = 0; k < GEMV_VALS; ++k) {
+        const int i = int(threadIdx.x) + k * int(blockDim.x);
+        wv[k] = i < n_in ? ldw(wr, i) : 0.0f;
+    }
+    for (int t = 0; t < rows; ++t) {
+        const float* xr = x + size_t(t) * n_in;
+        float acc = 0.0f;
+#pragma unroll
+        for (int k = 0; k < GEMV_VALS; ++k) {
+            const int i = int(threadIdx.x) + k * int(blockDim.x);
+            if (i < n_in) acc += wv[k] * xr[i];
+        }
+        acc = warp_sum(acc);
+        if ((threadIdx.x & 31) == 0) part[threadIdx.x >> 5][t] = acc;
+    }
+    __syncthreads();
+    if (int(threadIdx.x) < rows) {
+        float s = 0.0f;
+        for (int k = 0; k < int(blockDim.x) / WARP; ++k) s += part[k][threadIdx.x];
+        (second ? y2 : y1)[size_t(threadIdx.x) * n_out + o] = s;
+    }
+}
+
 }  // namespace
 
 // The threads of a block that sums over n values.  A thread reads its values one after the other, and a kernel
@@ -127,9 +168,19 @@ int sum_threads(int n) {
 
 namespace {
 
+// Whether gemv_rows_kernel takes a call: a few tokens, each with an input of its own, and a row of the weights that
+// fits a thread's GEMV_VALS values.
+bool gemv_rows_fit(int n_in, int threads, int rows) {
+    return rows >= 2 && rows <= GEMV_ROWS && n_in <= threads * GEMV_VALS && threads / WARP <= 32;
+}
+
 template<typename W>
 void gemv(const W* w, const float* x, float* y, int n_in, int n_out, int rows_per_x, int rows, void* stream) {
     const int threads = n_in >= 128 ? sum_threads(n_in) : 32;
+    if (rows_per_x == n_out && gemv_rows_fit(n_in, threads, rows)) {
+        gemv_rows_kernel<W><<<n_out, threads, 0, (cudaStream_t) stream>>>(w, w, x, y, y, n_in, n_out, 0, rows);
+        return;
+    }
     gemv_kernel<W><<<dim3(n_out, rows), threads, 0, (cudaStream_t) stream>>>(w, x, y, n_in, n_out, rows_per_x);
 }
 
@@ -2831,6 +2882,17 @@ void gemv_bf16(const uint16_t* w, const float* x, float* y, int n_in, int n_out,
 void gemv_pair(int type, const void* w1, const void* w2, const float* x, float* y1, float* y2, int n_in, int n_out1,
                int n_out2, int rows, void* stream) {
     const int threads = n_in >= 128 ? sum_threads(n_in) : 32;
+    if (gemv_rows_fit(n_in, threads, rows)) {
+        if (type == 1)
+            gemv_rows_kernel<uint16_t><<<n_out1 + n_out2, threads, 0, cs(stream)>>>(
+                (const uint16_t*) w1, (const uint16_t*) w2, x, y1, y2, n_in, n_out1, n_out2, rows);
+        else
+            gemv_rows_kernel<float><<<n_out1 + n_out2, threads, 0, cs(stream)>>>(
+                (const float*) w1, (const float*) w2, x, y1, y2, n_in, n_out1, n_out2, rows);
+        if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+            throw std::runtime_error(std::string("gemv_pair: ") + cudaGetErrorString(e));
+        return;
+    }
     const dim3 grid(n_out1 + n_out2, rows);
     if (type == 1)
         gemv_pair_kernel<uint16_t><<<grid, threads, 0, cs(stream)>>>((const uint16_t*) w1, (const uint16_t*) w2, x, y1,
