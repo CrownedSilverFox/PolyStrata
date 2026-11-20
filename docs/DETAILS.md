@@ -1,9 +1,10 @@
 # PolyStrata engine and server reference
 
-This page is the technical reference for the Qwen engine and its server: measured speed, the HTTP API, the settings in
-`strata-<model>.json`, memory modes and the speed switches. It is for people who run PolyStrata from a source checkout, tune
-an installation or connect their own software. It describes the current release. Dated measurements are in
-[History / older measurements](#history--older-measurements) at the end.
+This page is the technical reference for the engines and their server: measured speed, the HTTP API, the settings in
+`strata-<model>.json`, memory modes and the speed switches. It is for people who tune an installation or connect their own
+software. The engine sections are about the Qwen3.8-Flash-Next engine (`strata`) unless they say strata-poly, PolyStrata's
+own engine for the other models; those models and their measurements are in [BACKENDS.md](BACKENDS.md). Dated measurements
+are in [History / older measurements](#history--older-measurements) at the end.
 
 New here? Start with the [README](../README.md). Installing is in [INSTALL.md](INSTALL.md), the models are in
 [MODELS.md](MODELS.md), common problems are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
@@ -16,14 +17,13 @@ New here? Start with the [README](../README.md). Installing is in [INSTALL.md](I
 > [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Credits](#credits-and-licenses) ·
 > [History](#history--older-measurements)
 
-**Which flags go where.** `strata launch` has its own flags (`strata launch --help`). The engine and server flags below go
-in the `"args"` list of `strata-<model>.json` (source setup writes it) or on the `terminal/serve/server.py` command line.
-`START-HERE.bat`, `SETUP.bat`, `./setup.sh` and `run-<model>` exist only in a [source checkout](SOURCE_INSTALL.md). An
-installed app has none of them.
+**Which flags go where.** Setup's own flags go on the `START-HERE.bat` or `./setup.sh` line (`--help` lists them). The
+engine and server flags below go in the `"args"` list of `strata-<model>.json` (setup writes it, in the `terminal` folder) or
+on the `terminal/serve/server.py` command line.
 
 ## Quick start
 
-1. Install and start a model: [INSTALL.md](INSTALL.md) (app or Terminal) or [SOURCE_INSTALL.md](SOURCE_INSTALL.md).
+1. Install and start a model: [INSTALL.md](INSTALL.md).
 2. Check that the server answers. The default address is `http://127.0.0.1:8080`:
 
    ```sh
@@ -32,7 +32,7 @@ installed app has none of them.
      -d '{"model": "strata", "messages": [{"role": "user", "content": "Write a haiku about GPUs."}], "max_tokens": 512}'
    ```
 
-3. Point your app at `http://127.0.0.1:8080/v1` with any API key, or run `strata connect` to list the apps PolyStrata can configure.
+3. Point your app at `http://127.0.0.1:8080/v1` with any API key ([connecting apps](#connecting-apps)).
 4. Change a setting by editing `strata-<model>.json` and restarting. Setup rewrites the file when you run it again and
    keeps the keys it does not manage.
 
@@ -105,22 +105,22 @@ for IQ3_XXS and keep its context at 128K or less). With 48 GB only Q2_0 and IQ2_
 
 [ISTA-DASLab's expert-pruned release](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF) keeps 256 of
 each layer's 512 experts (10 still active per token), chosen on code, agent and vision data. Shard 1 is 29.6 GB (23 GB of
-experts in RAM), so it runs on 32 GB of RAM. Images work. Install it with `strata launch --family coder`
-(from a source checkout: `START-HERE.bat --setup --family coder`). Details: [MODELS.md](MODELS.md#coder).
+experts in RAM), so it runs on 32 GB of RAM. Images work. Install it with `START-HERE.bat --setup --family coder`
+(Linux: `./setup.sh --setup --family coder`). Details: [MODELS.md](MODELS.md#coder).
 
 ### Or: Swift 1.5 (a fine-tune that thinks shorter)
 
 [Swift 1.5](https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF) is UkisAI's fine-tune. It has the same
 architecture and speed as the original, its own vision encoder, and thinks for fewer tokens. Its authors recommend IQ2_XS.
-The license is the Swift Open License 1.0. Install it with `strata launch --family swift --model iq2_xs`
-(from a source checkout: `START-HERE.bat --setup --family swift --model IQ2_XS`). Details: [MODELS.md](MODELS.md#swift-15).
+The license is the Swift Open License 1.0. Install it with `START-HERE.bat --setup --family swift --model IQ2_XS`
+(Linux: `./setup.sh --setup ...`). Details: [MODELS.md](MODELS.md#swift-15).
 
 <a id="experimental-unsloths-ud-q4_k_xl"></a>
 
 ### Unsloth's UD-Q4_K_XL
 
 A 4-bit quantization of the same model (111 GB, 72 GiB of experts). Install it with `--family unsloth --model UD-Q4_K_XL`
-(RAM budget: your RAM less 17 GB, 47 on 64 GB, the rest read from the SSD; the app's "Leave 20% for my work" keeps the earlier RAM less 24 GB, 40 on 64 GB: 16.6 GiB free
+(RAM budget: your RAM less 17 GB, 47 on 64 GB, the rest read from the SSD; the Strata project's app, with "Leave 20% for my work", keeps the earlier RAM less 24 GB, 40 on 64 GB: 16.6 GiB free
 of 64 against 9.3 GiB, decode 57.7 against 84.2 tok/s). What it does and the manual workflow are in
 [UNSLOTH_Q4.md](UNSLOTH_Q4.md).
 
@@ -128,12 +128,28 @@ of 64 against 9.3 GiB, decode 57.7 against 84.2 tok/s). What it does and the man
 
 ## Windows
 
-On Windows the source wrapper is `START-HERE.bat` ([source installation](SOURCE_INSTALL.md#from-source-windows)). For a
-released app, run its installer and open PolyStrata from the Start menu. For the Terminal, use `strata launch`. Watch the
-setup plan and the startup log for what is actually chosen on your machine, and see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-if a component is missing.
+On Windows setup is `START-HERE.bat` ([INSTALL.md](INSTALL.md#windows)); building the engine yourself is in
+[SOURCE_INSTALL.md](SOURCE_INSTALL.md#from-source-windows). Watch the setup plan and the startup log for what is actually
+chosen on your machine, and see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) if a component is missing.
 
-Terminal chat from a checkout: `terminal\.venv\Scripts\python terminal\tools\chat.py`.
+```
+START-HERE.bat --setup                          install another model, or change context / images
+START-HERE.bat --model IQ2_XS --context 32768 --vision yes --yes     no questions
+START-HERE.bat --gguf-dir D:\models\IQ2_XS      use GGUF files you already have
+START-HERE.bat --custom-gguf D:\models          install one custom GGUF: a file, or a folder of its shards
+START-HERE.bat --data-dir E:\PolyStrata-data    keep the model files somewhere else
+START-HERE.bat --port 8081                      another port
+START-HERE.bat --gpu 1                          another GPU, numbered as nvidia-smi does (asked when several can be used)
+START-HERE.bat --calibrate                      tune the engine for this PC (about 15-30 minutes, longer on a slow card), then start
+```
+
+With more than one model installed, it asks which one to start; `terminal\run-<model>.bat` starts one directly. The
+model files (70-120 GB) go to a `PolyStrata-data` folder next to the PolyStrata folder, and setup remembers that place
+for every PolyStrata folder on the PC (`%APPDATA%\PolyStrata\settings.json`; `~/.config/polystrata/settings.json` on
+Linux). Every option: [INSTALL.md](INSTALL.md#options-without-questions).
+
+Terminal chat from a checkout: `terminal\.venv\Scripts\python terminal\tools\chat.py`, or `python polystrata.py --model
+<name>` ([INSTALL.md](INSTALL.md#the-terminal)).
 
 ### Tuning for your PC (`--calibrate`)
 
@@ -182,20 +198,18 @@ large pages were refused. `terminal\tools\windows\enable_large_pages.ps1` (run a
 
 ## Linux
 
-These notes are for **source setup**. Normal installs use [the Terminal or AppImage](INSTALL.md).
-
 ```bash
 ./setup.sh
 ```
 
-Source setup offers choices for the detected machine and can install missing Debian or Ubuntu dependencies with `sudo apt`.
+Setup offers choices for the detected machine and can install missing Debian or Ubuntu dependencies with `sudo apt`.
 It starts the server on `http://127.0.0.1:8080` unless you configure another address or port. Later runs of `./setup.sh`
-or `./run-<model>.sh` start the model directly. The options are the same as on Windows (`./setup.sh --setup`,
+or `terminal/run-<model>.sh` start the model directly. The options are the same as on Windows (`./setup.sh --setup`,
 `--model Q2_0 --yes`, `--gguf-dir /data/Q2_0`). Terminal chat: `terminal/.venv/bin/python terminal/tools/chat.py`. Building from git and trying a pull
 request: [SOURCE_INSTALL.md](SOURCE_INSTALL.md#build-from-git-on-linux-to-try-a-pull-request-or-change-the-code).
 
-- **Updating:** `git pull`, then `./setup.sh`. It compiles the engine again when its source changed. If the compile
-  fails, it says so and starts the engine you had.
+- **Updating:** `./setup.sh --update` (it runs `git pull` first), or `git pull` and then `./setup.sh`. It compiles the
+  engine again when its source changed. If the compile fails, it says so and starts the engine you had.
 - **Other distributions** (Arch, Fedora and others): install the C++ compiler and the CUDA Toolkit 13 with your package
   manager first (Arch: `sudo pacman -S base-devel cuda`). Setup finds `nvcc` on `PATH`, in `/usr/local/cuda*` and in
   `/opt/cuda*`.
@@ -217,7 +231,7 @@ you can fetch the file with the `hf` command, optionally after `hf auth login`, 
 uvx hf auth login            # optional: your own Hugging Face account; PolyStrata does not read or send this token
 uvx hf download agentionai/Qwen3.8-Flash-Next-Gyro-GGUF Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf \
     --revision 1ada08422e404aca51ab9df665f089f34c419c6b --local-dir /data/gyro-s
-./setup.sh --gguf-dir /data/gyro-s       # Windows: SETUP.bat --gguf-dir D:\gyro-s
+./setup.sh --gguf-dir /data/gyro-s       # Windows: START-HERE.bat --gguf-dir D:\gyro-s
 ```
 
 Use the file names and the revision setup shows for your model (the revision above is the one this version pins for Gyro-S: another version of PolyStrata may pin another).
@@ -419,8 +433,10 @@ model files stay in the OS file cache, so loading again takes seconds while that
 **Lazy start.** `terminal/serve/server.py --engine strata --config strata-<model>.json --lazy` (or `"lazy_load": true`) starts the HTTP
 API without the engine or the vision encoder. The first generation request or `POST /load` loads them, including
 `before_load` and `min_free_vram_mib`. `POST /v1/load` and `/v1/unload` are JSON control aliases (they need the API key,
-`application/json` and no foreign browser Origin, and return **409** while a request is active or queued). `/api/health`
-aliases `/health`, and `/v1/status` exposes `loaded` and `auto_load`.
+`application/json` and no foreign browser Origin, and return **409** while a request is active or queued). With
+`switch_on_request`, `/v1/load` with another installed model's name switches to it (after the running requests, up to
+120 s, else 409), and `/v1/unload` with it answers `"not loaded"`. `/api/health` aliases `/health`, and `/v1/status`
+exposes `loaded` and `auto_load`.
 
 **Giving part of the VRAM back while it keeps serving** (opt-in, one NVIDIA GPU, [VRAM_ELASTIC.md](VRAM_ELASTIC.md)). With
 `"vram_elastic": true` (engine flag `--vram-elastic`) the expert cache is allocated in 512 MiB segments
@@ -432,7 +448,7 @@ split, the helper caches, `--peer-device` or the resident low-RAM mode.
 **Keep what the expert cache learned across restarts** (opt-in). `"expert_profile_save": "expert-profile-learned.bin"` saves
 the experts in VRAM, then the counted routing, then the shipped order, on a clean exit and every 10 minutes between
 requests (`"expert_profile_save_every": 5` for another interval, `0` for exit only). The next start begins from it when it
-is a profile of the same model. A relative path is in the PolyStrata folder. The file is a fingerprint of what you used the model
+is a profile of the same model. A relative path is in the folder of the config (`terminal`). The file is a fingerprint of what you used the model
 for and stays on your PC. A profile learned from one kind of text speeds that kind up and can slow others, so keep one file
 per kind of work. Setup rewrites the config when run again, so add the key again then.
 
@@ -502,7 +518,8 @@ print(r.choices[0].message.content)
   `strata:live_tok_s`, `strata:last_hit_rate`, `strata:gpu_util`, `strata:ram_used_bytes`). A value the server does not have
   has no sample. With an API key, the scraper sends it as a bearer token. Ready-made files are in `docs/monitoring/`:
   `prometheus.yml`, `servicemonitor.yaml` and `grafana-strata.json`.
-- **Metadata.** `/models` and `/v1/models` list only the loaded model, with its context limit and input modalities. `/props` exposes
+- **Metadata.** `/models` and `/v1/models` list only the loaded model, with its context limit and input modalities (with
+  `switch_on_request`, every installed model that can run, the loaded one first: [below](#connecting-apps)). `/props` exposes
   the chat template, context limit, configured generation defaults, model path and engine version. `n_predict: -1` means no
   fixed output cap. `/slots` uses llama.cpp's names (`n_ctx`, `n_prompt_tokens`). `total_slots` is the number of `--batch` slots
   (1 without). These endpoints require the API key when one is configured and never load, unload or restart models.
@@ -524,13 +541,17 @@ in the chat page, in `chat.py` (`/think low`) or over the API:
 Without a setting the model uses its own default, **high**. `none` answers at once. The levels are instructions the model was
 trained with, not a hard token limit.
 
+<a id="config-keys"></a>
+
 ### Config keys (`strata-<model>.json`, outside `"args"`)
 
 All are optional. Setup rewrites the config when run again and keeps keys it does not manage. The About tab's Model settings
-card edits some of them (the sampling defaults, `reasoning_budget_tokens`, `fit_max_tokens`, `anthropic_thinking`,
-`effort_position`, `aliases`, `idle_unload_s`, `lazy_load`, `engine_silence_s`, `api_monitor`, `open_browser` and
-`--vram-reserve-mib`). An empty field removes the key, the earlier file is kept as `strata-<model>.json.bak`, and the change
-applies at the next start. Network, key, MCP and program keys are not editable there.
+card edits some of them (the sampling defaults, `reasoning_budget_tokens`, `fit_max_tokens`, `drop_oldest`,
+`truncate_middle`, `preserve_thinking`, `anthropic_thinking`, `effort_position`, `aliases`, `idle_unload_s`, `mtp`,
+`lazy_load`, `engine_silence_s`, `api_monitor`, `switch_on_request`, `open_browser` and `--vram-reserve-mib`). An empty
+field removes the key, the earlier file is kept as `strata-<model>.json.bak`, and the change applies at the next start, or
+at the next switch to that model. Only PolyStrata's own page can save (JSON, with the API key when one is set). Network,
+key, MCP and program keys are not editable there.
 
 | Key | Default | Effect |
 | --- | --- | --- |
@@ -724,8 +745,8 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   open the web page through a proxy or tunnel whose address differs, add it: `"trusted_origins": ["https://strata.example.com"]`.
 - **Browser pages (CORS):** off by default. `"cors_origins": ["https://chat.example.com"]` lets those origins call `/v1/*`;
   `["*"]` lets any page and is only sensible with an API key. It never opens `/settings`, `/unload` or the MCP tools. It
-  belongs to the engine's own server; the desktop app answers browser pages on its own API address and already allows
-  pages of any site there. When you share with other devices or run a tunnel, the shared address answers them too, with an
+  belongs to the engine's own server (the Strata project's desktop app, which this repository does not publish, answers
+  browser pages on its own API address and already allows pages of any site there). When you share with other devices or run a tunnel, the shared address answers them too, with an
   API key: the key decides, not the site. The browser's preflight (`OPTIONS`) is answered without a key, since a browser never
   sends one with it; the request that follows still needs the key. Without an API key the shared address sends no CORS
   headers, so a page of another site cannot read your model through it - only devices on your network can.
@@ -747,8 +768,8 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   `"capabilities": {"tools": true, "chat_completions": true}` on that model in Zed's settings.
 - **Claude Code:** set `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` and `ANTHROPIC_MODEL` to a Claude model name it knows
   (PolyStrata ignores the name), plus any `ANTHROPIC_AUTH_TOKEN` (or your `api_key`).
-- **OpenCode:** a starting point for `opencode.jsonc`. The field names are OpenCode's, so check its config docs if your version
-  differs.
+- **Anthropic requests that don't ask for thinking (opt-in, #278).** By default a `/v1/messages` request with no
+  `"thinking"`, effort or budget thinks as the model's template does. `"anthropic_thinking": "on_request"` in
   `strata-<model>.json` renders a request with no `"thinking"` or budget without thinking, also when it gives an
   effort. That is Anthropic's own rule, and what Claude Code's short helper calls need; its real turns ask for
   thinking when it is on there. Claude Code asks for a session title with effort `high`, no `"thinking"` and 512
@@ -803,6 +824,8 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   with the real one 8 of 12. The engine gives the same tokens
   for the same reads (two such servers agreed in 12 of 12), but where a read starts changes its numbers slightly,
   and that already happens today whenever a request goes on from a checkpoint.
+- **OpenCode:** a starting point for `opencode.jsonc`. The field names are OpenCode's, so check its config docs if your version
+  differs.
 
   ```jsonc
   {
@@ -831,9 +854,25 @@ tables per token). The scaling is fixed for the whole run, because the KV cache 
   }
   ```
 
-  Set `limit.context` to the context you chose in setup and keep `limit.output` well under it. `strata connect` writes
-  configurations for these apps for you.
+  Set `limit.context` to the context you chose in setup and keep `limit.output` well under it.
 - **Codex CLI:** [below](#the-responses-api-and-codex-cli).
+- **Switching models on request (#38, opt-in).** `"switch_on_request": true` in the `strata-<model>.json` the server
+  starts with (or `--switch-on-request`) makes the API work like llama-server's router: `/v1/models` lists every
+  installed model that can run (each `strata-<model>.json` beside that config, with its aliases; status `loaded`,
+  `unloaded` or `loading`), and a request that names another one loads it: the loaded model is stopped first (one
+  model is in memory at a time), then the named one starts with its own settings (Switching models in the web page,
+  below). The name must be a model's name, one of its aliases or its config file's name, whole
+  (`tiel-coder-35b-a3b-ud-q4_k_xl` or `strata-tiel-ud-q4_k_xl`, not `tiel`), so a client never starts a switch by
+  accident; any other name, or none, is answered by the loaded model, as without the key. Requests already running
+  finish first; requests are served in the order they came, and when a switch is done every request waiting for that
+  model goes together.
+  `/v1/messages/count_tokens` counts with the named model's tokenizer and template without loading it.
+  `POST /v1/load {"model": "<name>"}` switches the same way. A model that cannot run answers 400 with the reason,
+  one that does not start 503 (the earlier one is loaded again). Measured on an RTX 4060 Laptop (8 GB, Linux, 46 GB
+  RAM) with five installed models (Gemma 4 26B-A4B in two quantizations, Tiel Coder 35B-A3B, LFM2.5-24B-A2B,
+  MiniCPM-V 4.7), driven with the OpenAI Python SDK: over two runs a switch took 32-86 s from the request to its
+  short answer (the earlier model stopped, the named one loaded, the reply written), and one engine ran at a time
+  throughout.
 
 ### Conversation cache
 
@@ -886,7 +925,8 @@ in a RAM copy, as much as the RAM available at the start allows after a headroom
   fell to 0.9 GiB during the copy. `STRATA_RESIDENT_HEADROOM_GIB`, when set, decides the headroom instead of both (testers).
 - With W = 0 nothing about the fallback changes: the full system is used, the arena whenever it fits, with no margin, and the copy leaves
   the safety headroom. The explicit modes (`--resident-budget-gib N`, `--resident-experts`) leave `max(W, their own 4 GiB)`.
-- The app's "Leave 20% for my work" passes W = clamp(ceil(0.2 x RAM in GB), 5, 8) as `STRATA_RAM_KEEP_GIB` in the run config's env (not as the flag, so an older engine chosen in the Engine tab, which ignores an env variable, still starts); `strata serve` and full performance pass nothing. A setup-written `--resident-budget-gib` in the run config is a RAM mode of its own: with it the app adds no `STRATA_RAM_KEEP_GIB`, and for UD-Q4_K_XL and UD-IQ4_XS "Leave 20% for my work" starts the engine with the earlier rule's number, on the started copy only and never saved (`"ui_budget_work_gib"`, the RAM less 24 GB; the Terminal and full performance keep the RAM less 17 GB).
+- In a PolyStrata install, add `"--ram-keep-gib", "W"` to the run config's `"args"`, or `STRATA_RAM_KEEP_GIB` to its `"env"`.
+  The Strata project's app does it for you: its "Leave 20% for my work" passes W = clamp(ceil(0.2 x RAM in GB), 5, 8) as `STRATA_RAM_KEEP_GIB` in the run config's env (not as the flag, so an older engine chosen in the Engine tab, which ignores an env variable, still starts); `strata serve` and full performance pass nothing. A setup-written `--resident-budget-gib` in the run config is a RAM mode of its own: with it the app adds no `STRATA_RAM_KEEP_GIB`, and for UD-Q4_K_XL and UD-IQ4_XS "Leave 20% for my work" starts the engine with the earlier rule's number, on the started copy only and never saved (`"ui_budget_work_gib"`, the RAM less 24 GB; its Terminal and full performance keep the RAM less 17 GB).
 - `STRATA_ARENA_FALLBACK_RESIDENT=0` keeps the plain file source for the fallback (testers).
 - The RAM copy is page-locked. `STRATA_RESIDENT_PIN=0` keeps it in ordinary pageable memory, as with `--resident-budget-gib`. Under a
   tight memory limit the system can then swap part of it out: with a 51.75 GiB limit on an R9700 PC (explicit 45.24 GiB budget, one run)
@@ -900,28 +940,15 @@ stage. Parked snapshots are not kept across restarts; session files are. `STRATA
 retention for diagnostics. The Monitor tab's **Conversation cache** card shows parked, restored and evicted counts and the
 prompt tokens the cache gave back; `/metrics` has the same under `"conversation_cache"`.
 
+strata-poly writes each parked conversation to a temporary file between requests and frees its RAM; a later restore maps
+that file instead of reading from RAM. `STRATA_NO_SPILL` set to a nonzero value (in the config's `"env"`) keeps every
+parked conversation in RAM instead: parking still works, and RAM use grows accordingly.
+
 ### Session files (disk)
 
 The conversation the engine holds can be saved to a file and restored later, also after a restart of the same engine version,
 so a long prompt is not read again. Start the server with `--slot-save-path DIR` (or `"slot_save_path"` in the config). The
 file format is PolyStrata's own, not llama.cpp's, and there is no erase action.
-- **Switching models on request (#38, opt-in).** `"switch_on_request": true` in the `strata-<model>.json` the server
-  starts with (or `--switch-on-request`) makes the API work like llama-server's router: `/v1/models` lists every
-  installed model that can run (each `strata-<model>.json` beside that config, with its aliases; status `loaded`,
-  `unloaded` or `loading`), and a request that names another one loads it: the loaded model is stopped first (one
-  model is in memory at a time), then the named one starts with its own settings (Switching models in the web page,
-  below). The name must be a model's name, one of its aliases or its config file's name, whole
-  (`tiel-coder-35b-a3b-ud-q4_k_xl` or `strata-tiel-ud-q4_k_xl`, not `tiel`), so a client never starts a switch by
-  accident; any other name, or none, is answered by the loaded model, as without the key. Requests already running
-  finish first; requests are served in the order they came, and when a switch is done every request waiting for that
-  model goes together.
-  `/v1/messages/count_tokens` counts with the named model's tokenizer and template without loading it.
-  `POST /v1/load {"model": "<name>"}` switches the same way. A model that cannot run answers 400 with the reason,
-  one that does not start 503 (the earlier one is loaded again). Measured on an RTX 4060 Laptop (8 GB, Linux, 46 GB
-  RAM) with five installed models (Gemma 4 26B-A4B in two quantizations, Tiel Coder 35B-A3B, LFM2.5-24B-A2B,
-  MiniCPM-V 4.7), driven with the OpenAI Python SDK: over two runs a switch took 32-86 s from the request to its
-  short answer (the earlier model stopped, the named one loaded, the reply written), and one engine ran at a time
-  throughout.
 
 ```bash
 curl -X POST "http://127.0.0.1:8080/slots/0?action=save"    -H "Content-Type: application/json" -d '{"filename": "chat1.bin"}'
@@ -953,64 +980,6 @@ curl -X POST "http://127.0.0.1:8080/slots/0?action=restore" -H "Content-Type: ap
   only for this feature. Exact token replay across restarts is not guaranteed: expert residency and CPU/GPU rounding can
   change later output.
 
-### The web page (Chat, Images, Monitor, About)
-
-Open the server's address in a browser. Everything in it runs from the server's own files: no CDN, no outside address. Chats,
-settings and the API key stay in the browser.
-
-**Chat settings** (the button next to the message box) holds the sampling and thinking settings and the switches below. Every
-switch below is **off by default**; with all of them off the page behaves as it did before.
-
-- **Render math.** Equations written as `\( ... \)`, `\[ ... \]`, `$x$` or `$$ ... $$` are drawn as formulas by KaTeX 0.19.0, which
-  ships in `terminal/serve/web/vendor/katex` (MIT; `PROVENANCE.json` there lists the package and a hash of every file). The text of a
-  message is never changed: copying, the Markdown export and the next request all carry what the model wrote. Code, prices
-  (`$5 and $10`) and a formula still being written stay text. A formula KaTeX cannot read stays as its source. A formula can only
-  draw: it cannot make a link, load a picture or run anything (`\href`, `\url`, `\includegraphics` and `\htmlClass` are shown as
-  their own names).
-- **Saved chats list.** Keeps every chat in a list on the left, with search over titles and text, rename, delete (with Undo) and
-  days as headings. The chats live in this browser's IndexedDB; a picture or file is kept by name only. Nothing goes to the server.
-  In a private window, or when the browser's storage is full, the list stays in memory and the page says so once. Turning it on
-  keeps the chat on the screen as the first one in the list; turning it off keeps that chat as the single chat.
-- **Edit and rewind messages.** Under each message: **Regenerate** (a new answer to the same question), **Edit answer** (correct its
-  text; the old thinking and tool calls go and no request is sent) and **Rewind to here**. Rewind asks what you want. On your
-  message, **Edit and send again here** hides it and the messages after it and puts it in the box; on an answer, **Continue from
-  here** hides the messages after it. **Branch from here** (needs the saved chats list) starts a new chat from the messages up to
-  that point and leaves this chat as it is; the branch keeps a name such as "Branch of ..." and links back to the original. An
-  **Undo** bar above the box brings back what was hidden, until your next question, another chat or a reload. A picture or file
-  that was only kept by name is not sent again: the page asks you to attach it again.
-- **When you send while it is answering.** *Wait* (the default): Send is off until the answer is done. *Send after*: your message
-  waits and goes when the answer is done. *Interrupt*: the answer stops where it is, what was written stays and is marked
-  interrupted, and your message goes at once; a tool that is running finishes first. Only one message waits, and **Take back**
-  returns it to the box. Stop keeps a waiting message for you to send yourself.
-
-An answer's ` ```svg ` or ` ```html ` block gets a **Preview** button. The code is drawn in a frame that is cut off from the page:
-an empty sandbox (no scripts, forms, popups or downloads, and no access to the page, its storage or the server), a policy inside
-the frame that allows no address at all, and a page header (`Content-Security-Policy: frame-src 'none'`) that keeps a link or a
-redirect in the model's HTML from loading a web page into it. An svg is shown as a picture. For an HTML page there is also a
-warning button, **Run scripts**: after you confirm, that one block runs with scripts, still with no way to the page and no network,
-until you close the preview. It can still use your CPU, and it is code the model wrote.
-
-**Load / Unload** in the header loads the model or frees the GPU (`POST /load`, `POST /unload`). It asks before unloading and is off
-while an answer is being written or an image is made.
-
-**Language.** About > Settings lists the page's languages: English (the default), German, Spanish, Japanese, Korean, Portuguese,
-Russian and Chinese. The Chat view, its settings and the header are translated; Monitor, Images and About are still English. A
-language is a file `serve/web/locales/<lang>.json`; the English text lives in the code next to its key, and
-`python terminal/tools/web_i18n.py` checks every file for the same keys and placeholders (`--write` rewrites `en.json`). `/?lang=de` shows a
-language for one visit.
-
-Tests: `serve/test_web_*.py` and `serve/test_web_*.js` (Node), and a browser run against a stand-in server with no model:
-`WEBTEST_MODULES=<folder with puppeteer-core> node terminal/tools/webtest/browser_test.mjs`. `terminal/tools/webtest/shots.mjs` takes the page's
-screenshots.
-
-### API request monitor
-
-Off by default, because it keeps prompts and answers in memory. Turn it on with `"api_monitor": true` or
-`terminal/serve/server.py --api-monitor`; otherwise the two endpoints answer 404. `/api-monitor` shows the model state, load and unload
-controls, active and queued requests, request bodies, output, separate reasoning and response bodies, with load, queue,
-first-token and decode timings. `GET /api/requests` returns summaries and `GET /api/requests?id=<id>` one request. The
-monitor keeps the newest 100 requests in memory until restart, 262,144 characters per field, with visible truncation flags.
-Headers are not recorded. Treat the history as sensitive when PolyStrata is reachable from a network, and set an API key.
 **strata-poly's session files.** strata-poly takes the same two requests and answers them in the same lines, with a
 file format of its own (the two engines do not read each other's files). A file holds the conversation in the engine
 as it stands: its tokens, its last two checkpoints (where its last turn began and the end of its prompt) with the
@@ -1057,6 +1026,106 @@ and in 0.32 s with the file in it, where reading the prompt from its start took 
 last token and wrote the 64 tokens the first engine wrote without a restore. After a file with one bit changed was
 refused, the engine wrote what a new engine writes for the same prompt.
 
+### The web page (Chat, Images, Monitor, Requests, About)
+
+Open the server's address in a browser. Everything in it runs from the server's own files: no CDN, no outside address. Chats,
+settings and the API key stay in the browser. Its tabs:
+
+- **Chat:** streaming answers, the model's thinking (folded away once it answers), code with a copy button, pictures when
+  images are on, and the sampling and thinking-level settings.
+- **Images:** only when image generation is set up ([IMAGES.md](IMAGES.md)).
+- **Monitor:** what the model is doing (reading the prompt, with progress, or writing, at how many tokens/s); GPU load,
+  VRAM, temperature, power and PCIe traffic; CPU and disk; the conversation cache and the MCP servers.
+- **Requests:** always there. With the [API request monitor](#api-request-monitor) on, it has a button that opens
+  `/api-monitor` in a browser tab of its own (the page's security policy allows no frames); with the monitor off, it says
+  how to turn it on.
+- **Experts:** only when the model saves its learned expert profile (`"expert_profile_save"`), a grid of the experts'
+  ranks.
+- **About:** the model and engine settings, the Model settings card ([config keys](#config-keys)),
+  and the addresses to connect other apps.
+
+**The model list.** With more than one model installed, a list at the top of the page shows them; one that cannot run is
+greyed out, with the reason as its tooltip. Choosing another one stops the model in memory and loads the chosen one. Then
+the chat starts over as New chat does it, since the answers on the screen came from the other model: **Undo** in the
+toast brings the earlier chat back (with the saved chats list on, it stays in the list). A question sent while the switch
+runs is answered by the new model and kept. A switch the server refuses leaves the chat and the list as they were, and
+the toast says why (the server starts the earlier model again). While an answer is being written the list does not
+switch. It uses `GET /api/models` and `POST /api/models/load` ([BACKENDS.md](BACKENDS.md#changing-the-model)), and each
+model runs with its own `strata-<model>.json` settings.
+
+**Another answer.** Under every answer, **↻** writes another answer to the same question and keeps the one it replaces
+as a variant: **‹** and **›** go between them, round and round, and a count such as `2/3` says which one is on the
+screen. The variants are saved with the chat. A new answer drops the variants after the one on the screen; one that fails,
+or is stopped before it writes anything, puts the earlier answer back, and a stopped one keeps what it wrote. For an
+earlier answer the request ends with its question; the messages after it stay in the chat, and the page says that the
+next question still sends them.
+
+**Editing your question.** On each of your messages, the pencil button (**✎**, Edit) edits it in place (**Save** or Ctrl+Enter, Cmd+Enter on a
+Mac; **Cancel** or Escape; neither key acts inside an input method's conversion). An empty or unchanged text changes nothing. Saving a
+changed text removes the messages after it, tool calls and their results included, since they answered the old wording,
+and writes a new answer. When messages were removed, a toast offers **Undo**, which puts the old question and the removed messages back as long as no
+other question was sent after the edit. A question whose pictures or files the browser kept by name only is not edited,
+since a new request would go without them. **Rewind to here** (Chat settings, below) is the other way to change a
+question: it puts it back into the message box. **↻**, **‹ ›** and **✎** are off while an answer is being written, while
+a message waits to be sent and while a Rewind panel or an answer editor (below) is open.
+
+**Chat settings** (the button next to the message box) holds the sampling and thinking settings and the switches below. Every
+switch below is **off by default**; with all of them off the page behaves as it did before.
+
+- **Render math.** Equations written as `\( ... \)`, `\[ ... \]`, `$x$` or `$$ ... $$` are drawn as formulas by KaTeX 0.19.0, which
+  ships in `terminal/serve/web/vendor/katex` (MIT; `PROVENANCE.json` there lists the package and a hash of every file). The text of a
+  message is never changed: copying, the Markdown export and the next request all carry what the model wrote. Code, prices
+  (`$5 and $10`) and a formula still being written stay text. A formula KaTeX cannot read stays as its source. A formula can only
+  draw: it cannot make a link, load a picture or run anything (`\href`, `\url`, `\includegraphics` and `\htmlClass` are shown as
+  their own names).
+- **Saved chats list.** Keeps every chat in a list on the left, with search over titles and text, rename, delete (with Undo) and
+  days as headings. The chats live in this browser's IndexedDB; a picture or file is kept by name only. Nothing goes to the server.
+  In a private window, or when the browser's storage is full, the list stays in memory and the page says so once. Turning it on
+  keeps the chat on the screen as the first one in the list; turning it off keeps that chat as the single chat.
+- **Edit and rewind messages.** Under each message: **Rewind to here**; under each answer also **Edit answer** (correct its
+  text; the old thinking and tool calls go and no request is sent); under a question left without an answer, **Regenerate**
+  (another answer to an answer is **↻**, above). Rewind asks what you want. On your
+  message, **Edit and send again here** hides it and the messages after it and puts it in the box; on an answer, **Continue from
+  here** hides the messages after it. **Branch from here** (needs the saved chats list) starts a new chat from the messages up to
+  that point and leaves this chat as it is; the branch keeps a name such as "Branch of ..." and links back to the original. An
+  **Undo** bar above the box brings back what was hidden, until your next question, another chat or a reload. A picture or file
+  that was only kept by name is not sent again: the page asks you to attach it again.
+- **When you send while it is answering.** *Wait* (the default): Send is off until the answer is done. *Send after*: your message
+  waits and goes when the answer is done. *Interrupt*: the answer stops where it is, what was written stays and is marked
+  interrupted, and your message goes at once; a tool that is running finishes first. Only one message waits, and **Take back**
+  returns it to the box. Stop keeps a waiting message for you to send yourself.
+
+An answer's ` ```svg ` or ` ```html ` block gets a **Preview** button. The code is drawn in a frame that is cut off from the page:
+an empty sandbox (no scripts, forms, popups or downloads, and no access to the page, its storage or the server), a policy inside
+the frame that allows no address at all, and a page header (`Content-Security-Policy: frame-src 'none'`) that keeps a link or a
+redirect in the model's HTML from loading a web page into it. An svg is shown as a picture. For an HTML page there is also a
+warning button, **Run scripts**: after you confirm, that one block runs with scripts, still with no way to the page and no network,
+until you close the preview. It can still use your CPU, and it is code the model wrote.
+
+**Load / Unload** in the header loads the model or frees the GPU (`POST /load`, `POST /unload`). It asks before unloading and is off
+while an answer is being written or an image is made.
+
+**Language.** About > Settings lists the page's languages: English (the default), German, Spanish, Japanese, Korean, Portuguese,
+Russian and Chinese. The Chat view, its settings and the header are translated; Monitor, Images and About are still English. A
+language is a file `serve/web/locales/<lang>.json`; the English text lives in the code next to its key, and
+`python terminal/tools/web_i18n.py` checks every file for the same keys and placeholders (`--write` rewrites `en.json`). `/?lang=de` shows a
+language for one visit.
+
+Tests: `serve/test_web_*.py` and `serve/test_web_*.js` (Node), and a browser run against a stand-in server with no model:
+`WEBTEST_MODULES=<folder with puppeteer-core> node terminal/tools/webtest/browser_test.mjs`. `terminal/tools/webtest/shots.mjs` takes the page's
+screenshots.
+
+### API request monitor
+
+Off by default, because it keeps prompts and answers in memory. Turn it on with `"api_monitor": true` or
+`terminal/serve/server.py --api-monitor`; otherwise the two endpoints answer 404. Open `/api-monitor`, or the web page's
+Requests tab, which opens it in a tab of its own, to look at the API traffic without opening a chat. It shows the model
+state, load and unload controls, active and queued requests, request bodies, output, separate reasoning and response
+bodies, with load, queue, first-token and decode timings. `GET /api/requests` returns summaries and
+`GET /api/requests?id=<id>` one request. The monitor keeps the newest 100 requests in memory until restart, 262,144
+characters per field, with visible truncation flags. Headers are not recorded. The page keeps the key you give it in that
+browser tab's session storage, and takes the API key and the theme the web page keeps in this browser, so a server with a
+key does not ask for it again. Treat the history as sensitive when PolyStrata is reachable from a network, and set an API key.
 
 ---
 
@@ -1185,7 +1254,7 @@ uses only Python's standard library. Config snippets for every client, the tool 
 
 Qwen3.8-Flash-Next has a vision encoder (`mmproj-Qwen3.8-Flash-Next-BF16.gguf`, 0.9 GB). Qwen3.6-35B-A3B reads pictures the
 same way with its own `mmproj-F16.gguf` ([QWEN36.md](QWEN36.md)). Pictures are **on by default** wherever a model can read
-them. The app, `strata launch` and setup use one rule for the reader:
+them. Setup uses one rule for the reader:
 
 | Graphics memory | Default reader | Cost |
 | --- | --- | --- |
@@ -1205,7 +1274,7 @@ encoder on an i9-9980HK, 8 threads: 2560x1440 (3,600 tokens) encodes in about 13
 52 s and 800x450 in about 5 s. The same picture sent again, as an agent does with its history, takes about 1 s,
 because the encoder's cache and the conversation cache both hold it.
 
-Switch pictures off with `--vision no` (or "No" in the app and `strata launch`), or pick the reader with `--vision gpu` or
+Switch pictures off with `--vision no` (or "no" to setup's question), or pick the reader with `--vision gpu` or
 `--vision cpu`. Setup downloads the encoder and puts a small helper (`strata-vision`, PolyStrata's own picture reader) beside
 the engine. Where no reader exists, pictures stay off and the screen says so (the Intel Arc engine has none yet). On AMD the
 card's reader is `strata-vision-hip`; if it cannot start, the server starts the CPU reader and prints one line ([AMD_HIP.md](AMD_HIP.md)).
@@ -1288,13 +1357,13 @@ the experts are cached (`STRATA_TAIL_SKIP_MAX_CACHED=<percent>` moves that line;
 slightly from a run without it.
 
 - **Default.** Off, in every mode. Setup writes `STRATA_ROUTE_TAIL_SKIP=0` into the Unsloth run configs, and PolyStrata sets the same
-  value at every engine start (Terminal, the app, Docker) when neither the run config nor your own environment names the setting,
+  value at every engine start when neither the run config nor your own environment names the setting,
   so an install made before 0.2.17 starts with it off too. Engine 0.1.62 and older read an unset value as rank 7 on CUDA; the
   engine itself will read an unset value as off from 0.1.63.
-- **Turn it on.** `STRATA_ROUTE_TAIL_SKIP=7`: in the app, Expert settings, "Skip rarely used parts of the model" = On; in the
-  Terminal, `strata launch --set STRATA_ROUTE_TAIL_SKIP=7`; or in the `"env"` of the model's run config. Your own environment
+- **Turn it on.** `STRATA_ROUTE_TAIL_SKIP=7` in the `"env"` of the model's run config. Your own environment
   variable is used when the run config has no entry; a value in the run config wins over it. `1` to `9` choose another rank;
-  only 7 was measured. A 0.2.16 install that had it on "Automatic" runs with it off after the update and can be set to On again.
+  only 7 was measured. This is the Qwen3.8-Flash-Next engine's setting; strata-poly's `--tail-skip` is its own
+  ([BACKENDS.md](BACKENDS.md)).
 - **Speed and quality** (UD-Q4_K_XL, RTX 5090, DFlash2 `--spec 6`, 48 prompts, 12,288 forced-token positions, KL against exact
   routing; `phaseA-tests/bw/DECISION-TAIL-SKIP.md`):
 
@@ -1339,7 +1408,7 @@ them on your own card.
 | `STRATA_PW_WITH_BATCH=1` | CUDA/HIP layer split with `--pipeline-windows 2` and `--batch` slots | A request that is alone keeps the pipelined windows beside the batch slots; batch windows run without them. | 2x RTX A6000 IQ3_S: lone request +14% on code, +9% on a file rewrite, +3% on a long decode; two requests at once not slower. The second verifier takes about 270 MiB of the first card. |
 | `STRATA_MTP_ROOM_MIN=TOKENS` | CUDA, `--serve` with `--mtp`, no `--batch` | A request that reads at least TOKENS prompt tokens uses the draft layer's 512 decode-only experts (about 675 MiB) as extra ring slots while it is read, then gets them back. | The author measured +17 to +23% prompt on an 8 GB RTX 2060 SUPER; on a P100 limited to 8 GB (ring 8 to 311 slots) it gave +0.5% (CPU share off) and nothing with defaults. Off by default. |
 | `STRATA_IQ_MT_MIN=1`, `STRATA_IQ3S_MT1=1` | CPU | See [Draft layer](#draft-layer) (reproducible output; the second gives IQ3_S the multi-token kernel for one token on Alder Lake and later without AVX-512). | |
-| `STRATA_ROUTE_PRIOR`, `STRATA_ROUTE_RESIDENT`, `STRATA_ROUTE_RESIDENT_MTP` | CUDA | Routing changes that add speed and also add KL. | Off by default. `STRATA_ROUTE_PRIOR=1.5` makes the router prefer experts that are already on the card; it is the one worth trying, on a discrete NVIDIA card of 13 GiB or less (an RTX 3060 12 GB, IQ3_XXS: story +15%, code +37% decode against off). It is an opt-in because it can repeat itself and give weaker results in long agent sessions (#4402; our own check on that card: out of 10 agent tasks 4.5 passed on average over 4 runs at 1.5, against 5.6 over 7 runs with the prior off, where the off runs alone ranged from 4 to 6; a stronger setting, 2.0, showed copy and code defects). Recommended for a 12 GB card used mostly for chat and short answers, not for long agent runs. 0.2.7 turned 1.5 on by itself on those cards and 0.2.8 took that back (owner decision of 2026-10-29): with nothing set, the engine routes exactly as 0.2.6 did (the same as `STRATA_ROUTE_PRIOR=0` and as `STRATA_DEFAULTS=026`). Turn it on: the Expert-settings row "Faster answers on 12 GB NVIDIA cards" (it writes `STRATA_ROUTE_PRIOR=1.5`; shown only for a discrete NVIDIA card of 13 GiB or less), `strata launch --set STRATA_ROUTE_PRIOR=1.5`, or the variable itself. Any value you set wins on every card; it is never on by itself. |
+| `STRATA_ROUTE_PRIOR`, `STRATA_ROUTE_RESIDENT`, `STRATA_ROUTE_RESIDENT_MTP` | CUDA | Routing changes that add speed and also add KL. | Off by default. `STRATA_ROUTE_PRIOR=1.5` makes the router prefer experts that are already on the card; it is the one worth trying, on a discrete NVIDIA card of 13 GiB or less (an RTX 3060 12 GB, IQ3_XXS: story +15%, code +37% decode against off). It is an opt-in because it can repeat itself and give weaker results in long agent sessions (#4402; our own check on that card: out of 10 agent tasks 4.5 passed on average over 4 runs at 1.5, against 5.6 over 7 runs with the prior off, where the off runs alone ranged from 4 to 6; a stronger setting, 2.0, showed copy and code defects). Recommended for a 12 GB card used mostly for chat and short answers, not for long agent runs. 0.2.7 turned 1.5 on by itself on those cards and 0.2.8 took that back (owner decision of 2026-10-29): with nothing set, the engine routes exactly as 0.2.6 did (the same as `STRATA_ROUTE_PRIOR=0` and as `STRATA_DEFAULTS=026`). Turn it on: `"STRATA_ROUTE_PRIOR": "1.5"` in the `"env"` of the model's run config, or the variable itself (the Strata project's app has an Expert-settings row for it). Any value you set wins on every card; it is never on by itself. |
 | `STRATA_HOST_CORE=last\|sibling` (or `--host-core`) | Windows | `last` puts the host thread on the last physical core, away from the core that gets the GPU's interrupts. `sibling` keeps it on the first core's other hardware thread, so the workers keep every core. The default `first` leaves a hybrid CPU as it is. | One layer-split box went from a ±6% swing to steady and 8% faster. |
 | `--pool-affinity measure` | Hybrid CPUs, native packs | Times the `all` and `p-cores` layouts at start (about a second) and takes the faster. The measurement is taken once; where the E-cores' speed changes while the engine runs, `--pool-affinity p-cores` is the steady choice. | |
 | `STRATA_KEEP_EMPTY_TURNS=1`, `STRATA_TOPK_STREAM=0` | | See [TROUBLESHOOTING.md](TROUBLESHOOTING.md). | |
@@ -1482,7 +1551,7 @@ thread of every core first. The engine reads the pairing from the system (Window
 showing only the first logical processors busy does not mean the pool is misplaced. The CPU picture encoder is a separate process
 that the OS places.
 
-`--pool-cores LIST` (or `STRATA_POOL_CORES=LIST`, `"pool_cores": "2,4,6,8"` in the config, or `strata launch --pool-cores 2,4,6,8`)
+`--pool-cores LIST` (or `STRATA_POOL_CORES=LIST`, `"pool_cores": "2,4,6,8"` in the config)
 pins the workers to exactly these logical processors, in this order. Use it to leave cores for other programs, use one chiplet
 or test a layout. The list is numbers, ranges and `first-last:step` (`0,2,4,6`, `2-14:2`), as Task Manager and `lscpu` show them.
 The worker count is the length of the list; `--pool-workers N` takes the first N entries. Nothing is refused. The engine warns
@@ -1577,7 +1646,11 @@ ceiling 32768 -> 16384 -> 8192 when the RAM available does not cover the extra l
 or `STRATA_DEFAULTS=026` keep 8192 (`STRATA_NV_CHUNK=16` keeps 16384); `--prefill N`, `auto:N` and `STRATA_PREFILL_AUTO_MAX` are
 never changed. `STRATA_ROUTE_PRIOR` raises KL and is an opt-in again in 0.2.8 (0.2.7 set 1.5 by itself on a discrete NVIDIA card of 13 GiB or less, and the owner took that back on 2026-10-29 because of repetition loops and weaker results in long agent sessions, #4402). `STRATA_ROUTE_PRIOR=1.5` on an RTX 3060 12 GB: story +15%, code +37%, 80 tasks with no copy or code errors, but 4.5 of 10 agent tasks against 5.6 with it off.
 
-## strata-poly: flash attention for prompt reading (on by default; `STRATA_FATTN=0` turns it off)
+## strata-poly: flash attention for prompt reading (a `-DSTRATA_POLY_MMQ=ON` build; `STRATA_FATTN=0` turns it off)
+
+strata-poly is built without llama.cpp by default, and that build leaves this kernel out: the prompt's attention takes
+the old path below. A build with `-DSTRATA_POLY_MMQ=ON` (llama.cpp's kernels
+from a checkout given as `-DSTRATA_GGML_DIR`, an override kept for two releases) has it, on by default, as follows.
 
 For strata-poly's Qwen3.6 family, including Ornith 122B (heads of 256 values, 8 or 16 heads a group), on an
 Ampere or later NVIDIA card. A prompt batch's attention runs through llama.cpp's flash-attention kernel
@@ -1648,7 +1721,7 @@ both and of neither were the same 128 tokens at 32K and parted at token 85 at 10
 | --- | --- |
 | `the NVIDIA driver is too old` | Update the driver, restart, run setup again. |
 | Python or the build tools could not be installed | Install what it names (links are printed), then run it again. Everything already done is kept. |
-| `port 8080 is already in use` | PolyStrata is already running, or another program uses the port: `strata launch --port 8081` (source checkout: `START-HERE.bat --port 8081`). |
+| `port 8080 is already in use` | PolyStrata is already running (look for its window), or another program uses the port: `START-HERE.bat --port 8081`. |
 | `cudaHostRegister ... out of memory` in the log | Normal on Windows: the engine pins the experts in per-layer slices instead. A problem only if the load then fails. |
 | `ExpertCache: cudaMalloc(...) failed: out of memory` although VRAM is free | Windows' page file is off or tiny. Every allocation on the card is also charged to Windows' commit (RAM + page file). Set a fixed page file size, the same initial and maximum (for example 65536 MB), and restart. The engine retries with a smaller cache, and setup warns about a page file under 4 GB. |
 | The first start takes minutes, or the PC freezes for a few minutes | The engine is reading 34-55 GB into RAM, pinning part of it and sizing the expert cache. Wait. The second start is faster while the files are in the OS cache. Still frozen after 10 minutes: restart, close other programs, or pick a smaller size. |
@@ -1665,8 +1738,7 @@ both and of neither were the same 128 tokens at 32K and parted at token 85 at 10
 | `no progress for 60 s ... reading the prompt` on Linux with `threads waiting on the disk (state D)` in the stall report | The engine waits for the drive: the n-gram table is read at random (`--ple-io direct`), which a rotational disk cannot keep up with. `--ple-io ram` (needs RAM for the table) or the model on an SSD fixes it. Setup adds `--ple-io ram` itself on a rotational disk when the RAM holds the table. |
 | `the engine said nothing for ... s during the request` | The engine and the server lost step. The server ends the engine after `engine_silence_s` (300 by default), the request ends with an error and the next request starts the engine again. If it repeats, add the end of the engine log to issue #481. |
 | `the engine said nothing for ... s and used no CPU or disk in that time (frozen ...)` | A quicker version of the check above for an engine that stopped, not slowed: after 90 s the server ends it. `STRATA_ENGINE_STALL_S=180` sets the time, `0` turns it off (needs `psutil`, which setup installs). |
-| The desktop app or the Terminal could not find an engine, or a Mac says an app is "damaged" | [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-desktop-app-and-the-terminal). |
-| Anything else | The engine log is `strata-<model>.log` in this folder. In the app: Settings, Engine, Diagnostics, View logs, Save logs. In the Terminal: `strata doctor`. |
+| Anything else | The engine log is `strata-<model>.log` in the `terminal` folder. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) has the rest. |
 
 ---
 
