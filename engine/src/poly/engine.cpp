@@ -3112,7 +3112,10 @@ void Engine::load(const Options& o) {
             pool_size_of_[il] = (uint8_t) c;
             for (int e = 0; e < n_expert_; ++e) outside[c] += L.slot[(size_t) e] ? 0 : b;
         }
-        const size_t want = ((size_t) opt_.ram_experts_mib << 20) / 4;   // a quarter of the budget; kept_ has the rest
+        // The whole budget, so that kept_ (ram_keep()) has none of it: an expert kept in the mapping is a page of the
+        // file cache, which the system takes back when RAM runs short, and the CPU then faults it in a few pages at
+        // a time.  pool_'s slots are the process's own memory and stay.
+        const size_t want = (size_t) opt_.ram_experts_mib << 20;
         size_t all = 0, slots = 0;
         for (size_t b : outside) all += b;
         for (size_t c = 0; c < pool_sizes_.size(); ++c) {
