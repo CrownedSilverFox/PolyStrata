@@ -230,54 +230,87 @@ gemm_small_kernel(const float* __restrict__ w, const float* __restrict__ x, floa
     if (t < rows && o < n_out) y[size_t(t) * n_out + o] = acc;
 }
 
-// gemm_small_kernel for more outputs (a router's 128 or 256): a block TILE_TOK tokens and TILE_OUT outputs, a thread
-// 4 of each, so a value read from shared memory serves 4 products where it served one.  For 2,048 tokens of 2,048
-// values and 256 outputs gemm_small_kernel took 0.34 ms on an RTX 5090, 241 ms of the 3.7 s Flint read a prompt of
-// 29,816 tokens in.  Each output is still one fmaf after the other in the inputs' order: the same bits.
-constexpr int TILE_TOK = 32, TILE_OUT = 64, TILE_K = 32;
+// gemm_small_kernel for more outputs (a router's 128 or 256), and for up to 64 where it would take many blocks a
+// multiprocessor (small_waves()): a block TT tokens and TO outputs, a thread PT and PO of them, so a value read from
+// shared memory serves PO or PT products where it served one.  For 2,048 tokens of 2,048 values and 256 outputs
+// gemm_small_kernel took 0.34 ms on an RTX 5090, 241 ms of the 3.7 s Flint read a prompt of 29,816 tokens in.  The
+// next step's values are read while this one is multiplied (with 256 outputs 162 -> 117 us on an RTX PRO 6000).
+// Each output is still one fmaf after the other in the inputs' order: the same bits.
+constexpr int TILE_K = 32;
+template <int N> struct Floats;
+template <> struct Floats<2> { using type = float2; };
+template <> struct Floats<4> { using type = float4; };
 
-__global__ void __launch_bounds__(TILE_TOK * TILE_OUT / 16)
+template <int TT, int TO, int PT, int PO>
+__global__ void __launch_bounds__(TT * TO / (PT * PO))
 gemm_tile_kernel(const float* __restrict__ w, const float* __restrict__ x, float* __restrict__ y, int n_in, int n_out,
                  int rows) {
-    constexpr int THREADS = TILE_TOK * TILE_OUT / 16;
-    // a step's inputs and weights by input, so a thread reads its 4 tokens' and 4 outputs' values as one float4
-    __shared__ __align__(16) float sx[TILE_K][TILE_TOK + 4], sw[TILE_K][TILE_OUT + 4];
-    const int t0 = blockIdx.x * TILE_TOK, o0 = blockIdx.y * TILE_OUT;
-    const int to = 4 * (threadIdx.x / (TILE_OUT / 4)), oo = 4 * (threadIdx.x % (TILE_OUT / 4));
-    float acc[4][4];
+    constexpr int THREADS = TT * TO / (PT * PO);
+    // a step's inputs and weights by input, so a thread reads its PT tokens' and PO outputs' values at once
+    __shared__ __align__(16) float sx[TILE_K][TT + 4], sw[TILE_K][TO + 4];
+    const int t0 = blockIdx.x * TT, o0 = blockIdx.y * TO;
+    const int to = PT * (threadIdx.x / (TO / PO)), oo = PO * (threadIdx.x % (TO / PO));
+    float acc[PT][PO];
 #pragma unroll
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < PT; ++i)
 #pragma unroll
-        for (int j = 0; j < 4; ++j) acc[i][j] = 0.0f;
-    for (int k0 = 0; k0 < n_in; k0 += TILE_K) {
-        for (int i = threadIdx.x; i < TILE_TOK * TILE_K; i += THREADS) {
-            const int t = t0 + i / TILE_K, k = k0 + i % TILE_K;
-            sx[i % TILE_K][i / TILE_K] = t < rows && k < n_in ? x[size_t(t) * n_in + k] : 0.0f;
+        for (int j = 0; j < PO; ++j) acc[i][j] = 0.0f;
+    // the next step's inputs and weights, read while this one is multiplied
+    constexpr int XN = TT * TILE_K / THREADS, WN = TO * TILE_K / THREADS;
+    float xr[XN], wr[WN];
+    const auto fetch = [&](int k0) {
+#pragma unroll
+        for (int j = 0; j < XN; ++j) {
+            const int i = threadIdx.x + j * THREADS, t = t0 + i / TILE_K, k = k0 + i % TILE_K;
+            xr[j] = t < rows && k < n_in ? x[size_t(t) * n_in + k] : 0.0f;
         }
-        for (int i = threadIdx.x; i < TILE_OUT * TILE_K; i += THREADS) {
-            const int o = o0 + i / TILE_K, k = k0 + i % TILE_K;
-            sw[i % TILE_K][i / TILE_K] = o < n_out && k < n_in ? w[size_t(o) * n_in + k] : 0.0f;
+#pragma unroll
+        for (int j = 0; j < WN; ++j) {
+            const int i = threadIdx.x + j * THREADS, o = o0 + i / TILE_K, k = k0 + i % TILE_K;
+            wr[j] = o < n_out && k < n_in ? w[size_t(o) * n_in + k] : 0.0f;
+        }
+    };
+    fetch(0);
+    for (int k0 = 0; k0 < n_in; k0 += TILE_K) {
+#pragma unroll
+        for (int j = 0; j < XN; ++j) {
+            const int i = threadIdx.x + j * THREADS;
+            sx[i % TILE_K][i / TILE_K] = xr[j];
+        }
+#pragma unroll
+        for (int j = 0; j < WN; ++j) {
+            const int i = threadIdx.x + j * THREADS;
+            sw[i % TILE_K][i / TILE_K] = wr[j];
         }
         __syncthreads();
+        if (k0 + TILE_K < n_in) fetch(k0 + TILE_K);
 #pragma unroll 8
         for (int c = 0; c < TILE_K; ++c) {
-            const float4 a = *reinterpret_cast<const float4*>(&sx[c][to]);
-            const float4 b = *reinterpret_cast<const float4*>(&sw[c][oo]);
-            const float av[4] = {a.x, a.y, a.z, a.w}, bv[4] = {b.x, b.y, b.z, b.w};
+            // (one 8- or 16-byte read each)
+            const typename Floats<PT>::type va = *reinterpret_cast<const typename Floats<PT>::type*>(&sx[c][to]);
+            const typename Floats<PO>::type vb = *reinterpret_cast<const typename Floats<PO>::type*>(&sw[c][oo]);
+            const float* const av = reinterpret_cast<const float*>(&va);
+            const float* const bv = reinterpret_cast<const float*>(&vb);
 #pragma unroll
-            for (int i = 0; i < 4; ++i)
+            for (int i = 0; i < PT; ++i)
 #pragma unroll
-                for (int j = 0; j < 4; ++j) acc[i][j] = fmaf(av[i], bv[j], acc[i][j]);
+                for (int j = 0; j < PO; ++j) acc[i][j] = fmaf(av[i], bv[j], acc[i][j]);
         }
         __syncthreads();
     }
 #pragma unroll
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < PT; ++i)
 #pragma unroll
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j < PO; ++j) {
             const int t = t0 + to + i, o = o0 + oo + j;
             if (t < rows && o < n_out) y[size_t(t) * n_out + o] = acc[i][j];
         }
+}
+
+template <int TT, int TO, int PT, int PO>
+void gemm_tile(const float* w, const float* x, float* y, int n_in, int n_out, int rows, cudaStream_t stream) {
+    gemm_tile_kernel<TT, TO, PT, PO><<<dim3((rows + TT - 1) / TT, (n_out + TO - 1) / TO), TT * TO / (PT * PO), 0, stream>>>(
+        w, x, y, n_in, n_out, rows);
 }
 
 // Where a row's Q8_1 blocks would keep a sum past the halves' range: a power of two to divide the row by, 1 for
@@ -3227,6 +3260,18 @@ void gemv_pair(int type, const void* w1, const void* w2, const float* x, float* 
         throw std::runtime_error(std::string("gemv_pair: ") + cudaGetErrorString(e));
 }
 
+// gemm_small_kernel's blocks for the product over the card's multiprocessors.  It is bound by its multiprocessor's
+// shared memory, so a block's time grows with the blocks beside it: 2,048 tokens of 2,048 values and 64 outputs (4
+// blocks a multiprocessor of an RTX PRO 6000) took 103 us, gemm_tile_kernel<16, 64, 2, 4> 72 us, which takes 72 us
+// however few its blocks (39 us for gemm_small_kernel's one block a multiprocessor).
+int small_waves(int rows, int n_out) {
+    int dev = 0, sms = 1;
+    if (cudaGetDevice(&dev) != cudaSuccess || cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev) != cudaSuccess)
+        return 0;
+    const long long blocks = (long long) ((rows + SMALL_TOK - 1) / SMALL_TOK) * ((n_out + SMALL_OUT - 1) / SMALL_OUT);
+    return (int) ((blocks + sms - 1) / sms);
+}
+
 // A buffer of rows is its transpose to cuBLAS, so y[row] = w x[row] is Y = W^T X.  A group's rows of w, its part
 // of every token's x and of every token's y are each a matrix with a stride.
 void gemm_f32(void* blas, const float* w, const float* x, float* y, int n_in, int n_out, int rows_per_x, int rows) {
@@ -3237,8 +3282,9 @@ void gemm_f32(void* blas, const float* w, const float* x, float* y, int n_in, in
         cudaStream_t stream = nullptr;
         blas_ck(cublasGetStream(h, &stream), "cublasGetStream");
         if (n_out > 2 * SMALL_OUT)
-            gemm_tile_kernel<<<dim3((rows + TILE_TOK - 1) / TILE_TOK, (n_out + TILE_OUT - 1) / TILE_OUT),
-                               TILE_TOK * TILE_OUT / 16, 0, stream>>>(w, x, y, n_in, n_out, rows);
+            gemm_tile<32, 64, 4, 4>(w, x, y, n_in, n_out, rows, stream);
+        else if (small_waves(rows, n_out) > 2)
+            gemm_tile<16, 64, 2, 4>(w, x, y, n_in, n_out, rows, stream);
         else
             gemm_small_kernel<<<dim3((rows + SMALL_TOK - 1) / SMALL_TOK, (n_out + SMALL_OUT - 1) / SMALL_OUT),
                                 SMALL_TOK * WARP, 0, stream>>>(w, x, y, n_in, n_out, rows);
