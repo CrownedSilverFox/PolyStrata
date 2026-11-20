@@ -483,6 +483,8 @@ struct SeqStates {
 /// conv4_silu() and gdn_step() for each sequence of `seqs`, in one launch a kernel where they launched one a
 /// sequence: each sequence's values are the bits a call of its own gives.  rows: all of the call's.
 void conv4_silu_seqs(const float* x, const SeqStates& seqs, const float* w, float* out, int channels, void* stream);
+/// shortconv() for each sequence of `seqs` (no snapshots), one launch.
+void shortconv_seqs(const float* bcx, const SeqStates& seqs, const float* w, float* out, int channels, void* stream);
 void gdn_step_seqs(float* qkv, float* alpha, float* beta, const float* dt, const float* a, const SeqStates& seqs,
                    const float* z, const float* o_norm, float* out, int dim, int n_head, int k_heads, int rows,
                    float norm_eps, void* stream);

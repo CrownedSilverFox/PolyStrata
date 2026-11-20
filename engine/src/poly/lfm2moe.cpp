@@ -255,6 +255,27 @@ void Lfm2Moe::load_card_rows(const uint8_t* src, int64_t from, int64_t count, in
 void Lfm2Moe::conv(Block& B, int n) {
     lin(B.in_proj, xn_, proj_, n, xq_);
     if (rows_of_) {   // step(): each row with its own sequence's convolution state
+#if !defined(STRATA_GPU_METAL)
+        // every sequence in one launch, each its rows in turn on its own state, as a call of its own runs them
+        SeqStates seqs;
+        bool snaps = false;
+        for (int i = 0, m; i < n && seqs.n < SeqStates::kMax; i += m) {
+            m = i + 1 < n && rows_of_[i + 1].seq == rows_of_[i].seq ? 2 : 1;
+            snaps = snaps || rows_of_[i].snap;
+            const int k = seqs.n++;
+            seqs.first[k] = i;
+            seqs.rows[k] = m;
+            seqs.state[k] = seq_state(rows_of_[i].seq, B.past);
+            if (i + m >= n) {
+                if (!snaps) {
+                    shortconv_seqs(proj_, seqs, fp(B.conv), cv_, n_embd_, st_);
+                    lin(B.wo, cv_, ao_, n);
+                    return;
+                }
+                break;
+            }
+        }
+#endif
         for (int i = 0; i < n; ++i)
             shortconv(proj_ + (size_t) i * 3 * n_embd_, seq_state(rows_of_[i].seq, B.past), fp(B.conv),
                       cv_ + (size_t) i * n_embd_, n_embd_, 1, st_);
@@ -320,6 +341,42 @@ void Lfm2Moe::attn_rows(Block& B, int n) {
     const float scale = 1.f / std::sqrt((float) head_dim_);
     const size_t kv = (size_t) n_kv_ * head_dim_, hq = (size_t) n_head_ * head_dim_;
     const bool is_q8 = q8();
+#if !defined(STRATA_GPU_METAL)
+    // an fp16 cache: every row's turn, store and attention in one launch a kernel, when attend_seqs() has the
+    // launches attend() runs for a row alone
+    if (!is_q8 && n <= RowHalves::kMax) {
+        RowHalves keys, vals;
+        AttnSeqs seqs;
+        seqs.f16 = true;
+        for (int i = 0; i < n; ++i) {
+            const Row& r = rows_of_[i];
+            keys.rows[i] = (uint16_t*) seq_buf(r.seq, B.keys);
+            vals.rows[i] = (uint16_t*) seq_buf(r.seq, B.vals);
+            const int64_t keep = pos_;
+            pos_ = r.pos;
+            seqs.keys[i] = room(1);
+            pos_ = keep;
+            seqs.q[i] = q_ + i * hq;
+            seqs.out[i] = att_ + i * hq;
+            seqs.kc[i] = (const int8_t*) keys.rows[i];
+            seqs.vc[i] = (const int8_t*) vals.rows[i];
+            seqs.at[i] = at_ + 2 * i;
+            seqs.tokens[i] = 1;
+        }
+        seqs.n = n;
+        if (attend_seqs_plan(seqs, score_, score_n_, chunk_, head_dim_, n_head_, n_kv_)) {
+            head_norm_rope_rows(qraw_, head_dim_, fp(B.q_norm), q_, head_dim_, n_head_, n_rot_, theta_scale_, n,
+                                rms_eps_, st_, 1, at_ + 1);
+            head_norm_rope_rows(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, n,
+                                rms_eps_, st_, 1, at_ + 1);
+            store_f16_rows(k_, keys, (int) kv, at_, n, st_);
+            store_f16_rows(v_, vals, (int) kv, at_, n, st_);
+            attend_seqs(seqs, head_dim_, n_head_, n_kv_, scale, st_);
+            lin(B.wo, att_, ao_, n);
+            return;
+        }
+    }
+#endif
     for (int i = 0; i < n; ++i) {
         const Row& r = rows_of_[i];
         const long long* ai = at_ + 2 * i;
