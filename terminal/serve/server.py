@@ -8990,7 +8990,7 @@ def run_config(path, overrides: dict | None = None) -> dict:
 
 def model_settings(cfg: dict, overrides: dict | None = None) -> dict:
     """#37: what a model's own run config sets on the Service ({attribute: value}), read at the start and again at every
-    switch to that model (Service.apply_settings).  `overrides` are the command line's --fit-max-tokens, --idle-unload,
+    switch to that model (Service.apply_settings).  `overrides` are the command line's --(no-)fit-max-tokens, --idle-unload,
     --min-free-vram-mib and --before-load, which win for every model.  ValueError names a bad value; nothing is set
     then, so a switch to a model with a bad config leaves the loaded one alone.  The keys of the server itself (host,
     api_key, allowed_hosts, cors_origins, ...) are main()'s: they come from the config the server started with."""
@@ -9034,7 +9034,8 @@ def model_settings(cfg: dict, overrides: dict | None = None) -> dict:
         timeout = BEFORE_LOAD_TIMEOUT_S
         print(f"[strata] \"before_load_timeout_s\" in the config is not a number; using {timeout:g} s", flush=True)
     return {
-        "fit_max_tokens": bool(over.get("fit_max_tokens")) or cfg.get("fit_max_tokens") is True,
+        # on unless the command line or the config turns it off (0.2.17: a max_tokens that does not fit is shortened, not a 400)
+        "fit_max_tokens": over["fit_max_tokens"] if "fit_max_tokens" in over else cfg.get("fit_max_tokens") is not False,
         "reasoning_close_retry": cfg.get("reasoning_close_retry") is True,   # #1053: opt-in, off by default
         "drop_oldest": cfg.get("drop_oldest") is True,                       # #17: opt-in, off by default
         "truncate_middle": cfg.get("truncate_middle") is True,               # opt-in, off by default
@@ -9450,7 +9451,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
         if blocked:
             ap.error("--offline cannot be strict for this profile: " + "; ".join(blocked))
     lazy = False
-    overrides = {"fit_max_tokens": a.fit_max_tokens or None, "idle_unload_s": a.idle_unload,
+    overrides = {"fit_max_tokens": True if a.fit_max_tokens else False if a.no_fit_max_tokens else None, "idle_unload_s": a.idle_unload,
                  "min_free_vram_mib": a.min_free_vram_mib, "before_load": a.before_load}
     try:
         settings = model_settings(cfg, overrides)       # #37: the model's own settings, read again at every switch
