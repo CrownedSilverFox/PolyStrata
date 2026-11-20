@@ -338,7 +338,8 @@ existing code ([gemm.cu](../engine/src/prefill/gemm.cu), [qsa_select.cu](../engi
 
 ## AMD: building gfx906 and gfx1012
 
-Setup does not build these. Build by hand and run `terminal/serve/server.py` with a config, as on any other card.
+Setup does not build these, except gfx1012 on Windows, which is opt-in (see the gfx1012 bullet). Otherwise build by hand
+and run `terminal/serve/server.py` with a config, as on any other card.
 
 - **gfx906** (MI50 / MI60 / Radeon VII, wave64): a separate opt-in build, `-DSTRATA_HIP_GFX906=ON
   -DCMAKE_HIP_ARCHITECTURES=gfx906` (not `STRATA_ENABLE_HIP`). Current ROCm no longer ships gfx906 libraries; the reporter used a
@@ -346,7 +347,7 @@ Setup does not build these. Build by hand and run `terminal/serve/server.py` wit
   [AMD_HIP.md](AMD_HIP.md#gfx906-instinct-mi50--mi60-radeon-vii-wave64-built-from-source).
 - **gfx1012** (RX 5500 XT): the wave32 backend, `-DSTRATA_ENABLE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx1012`. HIP 5.7 (Ubuntu's
   packages) works: older hipBLAS is used through rocBLAS, legacy HIP names and the missing `__syncwarp` are version-gated, and
-  RDNA1's missing signed dot4 uses llama.cpp's SDWA sequence (`-DSTRATA_GFX1012_PORTABLE_DOT=ON`: the portable one).
+  RDNA1 takes the native signed dot4 (`v_dot4_i32_i8`) where the compiler has `__builtin_amdgcn_sdot4`. `-DSTRATA_GFX1012_SDWA_DOT=ON` switches to the SDWA sequence, and `-DSTRATA_GFX1012_PORTABLE_DOT=ON` to the portable loop. On Windows setup installs strata-poly for gfx1012 only with `STRATA_EXPERIMENTAL_GFX1012=1` (opt-in, one card measured): [RADEON_PRO_5500M.md](RADEON_PRO_5500M.md).
 
 ## Reports welcome
 
