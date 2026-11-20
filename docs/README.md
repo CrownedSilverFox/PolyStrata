@@ -1,16 +1,16 @@
 # PolyStrata guides
 
-**New here? Start with [Install PolyStrata](INSTALL.md).** Download the one installer for your system (Windows, Linux or Mac), or install the Terminal with one line. Both use released engine packages. This documentation is for version 0.2.17.
+**New here? Start with [Installing PolyStrata](INSTALL.md).** Download PolyStrata and run `START-HERE.bat` (Windows) or `./setup.sh` (Linux, Mac): it installs the model and the engine and starts it. The models themselves are in the [README](../README.md#which-model-should-i-pick).
 
 ## Use PolyStrata
 
 | I want to… | Guide |
 | --- | --- |
-| Install or update | [Desktop app and Terminal](INSTALL.md) |
-| Choose a model and check memory | [Models and quantizations](MODELS.md) |
-| See which model runs on which hardware | [Model and hardware table](CAPABILITIES.md) |
-| Start from the command line | [Terminal launch](TERMINAL_LAUNCH.md) |
-| Connect a coding tool | [Tool connections](TERMINAL_LAUNCH.md#connect-your-apps-strata-connect) |
+| Install or update | [Installing PolyStrata](INSTALL.md) |
+| Choose a model and check memory | [The README](../README.md#which-model-should-i-pick), each model's page and, for Qwen3.8-Flash-Next, [MODELS.md](MODELS.md) |
+| See what each model needs | [The README](../README.md#what-you-need) and [BACKENDS.md](BACKENDS.md#install) |
+| Chat or benchmark from the command line | [The terminal](INSTALL.md#the-terminal) |
+| Connect a coding tool | [Connecting apps](DETAILS.md#connecting-apps) |
 | Fix an install or startup problem | [Troubleshooting](TROUBLESHOOTING.md) |
 | Check privacy, downloads and network access | [Safety and privacy](SAFETY.md) |
 
@@ -48,9 +48,10 @@ Use the guide for your GPU and operating system. Model and feature support can d
 
 ## Which instructions apply?
 
-`strata launch` belongs to the installed Terminal. `START-HERE.bat`, `SETUP.bat`, `UPDATE.bat` and `setup.sh`
-belong to a **source checkout**. Raw engine commands are a third interface. Their flags are not interchangeable:
-Terminal launch uses `--gpu` and `--vision on|off`; source setup uses `--gpus` and `--vision yes|no`.
+`START-HERE.bat`, `UPDATE.bat` and `setup.sh` are PolyStrata's setup; raw engine options in a model's run config are a
+second interface. `strata launch` and the other `strata` commands belong to the Strata project's Terminal, which this
+repository carries in `terminal/` ([TERMINAL_LAUNCH.md](TERMINAL_LAUNCH.md)); it sets up Qwen3.8-Flash-Next only. Their
+flags are not interchangeable: the Terminal uses `--gpu` and `--vision on|off`, setup uses `--gpus` and `--vision yes|no`.
 
 Release notes, design proposals and benchmark reports describe their named versions and machines. They remain
 available as historical evidence; use the guides above for a new installation. A published result on one GPU
