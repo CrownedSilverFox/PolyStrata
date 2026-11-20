@@ -139,6 +139,7 @@ int default_threads() {
 // experts a token on a two-socket Xeon).  `spans` are the experts in the mapped files.  When most of their pages
 // are on one node, and the process may use `threads` CPUs of it, this thread is kept on that node's CPUs, and so
 // are the threads it starts from then on.  Returns the node, or -1 when nothing was changed.
+void drop_pages(const uint8_t* p, size_t n);
 int stay_near(const std::vector<std::pair<const uint8_t*, size_t>>& spans, const std::vector<std::string>& files,
               int threads, double& share) {
 #ifdef __linux__
@@ -179,6 +180,14 @@ int stay_near(const std::vector<std::pair<const uint8_t*, size_t>>& spans, const
         std::free(line);
         std::fclose(f);
     }
+    // The touches mapped 64 KiB around each (the fault-around), 256 MiB of LFM2.5's experts on the RTX 5090 pod,
+    // which stayed with every expert in VRAM.  They go again; the CPU's experts come back by map_pages().
+    for (const auto& s : spans)
+        for (size_t at = 0; at < s.second; at += step) {
+            const uintptr_t b = (uintptr_t) s.first, e = b + s.second;
+            const uintptr_t lo = std::max(b, (b + at) & ~(uintptr_t) 0xFFFF), hi = std::min(e, lo + 0x10000);
+            drop_pages((const uint8_t*) lo, (size_t) (hi - lo));
+        }
     long long all = 0;
     for (long long n : pages) all += n;
     if (all == 0) return -1;
