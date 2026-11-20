@@ -96,9 +96,14 @@ int main() {
             rt.args = {mtl::Arg::B(lg1), mtl::Arg::B(id1), mtl::Arg::B(w1), mtl::Arg::B(pl1), mtl::Arg::V(ma)};
             rt.tg[0] = 512;
             std::memset(pl1.ptr, 0, pl1.bytes);
+            std::memset(lg1.ptr, 0xff, lg1.bytes);   // the same fill as lg2's below in the 256-expert rows' unused tails
             cx.run({g, rt});
             bool ok = true;
             for (int rep_ = 0; rep_ < 2; ++rep_) {
+                // poison every output, so a warm buffer cannot hide a router that read the logits of the run before
+                std::memset(lg2.ptr, 0xff, lg2.bytes);
+                std::memset(id2.ptr, 0xff, id2.bytes);
+                std::memset(w2.ptr, 0xff, w2.bytes);
                 std::memset(pl2.ptr, 0, pl2.bytes);
                 mtl::Dispatch f;
                 f.p = &pf;
@@ -107,13 +112,19 @@ int main() {
                 f.grid[0] = NE / 16;
                 f.tg[0] = 512;
                 cx.run({f});
-                ok = ok && std::memcmp(lg1.ptr, lg2.ptr, 4 * nt * 512) == 0 && std::memcmp(id1.ptr, id2.ptr, 4 * nt * 10) == 0 &&
-                     std::memcmp(w1.ptr, w2.ptr, 4 * nt * 10) == 0 && std::memcmp(pl1.ptr, pl2.ptr, 4 * P_INTS) == 0 &&
-                     cnt.as<uint32_t>()[0] == 0;
+                const bool lg_ok = std::memcmp(lg1.ptr, lg2.ptr, 4 * nt * 512) == 0;
+                const bool id_ok = std::memcmp(id1.ptr, id2.ptr, 4 * nt * 10) == 0;
+                const bool w_ok = std::memcmp(w1.ptr, w2.ptr, 4 * nt * 10) == 0;
+                const bool pl_ok = std::memcmp(pl1.ptr, pl2.ptr, 4 * P_INTS) == 0;
+                const bool cnt_ok = cnt.as<uint32_t>()[0] == 0;
+                if (!(lg_ok && id_ok && w_ok && pl_ok && cnt_ok))
+                    std::printf("  run %d: logits %d, ids %d, w %d, plan %d, counter %d\n", rep_, lg_ok, id_ok, w_ok, pl_ok,
+                                cnt_ok);
+                ok = ok && lg_ok && id_ok && w_ok && pl_ok && cnt_ok;
             }
             fails += !ok;
-            std::printf("router_route %s ntok %d: logits, ids, w, plan bitwise (2 runs) %s\n", ref::type_name(rty), nt,
-                        ok ? "PASS" : "FAIL");
+            std::printf("router_route %s experts %d ntok %d: logits, ids, w, plan bitwise (2 runs) %s\n", ref::type_name(rty),
+                        NE, nt, ok ? "PASS" : "FAIL");
         }
         }
     }
