@@ -3887,7 +3887,10 @@ def child_env(cfg: dict, *, offline: bool = False) -> dict:
         env[str(k)] = str(v)
     # 0.2.17 (owner 11-19): the route tail skip is Off unless the person turned it on (STRATA_ROUTE_TAIL_SKIP=7 in the config or in their own environment).
     # The engine's own rule for an unset value is rank 7, so an unset one is set to 0 here, for a config made before 0.2.17 too.
-    speed_switches.engine_env_defaults(env)
+    # Not for strata-poly: it reads the variable over its --tail-skip, so a 0 here would undo the family's default in the config (Qwen3.6's
+    # --tail-skip 6, as in poly.10).  Unset, the config's --tail-skip decides; --tail-skip 0 or the variable still turn it off.
+    if not poly_engine(cfg):
+        speed_switches.engine_env_defaults(env)
     # Strict offline reaches children through the environment, because a tool subprocess or a model
     # loader is code this server does not own. Applied last so a profile's own `env` cannot remove
     # the policy by naming the same variable.
