@@ -226,6 +226,57 @@ static void softmax_rows(uint16_t* S, int n, int ld, int rows) {
     else k_softmax_rows<256, 64><<<rows, 256>>>(S, n, ld);
 }
 
+// k_softmax_rows for float32 scores (a row ld floats apart): the probabilities go out as F16 over the start of the row's own bytes (F16 row r at element
+// 2 * ld * r), which the block has read whole before it writes.  For a tower whose scores have no 1/sqrt(head size) in them (Gemma 4): an F16 score
+// keeps 11 bits of a value in the tens, too few for the exponent.
+template <int T, int PER>
+__global__ void __launch_bounds__(T) k_softmax_rows_f32(float* __restrict__ S, int n, int ld) {
+    const float* s = S + (size_t) blockIdx.x * ld;
+    uint16_t* p = (uint16_t*) (S + (size_t) blockIdx.x * ld);
+    __shared__ float red[32];
+    const int lane = threadIdx.x % warpSize, wid = threadIdx.x / warpSize, nw = (blockDim.x + warpSize - 1) / warpSize;
+    float v[PER];
+    float m = -FLT_MAX;
+#pragma unroll
+    for (int k = 0; k < PER; ++k) {
+        const int j = threadIdx.x + k * T;
+        v[k] = j < n ? s[j] : -FLT_MAX;
+        m = fmaxf(m, v[k]);
+    }
+    for (int o = warpSize / 2; o > 0; o >>= 1) m = fmaxf(m, VIT_SHFL_XOR(m, o));
+    if (lane == 0) red[wid] = m;
+    __syncthreads();
+    m = lane < nw ? red[lane] : -FLT_MAX;
+    for (int o = warpSize / 2; o > 0; o >>= 1) m = fmaxf(m, VIT_SHFL_XOR(m, o));
+    __syncthreads();
+    float sum = 0.0f;
+#pragma unroll
+    for (int k = 0; k < PER; ++k) {
+        const int j = threadIdx.x + k * T;
+        v[k] = j < n ? expf(v[k] - m) : 0.0f;
+        sum += v[k];
+    }
+    for (int o = warpSize / 2; o > 0; o >>= 1) sum += VIT_SHFL_XOR(sum, o);
+    if (lane == 0) red[wid] = sum;
+    __syncthreads();
+    sum = lane < nw ? red[lane] : 0.0f;
+    for (int o = warpSize / 2; o > 0; o >>= 1) sum += VIT_SHFL_XOR(sum, o);
+    const float inv = 1.0f / sum;
+#pragma unroll
+    for (int k = 0; k < PER; ++k) {
+        const int j = threadIdx.x + k * T;
+        if (j < n) p[j] = f_to_f16bits(v[k] * inv);
+    }
+}
+
+static void softmax_rows_f32(float* S, int n, int ld, int rows) {
+    if (n <= 128) k_softmax_rows_f32<64, 2><<<rows, 64>>>(S, n, ld);
+    else if (n <= 512) k_softmax_rows_f32<64, 8><<<rows, 64>>>(S, n, ld);
+    else if (n <= 1024) k_softmax_rows_f32<128, 8><<<rows, 128>>>(S, n, ld);
+    else if (n <= 4096) k_softmax_rows_f32<256, 16><<<rows, 256>>>(S, n, ld);
+    else k_softmax_rows_f32<256, 64><<<rows, 256>>>(S, n, ld);
+}
+
 // The same for a row too long to hold in registers (more than 16,384 patches: a picture of 4,096 image tokens or more): three passes over the row in memory.
 __global__ void __launch_bounds__(kSoftmaxThreads) k_softmax_rows_long(uint16_t* __restrict__ S, int n, int ld) {
     uint16_t* s = S + (size_t) blockIdx.x * ld;
@@ -418,6 +469,92 @@ __global__ void k_add_bias(float* __restrict__ y, const float* __restrict__ bias
     for (int i = threadIdx.x; i < n; i += blockDim.x) y[base + i] += bias[i];
 }
 
+// ---- Gemma 4's tower (gemma4v; the CPU tower's encode_gemma4 has the maths step by step) ----
+
+// x[t] += the x table's row of the token's column, then the y table's row of its row (T positions a table); tokens in reading order
+__global__ void k_gemma_pos(float* __restrict__ x, const float* __restrict__ pos, int T, int pw, int D) {
+    const int t = blockIdx.x;
+    const float* tx = pos + (size_t) (t % pw) * D;
+    const float* ty = pos + ((size_t) T + (size_t) (t / pw)) * D;
+    float* xr = x + (size_t) t * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) xr[i] = (xr[i] + tx[i]) + ty[i];
+}
+
+// out = x / sqrt(mean(x^2) + eps) * w (w may be null), into `kind`
+__global__ void k_rms_cast(const float* __restrict__ x, const float* __restrict__ w, float eps, int D, void* out, int kind) {
+    const float* xr = x + (size_t) blockIdx.x * D;
+    float s = 0.0f;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) s += xr[i] * xr[i];
+    const float scale = rsqrtf(block_sum(s) / (float) D + eps);
+    for (int i = threadIdx.x; i < D; i += blockDim.x) store_kind(out, (size_t) blockIdx.x * D + i, w ? xr[i] * scale * w[i] : xr[i] * scale, kind);
+}
+
+// q, k, v products of the tokens row0 .. ([rows][D] each) -> per head: RMS norm (q and k weighted, v not), the rotary on q and k (the first half of a
+// head by the token's column, the second by its row; NeoX pairs i, i + hd / 4), into F16 [N][D].  A warp a head (blockDim = 32 * heads).
+__global__ void k_gemma_qkv(const float* __restrict__ yq, const float* __restrict__ yk, const float* __restrict__ yv, const float* __restrict__ qn,
+                            const float* __restrict__ kn, int row0, int pw, int heads, int hd, float theta_scale, float eps, uint16_t* __restrict__ q,
+                            uint16_t* __restrict__ k, uint16_t* __restrict__ v) {
+    const int h = threadIdx.x / 32, lane = threadIdx.x % 32;
+    if (h >= heads) return;
+    const int t = row0 + blockIdx.x, D = heads * hd, half = hd / 2, pairs = half / 2;
+    const size_t in = (size_t) blockIdx.x * D + (size_t) h * hd, out = (size_t) t * D + (size_t) h * hd;
+    float sq = 0.0f, sk = 0.0f, sv = 0.0f;
+    for (int i = lane; i < hd; i += 32) { sq += yq[in + i] * yq[in + i]; sk += yk[in + i] * yk[in + i]; sv += yv[in + i] * yv[in + i]; }
+    for (int o = 16; o > 0; o >>= 1) { sq += VIT_SHFL_XOR(sq, o); sk += VIT_SHFL_XOR(sk, o); sv += VIT_SHFL_XOR(sv, o); }
+    const float rq = rsqrtf(sq / (float) hd + eps), rk = rsqrtf(sk / (float) hd + eps), rv = rsqrtf(sv / (float) hd + eps);
+    for (int i = lane; i < hd; i += 32) v[out + i] = f_to_f16bits(yv[in + i] * rv);
+    for (int p = lane; p < 2 * pairs; p += 32) {
+        const int part = p / pairs, i = p % pairs, a = part * half + i, b = a + pairs;
+        float sn, cs;
+        sincosf((float) (part ? t / pw : t % pw) * powf(theta_scale, (float) i), &sn, &cs);
+        const float q0 = yq[in + a] * rq * qn[a], q1 = yq[in + b] * rq * qn[b];
+        const float k0 = yk[in + a] * rk * kn[a], k1 = yk[in + b] * rk * kn[b];
+        q[out + a] = f_to_f16bits(q0 * cs - q1 * sn);
+        q[out + b] = f_to_f16bits(q0 * sn + q1 * cs);
+        k[out + a] = f_to_f16bits(k0 * cs - k1 * sn);
+        k[out + b] = f_to_f16bits(k0 * sn + k1 * cs);
+    }
+}
+
+// x[r] += RMS norm of y[r] * w
+__global__ void k_rms_add(float* __restrict__ x, const float* __restrict__ y, const float* __restrict__ w, float eps, int D) {
+    const size_t base = (size_t) blockIdx.x * D;
+    float s = 0.0f;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) s += y[base + i] * y[base + i];
+    const float scale = rsqrtf(block_sum(s) / (float) D + eps);
+    for (int i = threadIdx.x; i < D; i += blockDim.x) x[base + i] += y[base + i] * scale * w[i];
+}
+
+// out = quick_gelu(gate) * up into `kind` (ggml's geglu_quick: x * sigmoid(1.702 x))
+__global__ void k_geglu_quick_cast(const float* __restrict__ gate, const float* __restrict__ up, int n, void* out, int kind) {
+    const size_t base = (size_t) blockIdx.x * n;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        const float a = gate[base + i];
+        store_kind(out, base + i, a * (1.0f / (1.0f + expf(-1.702f * a))) * up[base + i], kind);
+    }
+}
+
+// pooled token t0 + blockIdx.x of a grid ox wide: the mean of its pool x pool square of x (pw tokens a row) times sq, (- std_bias) * std_scale when
+// given, RMS norm, into `kind`.  The token's values wait in dynamic shared memory (D floats).
+__global__ void k_gemma_pool(const float* __restrict__ x, int pw, int pool, int ox, int t0, int D, float sq, const float* __restrict__ sb,
+                             const float* __restrict__ ss, float eps, void* out, int kind) {
+    extern __shared__ float pv[];
+    const int t = t0 + blockIdx.x, by = (t / ox) * pool, bx = (t % ox) * pool;
+    const float area = (float) (pool * pool);
+    float s2 = 0.0f;
+    for (int d = threadIdx.x; d < D; d += blockDim.x) {
+        float s = 0.0f;
+        for (int ky = 0; ky < pool; ++ky)
+            for (int kx = 0; kx < pool; ++kx) s += x[((size_t) (by + ky) * pw + (size_t) (bx + kx)) * D + d];
+        float p = s / area * sq;
+        if (sb) p = (p - sb[d]) * ss[d];
+        pv[d] = p;
+        s2 += p * p;
+    }
+    const float scale = rsqrtf(block_sum(s2) / (float) D + eps);
+    for (int d = threadIdx.x; d < D; d += blockDim.x) store_kind(out, (size_t) blockIdx.x * D + d, pv[d] * scale, kind);
+}
+
 // ---- host side ----
 uint16_t host_f32_to_bf16(float f) {
     uint32_t u;
@@ -448,6 +585,17 @@ struct VitGpuImpl {
     float *patch_w = nullptr, *patch_b = nullptr, *pos = nullptr, *post_w = nullptr, *post_b = nullptr, *mm0_b = nullptr, *mm2_b = nullptr;
     DevW mm0, mm2;
     std::vector<DevLayer> layers;
+    struct DevGemma {     // gemma4v: RMS norm weights, the per-head q / k norms, no biases
+        float *ln1 = nullptr, *ln2 = nullptr, *attn_post = nullptr, *ffn_post = nullptr, *q_norm = nullptr, *k_norm = nullptr;
+        DevW q, k, v, o, gate, up, down;
+    };
+    std::vector<DevGemma> glayers;
+    float *std_bias = nullptr, *std_scale = nullptr;
+    DevW proj;                       // gemma4v: mm.input_projection
+    float* d_up = nullptr;           // gemma4v: a chunk's up product [kRows][ffn] (the gate's is in d_y)
+    bool gemma() const { return g.projector == "gemma4v"; }
+    bool load_gemma4(const Gguf& gg, std::string& err);
+    bool encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
 
     int cap_patches = 0;
     // Work buffers, sized for cap_patches patches N (D = width).  The GPU memory is what a reader costs next to the engine, so the matrix products run in
@@ -786,7 +934,7 @@ struct VitGpuImpl {
         allocs.resize(n_weight_allocs);
         const size_t N = (size_t) patches, D = (size_t) g.width, F = (size_t) std::max(g.ffn, g.merger_hidden);
         const size_t K0 = (size_t) 3 * g.patch * g.patch;
-        d_x = d_y = d_ctx = d_out = nullptr;
+        d_x = d_y = d_ctx = d_out = d_up = nullptr;
         d_a = d_f16 = d_q16 = d_k16 = d_v16 = nullptr;
         d_S = nullptr;
         // attention by batched GEMMs: scores S (float32) and probabilities P (F16) of a chunk of queries for every head, at most kScoreElems each
@@ -804,7 +952,8 @@ struct VitGpuImpl {
         const size_t ctx_elems = std::max({N * D, N * K0, (N / 4) * (size_t) g.out_dim});
         bool ok = alloc(d_x, N * D, err, false) && alloc(d_ctx, ctx_elems, err, false) && alloc(d_y, R * std::max<size_t>(3 * D, F), err, false) &&
                   alloc(d_a, R * D, err, false) && alloc(d_f16, R * F, err, false) &&
-                  alloc(d_q16, N * D, err, false) && alloc(d_k16, N * D, err, false) && alloc(d_v16, N * D, err, false);
+                  alloc(d_q16, N * D, err, false) && alloc(d_k16, N * D, err, false) && alloc(d_v16, N * D, err, false) &&
+                  (!gemma() || alloc(d_up, R * (size_t) g.ffn, err, false));
 #if defined(STRATA_VIT_HIP)
         d_y16 = d_pv16 = nullptr;
         y16_elems = pv16_elems = 0;
@@ -879,7 +1028,10 @@ std::string VitGpu::arch_name() {
 bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patches, std::string& err) {
     VitGpuImpl& m = *impl_;
     std::string why;
-    if (!vit_geometry_supported(g, why) || !vit_geometry_qwen(g, why)) { err = "this tower is not supported: " + why; return false; }
+    if (!vit_geometry_supported(g, why) || (g.projector != "gemma4v" && !vit_geometry_qwen(g, why))) {
+        err = "this tower is not supported: " + why;
+        return false;
+    }
     m.g = g;
     m.device = device;
 #if defined(STRATA_VIT_HIP)
@@ -938,37 +1090,41 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
     }
     if (const char* e = std::getenv("STRATA_VIT_FA_UNITS")) { const long long u = std::atoll(e); if (u >= (1LL << 20)) m.fa_units = u; }
 #endif
-    // the patch embedding: the two temporal taps summed, kept in float32 (a small matrix)
-    {
-        const GgufTensorInfo* t0 = gg.tensor("v.patch_embd.weight");
-        if (!t0) { err = "the mmproj file lacks v.patch_embd.weight"; return false; }
-        std::vector<float> w0((size_t) t0->nelem()), w1;
-        if (!gg.read_f32(*t0, w0.data(), err)) return false;
-        if (g.patch_taps == 2) {
-            const GgufTensorInfo* t1 = gg.tensor("v.patch_embd.weight.1");
-            w1.resize(w0.size());
-            if (!t1 || !gg.read_f32(*t1, w1.data(), err)) { if (err.empty()) err = "the mmproj file lacks v.patch_embd.weight.1"; return false; }
-            for (size_t i = 0; i < w0.size(); ++i) w0[i] += w1[i];
+    if (m.gemma()) {
+        if (!m.load_gemma4(gg, err)) return false;
+    } else {
+        // the patch embedding: the two temporal taps summed, kept in float32 (a small matrix)
+        {
+            const GgufTensorInfo* t0 = gg.tensor("v.patch_embd.weight");
+            if (!t0) { err = "the mmproj file lacks v.patch_embd.weight"; return false; }
+            std::vector<float> w0((size_t) t0->nelem()), w1;
+            if (!gg.read_f32(*t0, w0.data(), err)) return false;
+            if (g.patch_taps == 2) {
+                const GgufTensorInfo* t1 = gg.tensor("v.patch_embd.weight.1");
+                w1.resize(w0.size());
+                if (!t1 || !gg.read_f32(*t1, w1.data(), err)) { if (err.empty()) err = "the mmproj file lacks v.patch_embd.weight.1"; return false; }
+                for (size_t i = 0; i < w0.size(); ++i) w0[i] += w1[i];
+            }
+            if (!m.alloc(m.patch_w, w0.size(), err, true)) return false;
+            if (cudaMemcpy(m.patch_w, w0.data(), w0.size() * 4, cudaMemcpyHostToDevice) != cudaSuccess) { err = "GPU copy failed"; return false; }
         }
-        if (!m.alloc(m.patch_w, w0.size(), err, true)) return false;
-        if (cudaMemcpy(m.patch_w, w0.data(), w0.size() * 4, cudaMemcpyHostToDevice) != cudaSuccess) { err = "GPU copy failed"; return false; }
-    }
-    if (!m.upload_f32(m.patch_b, gg, "v.patch_embd.bias", err) || !m.upload_f32(m.pos, gg, "v.position_embd.weight", err) ||
-        !m.upload_f32(m.post_w, gg, "v.post_ln.weight", err) || !m.upload_f32(m.post_b, gg, "v.post_ln.bias", err) ||
-        !m.upload_matrix(m.mm0, gg, "mm.0.weight", err) || !m.upload_f32(m.mm0_b, gg, "mm.0.bias", err) ||
-        !m.upload_matrix(m.mm2, gg, "mm.2.weight", err) || !m.upload_f32(m.mm2_b, gg, "mm.2.bias", err))
-        return false;
-    m.layers.assign((size_t) g.layers, DevLayer{});
-    for (int il = 0; il < g.layers; ++il) {
-        DevLayer& L = m.layers[(size_t) il];
-        const std::string p = "v.blk." + std::to_string(il) + ".";
-        if (!m.upload_f32(L.ln1_w, gg, p + "ln1.weight", err) || !m.upload_f32(L.ln1_b, gg, p + "ln1.bias", err) ||
-            !m.upload_f32(L.ln2_w, gg, p + "ln2.weight", err) || !m.upload_f32(L.ln2_b, gg, p + "ln2.bias", err) ||
-            !m.upload_matrix(L.qkv, gg, p + "attn_qkv.weight", err) || !m.upload_f32(L.qkv_b, gg, p + "attn_qkv.bias", err) ||
-            !m.upload_matrix(L.o, gg, p + "attn_out.weight", err) || !m.upload_f32(L.o_b, gg, p + "attn_out.bias", err) ||
-            !m.upload_matrix(L.up, gg, p + "ffn_up.weight", err) || !m.upload_f32(L.up_b, gg, p + "ffn_up.bias", err) ||
-            !m.upload_matrix(L.down, gg, p + "ffn_down.weight", err) || !m.upload_f32(L.down_b, gg, p + "ffn_down.bias", err))
+        if (!m.upload_f32(m.patch_b, gg, "v.patch_embd.bias", err) || !m.upload_f32(m.pos, gg, "v.position_embd.weight", err) ||
+            !m.upload_f32(m.post_w, gg, "v.post_ln.weight", err) || !m.upload_f32(m.post_b, gg, "v.post_ln.bias", err) ||
+            !m.upload_matrix(m.mm0, gg, "mm.0.weight", err) || !m.upload_f32(m.mm0_b, gg, "mm.0.bias", err) ||
+            !m.upload_matrix(m.mm2, gg, "mm.2.weight", err) || !m.upload_f32(m.mm2_b, gg, "mm.2.bias", err))
             return false;
+        m.layers.assign((size_t) g.layers, DevLayer{});
+        for (int il = 0; il < g.layers; ++il) {
+            DevLayer& L = m.layers[(size_t) il];
+            const std::string p = "v.blk." + std::to_string(il) + ".";
+            if (!m.upload_f32(L.ln1_w, gg, p + "ln1.weight", err) || !m.upload_f32(L.ln1_b, gg, p + "ln1.bias", err) ||
+                !m.upload_f32(L.ln2_w, gg, p + "ln2.weight", err) || !m.upload_f32(L.ln2_b, gg, p + "ln2.bias", err) ||
+                !m.upload_matrix(L.qkv, gg, p + "attn_qkv.weight", err) || !m.upload_f32(L.qkv_b, gg, p + "attn_qkv.bias", err) ||
+                !m.upload_matrix(L.o, gg, p + "attn_out.weight", err) || !m.upload_f32(L.o_b, gg, p + "attn_out.bias", err) ||
+                !m.upload_matrix(L.up, gg, p + "ffn_up.weight", err) || !m.upload_f32(L.up_b, gg, p + "ffn_up.bias", err) ||
+                !m.upload_matrix(L.down, gg, p + "ffn_down.weight", err) || !m.upload_f32(L.down_b, gg, p + "ffn_down.bias", err))
+                return false;
+        }
     }
     m.n_weight_allocs = m.allocs.size();
     if (m.trace && !m.f16_notes.empty()) {
@@ -996,6 +1152,7 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
 bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
     VitGpuImpl& m = *impl_;
     const VitGeometry& g = m.g;
+    if (m.gemma()) return m.encode_gemma4(img, rows, nx, ny, err);
     if (m.layers.empty()) { err = "the tower is not loaded"; return false; }
     if (img.w <= 0 || img.h <= 0 || img.w % g.align() != 0 || img.h % g.align() != 0) { err = "the picture size is not a multiple of patch * merge"; return false; }
     if (g.head_dim > 96 || g.head_dim % 4 != 0) { err = "this head size is not handled by the GPU attention kernel"; return false; }
@@ -1143,6 +1300,160 @@ bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx,
         m.fa_longest_ms = 0.0;
     }
 #endif
+    return true;
+}
+
+bool VitGpuImpl::load_gemma4(const Gguf& gg, std::string& err) {
+    if (!upload_f32(patch_w, gg, "v.patch_embd.weight", err) || !upload_f32(pos, gg, "v.position_embd.weight", err) ||
+        !upload_matrix(proj, gg, "mm.input_projection.weight", err))
+        return false;
+    if (g.std_norm && (!upload_f32(std_bias, gg, "v.std_bias", err) || !upload_f32(std_scale, gg, "v.std_scale", err))) return false;
+    glayers.assign((size_t) g.layers, DevGemma{});
+    for (int il = 0; il < g.layers; ++il) {
+        DevGemma& L = glayers[(size_t) il];
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        if (!upload_f32(L.ln1, gg, p + "ln1.weight", err) || !upload_f32(L.ln2, gg, p + "ln2.weight", err) ||
+            !upload_f32(L.attn_post, gg, p + "attn_post_norm.weight", err) || !upload_f32(L.ffn_post, gg, p + "ffn_post_norm.weight", err) ||
+            !upload_f32(L.q_norm, gg, p + "attn_q_norm.weight", err) || !upload_f32(L.k_norm, gg, p + "attn_k_norm.weight", err) ||
+            !upload_matrix(L.q, gg, p + "attn_q.weight", err) || !upload_matrix(L.k, gg, p + "attn_k.weight", err) ||
+            !upload_matrix(L.v, gg, p + "attn_v.weight", err) || !upload_matrix(L.o, gg, p + "attn_out.weight", err) ||
+            !upload_matrix(L.gate, gg, p + "ffn_gate.weight", err) || !upload_matrix(L.up, gg, p + "ffn_up.weight", err) ||
+            !upload_matrix(L.down, gg, p + "ffn_down.weight", err))
+            return false;
+    }
+    return true;
+}
+
+// Gemma 4's tower on the GPU: VitCpu's encode_gemma4 with the products by the BLAS (16-bit inputs, float32 sums) and the attention as the Qwen
+// tower has it (one batched product of the scores per chunk of queries, F16 scores, the softmax, the product with v; no scale here)
+bool VitGpuImpl::encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
+    if (glayers.empty()) { err = "the tower is not loaded"; return false; }
+    const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn, K = g.pool, T = g.pos_grid;
+    if (img.w <= 0 || img.h <= 0 || img.w % (P * K) != 0 || img.h % (P * K) != 0) { err = "the picture size is not a multiple of patch * pool"; return false; }
+    if (H > 32 || HD % 4 != 0) { err = "this tower's heads are not handled by the GPU kernels"; return false; }
+    const int pw = img.w / P, ph = img.h / P, N = pw * ph;
+    if (pw > T || ph > T) { err = "the picture has more patches a side than the position tables"; return false; }
+    if (cudaSetDevice(device) != cudaSuccess) { err = "cannot use the GPU"; return false; }
+    if (!size_buffers(N, err)) return false;
+    auto sync_err = [&](const char* what) {
+        const cudaError_t e = cudaGetLastError();
+        if (e != cudaSuccess) { err = std::string(what) + ": " + cudaGetErrorString(e); return false; }
+        return true;
+    };
+    // STRATA_VIT_PROF=1 (a diagnostic, stderr only): the time of each stage, the GPU synchronised after every stage
+    static const bool prof = std::getenv("STRATA_VIT_PROF") != nullptr;
+    double pt[6] = {0, 0, 0, 0, 0, 0};
+    auto pclock = [] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    double pmark = prof ? pclock() : 0.0;
+    auto stage = [&](int i) {
+        if (!prof) return;
+        (void) cudaDeviceSynchronize();
+        const double now = pclock();
+        pt[i] += now - pmark;
+        pmark = now;
+    };
+    const int K0 = 3 * P * P;
+    {   // the patch matrix [N][K0] in reading order, the pixels as 2 v - 1, in the context buffer (free until the first attention)
+        std::vector<float> pm((size_t) N * K0);
+        const size_t plane = (size_t) img.w * img.h;
+        for (int t = 0; t < N; ++t) {
+            const int py = t / pw, px = t % pw;
+            float* a = &pm[(size_t) t * K0];
+            for (int c = 0; c < 3; ++c)
+                for (int ky = 0; ky < P; ++ky) {
+                    const float* src = &img.chw[c * plane + (size_t) (py * P + ky) * img.w + (size_t) px * P];
+                    float* dst = a + (size_t) c * P * P + (size_t) ky * P;
+                    for (int kx = 0; kx < P; ++kx) dst[kx] = src[kx] * 2.0f - 1.0f;
+                }
+        }
+        if (cudaMemcpy(d_ctx, pm.data(), pm.size() * 4, cudaMemcpyHostToDevice) != cudaSuccess) { err = "GPU copy failed"; return false; }
+    }
+    DevW pw_w;
+    pw_w.p = patch_w; pw_w.kind = K_F32; pw_w.rows = D; pw_w.cols = K0;
+    if (!gemm(pw_w, d_ctx, N, d_x, CUDA_R_32F, err)) return false;
+    k_gemma_pos<<<N, 256>>>(d_x, pos, T, pw, D);
+    if (!sync_err("patch embedding")) return false;
+    stage(0);
+
+    const float theta_scale = powf(g.rope_theta, -2.0f / (float) (HD / 2));
+    const int R = kRows;
+    uint16_t* const a16 = d_a;
+    for (const DevGemma& L : glayers) {
+        for (int r0 = 0; r0 < N; r0 += R) {      // norm, the three products (one after the other in d_y), the per-head norms and the rotary, into F16
+            const int rn = std::min(R, N - r0);
+            float* yq = d_y;
+            float* yk = d_y + (size_t) rn * D;
+            float* yv = d_y + 2 * (size_t) rn * D;
+            k_rms_cast<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln1, g.eps, D, a16, (int) L.q.kind);
+            if (!gemm(L.q, a16, rn, yq, dtype(L.q.kind), err)) return false;
+            if (L.k.kind != L.q.kind) k_rms_cast<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln1, g.eps, D, a16, (int) L.k.kind);
+            if (!gemm(L.k, a16, rn, yk, dtype(L.k.kind), err)) return false;
+            if (L.v.kind != L.k.kind) k_rms_cast<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln1, g.eps, D, a16, (int) L.v.kind);
+            if (!gemm(L.v, a16, rn, yv, dtype(L.v.kind), err)) return false;
+            k_gemma_qkv<<<rn, 32 * H>>>(yq, yk, yv, L.q_norm, L.k_norm, r0, pw, H, HD, theta_scale, g.eps, d_q16, d_k16, d_v16);
+        }
+        stage(1);
+        // float32 scores (k_softmax_rows_f32), the probabilities F16 in place, as long as a row fits the registers; past 16,384 patches (more than 1,820
+        // tokens, over Gemma 4's default limit) F16 scores as the Qwen tower has them
+        const bool f32 = N <= kSoftmaxThreads * kSoftmaxPer;
+        const int Np = (int) padded((size_t) N);
+        int QC = (int) std::max<size_t>(1, std::min<size_t>((size_t) N, sp_elems / ((f32 ? 2 : 1) * (size_t) H * Np)));
+        const int qa = align_for((size_t) N);
+        if (qa > 1 && QC < N && QC >= qa) QC -= QC % qa;
+        for (int q0 = 0; q0 < N; q0 += QC) {
+            const int qc = std::min(QC, N - q0);
+            if (f32) {
+                if (!bgemm(true, false, N, qc, HD, d_k16, CUDA_R_16F, D, HD, d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, d_S, CUDA_R_32F, Np, (long long) qc * Np,
+                           H, err))
+                    return false;
+                softmax_rows_f32((float*) d_S, N, Np, H * qc);
+                if (!bgemm(false, false, HD, qc, N, d_v16, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, 2 * Np, 2LL * qc * Np, d_ctx + (size_t) q0 * D, CUDA_R_32F, D,
+                           HD, H, err))
+                    return false;
+                continue;
+            }
+            if (!bgemm(true, false, N, qc, HD, d_k16, CUDA_R_16F, D, HD, d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, Np, (long long) qc * Np, H, err))
+                return false;
+            k_softmax_rows_long<<<H * qc, kSoftmaxThreads>>>(d_S, N, Np);
+            if (!bgemm(false, false, HD, qc, N, d_v16, CUDA_R_16F, D, HD, d_S, CUDA_R_16F, Np, (long long) qc * Np, d_ctx + (size_t) q0 * D, CUDA_R_32F, D, HD, H,
+                       err))
+                return false;
+        }
+        stage(2);
+        for (int r0 = 0; r0 < N; r0 += R) {      // x += norm(o(ctx)); x += norm(down(quick_gelu(gate) * up))
+            const int rn = std::min(R, N - r0);
+            k_cast<<<blocks_for((size_t) rn * D), 256>>>(d_ctx + (size_t) r0 * D, (size_t) rn * D, a16, (int) L.o.kind);
+            if (!gemm(L.o, a16, rn, d_y, dtype(L.o.kind), err)) return false;
+            k_rms_add<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, L.attn_post, g.eps, D);
+            k_rms_cast<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln2, g.eps, D, a16, (int) L.gate.kind);
+            if (!gemm(L.gate, a16, rn, d_y, dtype(L.gate.kind), err)) return false;
+            if (L.up.kind != L.gate.kind) k_rms_cast<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln2, g.eps, D, a16, (int) L.up.kind);
+            if (!gemm(L.up, a16, rn, d_up, dtype(L.up.kind), err)) return false;
+            k_geglu_quick_cast<<<rn, 256>>>(d_y, d_up, F, d_f16, (int) L.down.kind);
+            if (!gemm(L.down, d_f16, rn, d_y, dtype(L.down.kind), err)) return false;
+            k_rms_add<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, L.ffn_post, g.eps, D);
+        }
+        stage(3);
+    }
+    if (!sync_err("the layers")) return false;
+    const int ox = pw / K, oy = ph / K, M = ox * oy;
+    const float sq = sqrtf((float) D);
+    for (int r0 = 0; r0 < M; r0 += R) {      // pool, standardise, norm (into the projection's input kind), project
+        const int rn = std::min(R, M - r0);
+        k_gemma_pool<<<rn, 256, (size_t) D * sizeof(float)>>>(d_x, pw, K, ox, r0, D, sq, g.std_norm ? std_bias : nullptr, g.std_norm ? std_scale : nullptr,
+                                                               g.eps, a16, (int) proj.kind);
+        if (!gemm(proj, a16, rn, d_out + (size_t) r0 * g.out_dim, dtype(proj.kind), err)) return false;
+    }
+    if (!sync_err("the projection")) return false;
+    stage(4);
+    rows.resize((size_t) M * g.out_dim);
+    if (cudaMemcpy(rows.data(), d_out, rows.size() * 4, cudaMemcpyDeviceToHost) != cudaSuccess) { err = std::string("GPU copy failed: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    stage(5);
+    if (prof)
+        std::fprintf(stderr, "vit-prof gemma4 N=%d: patches %.2f, norm+qkv %.2f, attention %.2f, o-proj+ffn %.2f, pool+projection %.2f, copy-out %.2f ms\n", N,
+                     pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]);
+    nx = M;
+    ny = 1;
     return true;
 }
 
