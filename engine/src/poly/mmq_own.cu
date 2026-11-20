@@ -197,7 +197,8 @@ bool int8_rows(int t, int64_t cols) {
 size_t halves_bytes(int64_t rows, int64_t cols) { return ((size_t) rows * (size_t) cols * 2 + 3) / 4 * 4; }
 
 // One prompt path's buffers on the card: where a single matrix's two bounds lie, the products of a launch whose
-// rows go elsewhere, and the BLAS path's handle and a matrix's halves.
+// rows go elsewhere, and the BLAS path's handle and a matrix's halves.  The last three are the caller's when it
+// gave them (give()), and this path's own when it had to make them.
 struct Ctx {
     int32_t* bounds = nullptr;
     int32_t bounds_host[2] = {0, 0};
@@ -206,16 +207,18 @@ struct Ctx {
     cublasHandle_t blas = nullptr;
     __half* dq = nullptr;
     size_t dq_halves = 0;
+    bool own_y = true, own_dq = true, own_blas = true;
 };
 
 // a buffer of the card grown to `bytes`; the launches before may still read the old one
 template<class T>
-void grow(T*& p, size_t& have, size_t need, cudaStream_t s, const char* what) {
+void grow(T*& p, size_t& have, bool& own, size_t need, cudaStream_t s, const char* what) {
     if (need <= have) return;
     ck(cudaStreamSynchronize(s), "waiting for the launches before");
-    cudaFree(p);
+    if (own) cudaFree(p);
     p = nullptr;
     have = 0;
+    own = true;
     ck(cudaMalloc(&p, need * sizeof(T)), what);
     have = need;
 }
@@ -234,10 +237,31 @@ Mmq::Mmq() {
 Mmq::~Mmq() {
     Ctx* c = (Ctx*) ctx_;
     cudaFree(c->bounds);
-    cudaFree(c->y);
-    cudaFree(c->dq);
-    if (c->blas) cublasDestroy(c->blas);
+    if (c->own_y) cudaFree(c->y);
+    if (c->own_dq) cudaFree(c->dq);
+    if (c->blas && c->own_blas) cublasDestroy(c->blas);
     delete c;
+}
+
+Mmq::Work Mmq::work(int ggml_type, int64_t w_rows, int64_t w_cols, int64_t rows, bool by_ids, int64_t ld_dst) {
+    Work w;
+    if (!fits(ggml_type, w_rows, w_cols) || int8_rows(ggml_type, w_cols)) return w;   // int8: straight to dst's rows
+    if (by_ids || ld_dst % 4 != 0) w.floats = (size_t) rows * (size_t) ((w_rows + 3) / 4 * 4);
+    if (!grouped(ggml_type, w_rows, w_cols)) w.halves = (size_t) w_rows * (size_t) w_cols;
+    return w;
+}
+
+void Mmq::give(float* y, size_t floats, void* dq, size_t halves, void* blas) {
+    Ctx& c = *(Ctx*) ctx_;
+    if (c.own_y) cudaFree(c.y);
+    if (c.own_dq) cudaFree(c.dq);
+    if (c.blas && c.own_blas) cublasDestroy(c.blas);
+    c.y = y;
+    c.y_floats = y ? floats : 0;
+    c.dq = (__half*) dq;
+    c.dq_halves = dq ? halves : 0;
+    c.blas = (cublasHandle_t) blas;
+    c.own_y = c.own_dq = c.own_blas = false;
 }
 
 bool Mmq::fits(int ggml_type, int64_t w_rows, int64_t w_cols) {
@@ -301,7 +325,7 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
     int64_t ldy = ld_dst;
     if (ids || ld_dst % 4 != 0) {
         ldy = (w_rows + 3) / 4 * 4;
-        grow(c.y, c.y_floats, (size_t) total_rows * (size_t) ldy, s, "memory for a launch's products");
+        grow(c.y, c.y_floats, c.own_y, (size_t) total_rows * (size_t) ldy, s, "memory for a launch's products");
         y = c.y;
     }
     if (grouped(ggml_type, w_rows, w_cols)) {
@@ -320,11 +344,12 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
         if (!c.blas) {
             if (cublasCreate(&c.blas) != CUBLAS_STATUS_SUCCESS)
                 throw std::runtime_error("strata-poly prompt product: the BLAS library did not start");
+            c.own_blas = true;
         }
         if (cublasSetStream(c.blas, s) != CUBLAS_STATUS_SUCCESS)
             throw std::runtime_error("strata-poly prompt product: the BLAS library took no stream");
         const int64_t values = w_rows * w_cols;
-        grow(c.dq, c.dq_halves, (size_t) values, s, "memory for a matrix's halves");
+        grow(c.dq, c.dq_halves, c.own_dq, (size_t) values, s, "memory for a matrix's halves");
         const __half* x = (const __half*) xq;
         const float one = 1.f, zero = 0.f;
         for (int e = 0; e < n; ++e) {

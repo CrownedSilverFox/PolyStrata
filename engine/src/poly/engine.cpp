@@ -1858,6 +1858,7 @@ Dev Engine::upload(const TensorInfo* t, const std::string& name, int64_t n_in, i
                    float (*fix)(float)) {
     Dev d = upload_as(t, name, n_in, n_out, want, fix);
     d.scale = global_scale(*t);
+    if (dense_ && d.type != kTypeF32 && d.type != kTypeBF16) mats_.push_back(d);   // (the second pass's)
     return d;
 }
 
@@ -3435,6 +3436,32 @@ void Engine::alloc() {
         const size_t rr = n * n_used_,
                      tab = (3 * rr + 3 * (size_t) n_expert_ + 3 + kClasses * ((size_t) n_expert_ + 1) +
                             2 * kMaxStagedTiles * (2 * (size_t) n_expert_ + 2)) * sizeof(int32_t);
+        // What the products take beside their arguments (Mmq::work(): mmq_own.cu's FP16 and BLAS paths): the
+        // experts', whose rows go by ids, and lin()'s, with the quantized matrices upload() kept, the output's only
+        // where a step can have kStageRows rows.  Made by the products themselves, it came out of the reserve the
+        // expert cache leaves, while a prompt was read: with less than that free, the first long prompt failed.
+        Mmq::Work need;
+#if !defined(STRATA_GPU_METAL)
+        const auto take = [&](uint32_t type, int64_t w_rows, int64_t w_cols, int64_t rows, bool by_ids, int64_t ld) {
+            const Mmq::Work w = Mmq::work((int) type, w_rows, w_cols, rows, by_ids, ld);
+            need.floats = std::max(need.floats, w.floats);
+            need.halves = std::max(need.halves, w.halves);
+        };
+        for (const Layer& L : layers_) {
+            if (!L.mmq) continue;
+            if (L.mixed()) {
+                take(L.gu_type, n_ff_exp_, n_embd_, (int64_t) rr, true, 2 * n_ff_exp_);
+                take(L.u_type, n_ff_exp_, n_embd_, (int64_t) rr, true, 2 * n_ff_exp_);
+            } else {
+                take(L.gu_type, 2 * n_ff_exp_, n_embd_, (int64_t) rr, true, 2 * n_ff_exp_);
+            }
+            take(L.d_type, n_embd_, n_ff_exp_, (int64_t) rr, true, n_embd_);
+        }
+        const bool wide_steps = std::max(opt_.window, most_step) >= kStageRows;
+        for (const Dev& d : mats_)
+            if (d.n_in <= q_max && (d.p != output_.p || wide_steps))
+                take(d.type, d.n_out, d.n_in, rows_, false, d.n_out);
+#endif
         // The buffers only a call of kStageRows rows or more uses (moe_rows(), lin_raw()'s products), side by side:
         // where they can be mapped apart (VMM) and the answer's calls never have that many rows, the expert cache
         // has their VRAM between prompts (lend_prompt()), 300 MB of Qwen3.6's at a prompt batch of 2,048.
@@ -3442,9 +3469,10 @@ void Engine::alloc() {
                                 rr * n_embd_ * sizeof(float), rr * sizeof(float),
                                 Mmq::q8_bytes((int64_t) rr, n_embd_), Mmq::q8_bytes((int64_t) rr, n_ff_exp_),
                                 mixed_tiles ? Mmq::q8_bytes((int64_t) rr, n_embd_) : 0, Mmq::q8_bytes(rows_, q_max),
-                                two_scratch_ ? batch_floats * sizeof(float) : 0};
-        size_t at[9], total = 0;
-        for (int i = 0; i < 9; ++i) {
+                                two_scratch_ ? batch_floats * sizeof(float) : 0, need.floats * sizeof(float),
+                                need.halves * 2};
+        size_t at[11], total = 0;
+        for (int i = 0; i < 11; ++i) {
             at[i] = total;
             total += (sizes[i] + 255) / 256 * 256;
         }
@@ -3470,6 +3498,10 @@ void Engine::alloc() {
             scratch_batch_ = (float*) (base + at[8]);
             use_scratch(false);
         }
+#if !defined(STRATA_GPU_METAL)
+        mmq_->give(need.floats ? (float*) (base + at[9]) : nullptr, need.floats, need.halves ? base + at[10] : nullptr,
+                   need.halves, blas_);
+#endif
         d_ids_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         d_wts_ = (float*) dmalloc(rr * sizeof(float), "scratch");
         h_ids_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");

@@ -3,12 +3,15 @@
 // uneven rows, an empty one, and their products scattered to other rows (bounds and ids, the bounds mirrored on the
 // host as the engine does).  The path is the card's (int8 tiles, fp16 tiles, or the BLAS path; STRATA_POLY_PROMPT_BLAS=1
 // forces the BLAS path), so a run prints that path's error: run it both ways to compare them.  The activations are
-// normal values with a few channels 30 times larger, and rows of different sizes, as a transformer's are.
+// normal values with a few channels 30 times larger, and rows of different sizes, as a transformer's are.  Then the
+// same products with the memory Mmq::work() asks for given beforehand (Mmq::give(), as Engine::alloc() does): the
+// same numbers, made in those buffers.
 //
 // usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference; 77: no card)
 #include "mmq.hpp"
 #include "ggml.h"
 
+#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -83,6 +86,8 @@ int main() {
     if (!dx || !dperm || !dbounds) return 1;
     Mmq mmq;
     mmq.mirror(dbounds, bounds_h, sizeof bounds_h);
+    cublasHandle_t blas = nullptr;   // the caller's, as the engine's is (Mmq::give())
+    if (cublasCreate(&blas) != CUBLAS_STATUS_SUCCESS) return 1;
     void* xq = nullptr;
     float* dy = nullptr;
     if (!ok(cudaMalloc(&xq, Mmq::q8_bytes(kTokens, kIn)), "cudaMalloc") ||
@@ -136,13 +141,58 @@ int main() {
                 std::copy_n(&y[(size_t) perm[(size_t) r] * kOut], kOut, &back[(size_t) (r * kOut)]);
             }
         const Err experts = compare(back, ref, kTokens, kOut, kOut);
-        const bool fine = dense.rms < 0.02 && experts.rms < 0.02;
+        bool fine = dense.rms < 0.02 && experts.rms < 0.02;
         std::printf("%-8s dense: RMS error %.2e, largest %.2e   experts: RMS error %.2e, largest %.2e  %s\n", ggml_type_name(ty),
                     dense.rms, dense.top, experts.rms, experts.top, fine ? "ok" : "WRONG");
+
+        // Given the memory work() asks for, the products come out the same, and in it: buffers full of 0xff that a
+        // product which made its own memory would leave as they were.  (None is asked where the int8 tiles take it.)
+        const Mmq::Work one = Mmq::work(t, kOut, kIn, kTokens, false, kOut);
+        const Mmq::Work four = Mmq::work(t, kOut, kIn, kTokens, true, kOut);
+        const size_t floats = std::max(one.floats, four.floats), halves = std::max(one.halves, four.halves);
+        float* gy = nullptr;
+        void* gdq = nullptr;
+        if ((floats && !ok(cudaMalloc(&gy, floats * sizeof(float)), "cudaMalloc")) ||
+            (halves && !ok(cudaMalloc(&gdq, halves * 2), "cudaMalloc")))
+            return 1;
+        if (gy) cudaMemset(gy, 0xff, floats * sizeof(float));
+        if (gdq) cudaMemset(gdq, 0xff, halves * 2);
+        {
+            Mmq given;
+            given.mirror(dbounds, bounds_h, sizeof bounds_h);
+            given.give(gy, floats, gdq, halves, blas);
+            std::vector<float> y2(y.size()), y3(y.size());
+            Mmq::quantize(dx, nullptr, xq, t, kIn, kIn, kTokens, nullptr);
+            given.mul(dw, t, kOut, kIn, 0, 1, xq, nullptr, nullptr, kTokens, kTokens, dy, kOut, nullptr);
+            if (!ok(cudaMemcpy(y2.data(), dy, y2.size() * sizeof(float), cudaMemcpyDeviceToHost), "dense product")) return 1;
+            cudaMemset(dy, 0, y.size() * sizeof(float));
+            given.mul(dw, t, kOut, kIn, mat, kExperts, xq, dbounds, dperm, kTokens, 149, dy, kOut, nullptr);
+            if (!ok(cudaMemcpy(y3.data(), dy, y3.size() * sizeof(float), cudaMemcpyDeviceToHost), "experts' product"))
+                return 1;
+            // y has the experts' product of the instance that made its own memory; its dense one again, for this
+            std::vector<float> dense_y((size_t) (kTokens * kOut));
+            mmq.mul(dw, t, kOut, kIn, 0, 1, xq, nullptr, nullptr, kTokens, kTokens, dy, kOut, nullptr);
+            if (!ok(cudaMemcpy(dense_y.data(), dy, dense_y.size() * sizeof(float), cudaMemcpyDeviceToHost), "dense product"))
+                return 1;
+            uint32_t y0 = 0xffffffffu;
+            uint16_t q0 = 0xffff;
+            if (gy) cudaMemcpy(&y0, gy, sizeof y0, cudaMemcpyDeviceToHost);
+            if (gdq) cudaMemcpy(&q0, gdq, sizeof q0, cudaMemcpyDeviceToHost);
+            const bool same = std::equal(y2.begin(), y2.end(), dense_y.begin()) && std::equal(y3.begin(), y3.end(), y.begin());
+            // (the BLAS path takes both for the experts: a work() that asks for none would pass the rest)
+            const bool blas_path = forced && forced[0] == '1';
+            const bool used = (!gy || y0 != 0xffffffffu) && (!gdq || q0 != 0xffff) && (!blas_path || (gy && gdq));
+            std::printf("%-8s given %zu KiB of floats, %zu KiB of halves: %s, %s\n", ggml_type_name(ty), floats * 4 >> 10,
+                        halves * 2 >> 10, same ? "same products" : "OTHER PRODUCTS", used ? "made in them" : "NOT IN THEM");
+            fine = fine && same && used;
+        }
+        cudaFree(gy);
+        cudaFree(gdq);
         bad += !fine;
         cudaFree(dw);
     }
     ggml_quantize_free();
+    cublasDestroy(blas);
     std::printf("%s\n", bad ? "FAIL" : "PASS");
     return bad ? 1 : 0;
 }

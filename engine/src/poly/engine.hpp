@@ -950,6 +950,7 @@ protected:
     float *r_ = nullptr, *cur_ = nullptr, *xn_ = nullptr, *ao_ = nullptr, *fo_ = nullptr;
     float* wf_ = nullptr;      ///< the largest BF16 matrix as floats: lin() multiplies a prompt batch by cuBLAS
     size_t bf16_max_ = 0;      ///< that matrix's values
+    std::vector<Dev> mats_;    ///< the quantized matrices upload() put in VRAM, lin()'s (alloc() makes room for them)
     float *g_ = nullptr, *u_ = nullptr, *h_ = nullptr, *d_ = nullptr, *rl_ = nullptr,
           *logits_ = nullptr;
     void *xq_ = nullptr, *q8_ = nullptr;
