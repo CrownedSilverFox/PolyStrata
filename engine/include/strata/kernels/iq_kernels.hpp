@@ -16,6 +16,9 @@ namespace strata::kernels {
 bool iq_supported(int ggml_type) noexcept;
 /// The token-embedding types iq_embed_rows and iq_dequant_f32 read: the i-quants above and BF16 (30).
 bool embed_type_supported(int ggml_type) noexcept;
+/// The types iq_dequant_f16 and gemm_iq_f16_grouped take: the i-quants above, and F16 (1), BF16 (30), Q2_K (10),
+/// IQ1_S (19), MXFP4 (39) and Q6_K (14), which strata-poly's models keep matrices in.
+bool iq_dequant_supported(int ggml_type) noexcept;
 /// Bytes of one row of `n` values of `ggml_type` (n a multiple of the type's block).
 size_t iq_row_bytes(int ggml_type, int64_t n) noexcept;
 

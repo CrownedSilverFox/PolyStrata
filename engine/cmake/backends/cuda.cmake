@@ -150,6 +150,11 @@ macro(strata_cuda_prompt_tests)
       target_link_libraries(prefill_fused_iq_test PRIVATE ${_strata_pf_tests_lib} ggml-base ${_strata_gpu_runtime_target})
       add_test(NAME prefill_fused_iq_test COMMAND prefill_fused_iq_test)
       set_tests_properties(prefill_fused_iq_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+      # iq_dequant_f16 against ggml's to_float for each type it takes (strata-poly's BLAS path, gemm_iq_f16_grouped)
+      add_executable(iq_dequant_f16_test tests/cuda/iq_dequant_f16_test.cpp)
+      target_link_libraries(iq_dequant_f16_test PRIVATE strata_kernels ggml-base ${_strata_gpu_runtime_target})
+      add_test(NAME iq_dequant_f16_test COMMAND iq_dequant_f16_test)
+      set_tests_properties(iq_dequant_f16_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
       # one prompt layer of experts timed on every path the engine can take (MMQ where it is built, the dequantize + FP16 GEMM path with and without
       # the few-row experts, the grouped kernels, the fused kernels where the card has them), hash and error of each against a CPU reference; runs on
       # any card (77 only without one).  The ctest entry is a small smoke run; the grid is `prefill_expert_paths_bench` itself (see its source's head)

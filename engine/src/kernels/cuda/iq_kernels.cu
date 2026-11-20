@@ -3257,6 +3257,60 @@ __device__ void dq_bf16(const void* vx, int64_t ibs, dst_t* yy, int tid) {
     for (int j = 0; j < 8; ++j) yy[tid * 8 + j] = cvt<dst_t>(__uint_as_float((uint32_t) x[j] << 16));
 }
 
+// The types below are strata-poly's (GGUF files of other models keep matrices in them): its prompt products go
+// through dq_dispatch too (dq_supported()).  Each is llama.cpp's dequantize.cuh of the pinned commit.
+// F16: 8 values per thread
+template<typename dst_t>
+__device__ void dq_f16(const void* vx, int64_t ibs, dst_t* yy, int tid) {
+    const __half* x = (const __half*) vx + ibs * 256 + tid * 8;
+    for (int j = 0; j < 8; ++j) yy[tid * 8 + j] = cvt<dst_t>(__half2float(x[j]));
+}
+// Q2_K: dequantize_block_q2_K, its 64 threads folded onto 32 (thread tid does tid and tid + 32)
+template<typename dst_t>
+__device__ void dq_q2_k(const void* vx, int64_t ibs, dst_t* yy, int tid) {
+    const block_q2_K* x = (const block_q2_K*) vx + ibs;
+    const float dall = __low2float(x->dm), dmin = __high2float(x->dm);
+    for (int t = tid; t < 64; t += 32) {
+        const int n = t / 32, l = t - 32 * n, is = 8 * n + l / 16;
+        const uint8_t q = x->qs[32 * n + l];
+        dst_t* y = yy + 128 * n;
+        y[l + 0] = cvt<dst_t>(dall * (x->scales[is + 0] & 0xF) * ((q >> 0) & 3) - dmin * (x->scales[is + 0] >> 4));
+        y[l + 32] = cvt<dst_t>(dall * (x->scales[is + 2] & 0xF) * ((q >> 2) & 3) - dmin * (x->scales[is + 2] >> 4));
+        y[l + 64] = cvt<dst_t>(dall * (x->scales[is + 4] & 0xF) * ((q >> 4) & 3) - dmin * (x->scales[is + 4] >> 4));
+        y[l + 96] = cvt<dst_t>(dall * (x->scales[is + 6] & 0xF) * ((q >> 6) & 3) - dmin * (x->scales[is + 6] >> 4));
+    }
+}
+// IQ1_S: dequantize_block_iq1_s
+template<typename dst_t>
+__device__ void dq_iq1_s(const void* vx, int64_t ibs, dst_t* yy, int tid) {
+    const block_iq1_s* x = (const block_iq1_s*) vx + ibs;
+    const int il = tid / 8, ib = tid % 8;
+    dst_t* y = yy + 32 * ib + 8 * il;
+    const float delta = x->qh[ib] & 0x8000 ? -1 - IQ1S_DELTA : -1 + IQ1S_DELTA;
+    const float d = __half2float(x->d) * (2 * ((x->qh[ib] >> 12) & 7) + 1);
+    uint32_t grid32[2];
+    const int8_t* q = (const int8_t*) grid32;
+    grid32[0] = iq1s_grid_gpu[x->qs[4 * ib + il] | (((x->qh[ib] >> 3 * il) & 7) << 8)];
+    grid32[1] = (grid32[0] >> 4) & 0x0f0f0f0f;
+    grid32[0] &= 0x0f0f0f0f;
+    for (int j = 0; j < 8; ++j) y[j] = cvt<dst_t>(d * (q[j] + delta));
+}
+// MXFP4: dequantize_block_mxfp4; its codes are E2M1 values doubled (kvalues_mxfp4), so the scale is halved
+__device__ const int8_t dq_mxfp4_values[16] = {0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12};
+template<typename dst_t>
+__device__ void dq_mxfp4(const void* vx, int64_t ibs, dst_t* yy, int tid) {
+    const block_mxfp4* x = (const block_mxfp4*) vx + ibs * (QK_K / QK_MXFP4);
+    const int il = tid / 8, ib = tid % 8;
+    dst_t* y = yy + 32 * ib + 4 * il;
+    const uint8_t* q4 = x[ib].qs + 4 * il;
+    const uint8_t e = x[ib].e;   // ggml_cuda_e8m0_to_fp32(e)
+    const float d = __uint_as_float(e == 0 ? 0x00400000u : (uint32_t) e << 23);
+    for (int j = 0; j < 4; ++j) {
+        y[j + 0] = cvt<dst_t>(d * dq_mxfp4_values[q4[j] & 0xf] * 0.5f);
+        y[j + 16] = cvt<dst_t>(d * dq_mxfp4_values[q4[j] >> 4] * 0.5f);
+    }
+}
+
 // NVFP4: one "superblock" = 256 values = 4 blocks of 64; thread tid writes 8 values of block tid / 8.
 // Sub-block s (16 values) keeps its codes in qs[8 s .. 8 s + 7]: byte j = value j (low nibble) and j + 8 (high).
 template<typename dst_t>
@@ -3342,6 +3396,10 @@ __device__ __forceinline__ void dq_dispatch(int ty, const void* vx, int64_t ibs,
         case 40: dq_nvfp4(vx, ibs, y, tid); break;
         case 8: dq_q8_0(vx, ibs, y, tid); break;
         case 30: dq_bf16(vx, ibs, y, tid); break;
+        case 1: dq_f16(vx, ibs, y, tid); break;
+        case 10: dq_q2_k(vx, ibs, y, tid); break;
+        case 19: dq_iq1_s(vx, ibs, y, tid); break;
+        case 39: dq_mxfp4(vx, ibs, y, tid); break;
         case 144: dq_tq<144>(vx, ibs, y, tid); break;
         case 145: dq_tq<145>(vx, ibs, y, tid); break;
         case 146: dq_tq<146>(vx, ibs, y, tid); break;
@@ -3394,6 +3452,9 @@ bool is_iq(int t) {
            t == 12 || t == 13 || t == 7 || t == 6 || t == 2 || t == 3 || t == 8 || t == 40 || t == 144 || t == 145 || t == 146 || t == 147 || t == 148 || t == 149;
 #endif
 }
+// what dq_dispatch dequantizes for iq_dequant_f16 and gemm_iq_f16_grouped: the types above, and those of
+// strata-poly's GGUFs (F16, BF16, Q2_K, IQ1_S, MXFP4, and Q6_K in any build)
+bool dq_supported(int t) { return is_iq(t) || t == 1 || t == 30 || t == 10 || t == 19 || t == 39 || t == 14; }
 // values per block of the types the grouped expert kernels take (0 = none)
 int gu_qk(int t) {
     switch (t) {
@@ -5348,6 +5409,7 @@ bool iq_old_kernels() { return g_old_kernels; }
 bool iq_supported(int t) noexcept { return is_iq(t); }
 // BF16 and Q6_K: embedding only (dq_dispatch has them; no expert or prompt-path kernels take them)
 bool embed_type_supported(int t) noexcept { return is_iq(t) || t == 30 || t == 14; }
+bool iq_dequant_supported(int t) noexcept { return dq_supported(t); }
 
 size_t iq_row_bytes(int t, int64_t n) noexcept {
     switch (t) {
@@ -5370,7 +5432,11 @@ size_t iq_row_bytes(int t, int64_t n) noexcept {
         case 3: return (size_t) (n / 32) * sizeof(block_q4_1);
         case 40: return (size_t) (n / 64) * sizeof(block_nvfp4);
         case 8: return (size_t) (n / 32) * sizeof(block_q8_0);
-        case 30: return (size_t) n * 2;   // BF16: the token embedding only (iq_embed_rows, iq_dequant_f32)
+        case 30: return (size_t) n * 2;   // BF16: the token embedding, and strata-poly's prompt products (dq_supported())
+        case 1: return (size_t) n * 2;    // F16, Q2_K, IQ1_S, MXFP4: strata-poly's
+        case 10: return (size_t) (n / 256) * sizeof(block_q2_K);
+        case 19: return (size_t) (n / 256) * sizeof(block_iq1_s);
+        case 39: return (size_t) (n / 32) * sizeof(block_mxfp4);
         case 144: return (size_t) (n / 128) * sizeof(block_tq2_t);   // APR trellis types
         case 145: return (size_t) (n / 128) * sizeof(block_tqk6);
         case 146: return (size_t) (n / 128) * sizeof(block_tqk7);
@@ -5438,7 +5504,7 @@ void iq_mmvq_ids(int t, const MmvqIds& ids, int count, int n_in, int n_out, void
 }
 
 void iq_dequant_f16(int t, const void* src, int64_t n, uint16_t* dst, void* stream, const float* scale) {
-    if (n % 256 != 0 || !is_iq(t)) { std::fprintf(stderr, "iq_dequant_f16: bad arguments\n"); std::exit(1); }
+    if (n % 256 != 0 || !dq_supported(t)) { std::fprintf(stderr, "iq_dequant_f16: bad arguments\n"); std::exit(1); }
     dequant_flat_kernel<__half><<<(unsigned) (n / 256), 32, 0, (cudaStream_t) stream>>>(t, src, (__half*) dst, scale);
     check("iq_dequant_f16");
 }
@@ -7355,7 +7421,7 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
     }
     const bool q20 = ty == 42;
     const bool nl = ty == 20 && K % 256 != 0;   // IQ4_NL down (K=640): there is no WK=256 path for this K
-    if (q20 || nl ? K % 128 != 0 : (K % 256 != 0 || !is_iq(ty))) return false;
+    if (q20 || nl ? K % 128 != 0 : (K % 256 != 0 || !dq_supported(ty))) return false;
     const size_t row_bytes = iq_row_bytes(ty, K);
     const int mt = (max_rows + WG_MT * WG_BM - 1) / (WG_MT * WG_BM);   // row chunks per expert
     const dim3 grid((unsigned) (n_out / WG_BN), (unsigned) (n_experts * mt));
