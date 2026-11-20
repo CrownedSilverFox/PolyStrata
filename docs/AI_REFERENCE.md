@@ -45,11 +45,10 @@ The installer's `--family` names (`START-HERE.bat --help`). Each model's sizes, 
 Coder, Swift, Gyro, NVFP4 and OrcaRouter are Qwen3.8-Flash-Next variants, not separate models. `qwen36` and
 `qwen36-strata` are the same model on the two engines ([BACKENDS.md](BACKENDS.md#qwen36-on-two-engines)).
 
-The hardware the Strata project's release packages of its engine cover (its own desktop app and Terminal, which this
-repository does not publish), for the two families of that engine:
+The two families of the Strata project's engine ([CAPABILITIES.md](CAPABILITIES.md) says what its packages are):
 
-- <!-- cap:summary:qwen38 -->Qwen3.8-Flash-Next runs in the desktop app and in the Terminal. Hardware: NVIDIA on Windows; NVIDIA on Linux; NVIDIA DGX Spark (GB10); AMD on Windows (RX 6000, 7000 and 9000, Ryzen AI Max); AMD on Linux (RX 6000, 7000 and 9000, Radeon AI PRO R9700, Ryzen AI Max); Intel Arc on Linux (Arc A-series and B-series); Apple silicon (M1 or newer, macOS 15 or newer). Per-hardware limits and measurements: [CAPABILITIES.md](CAPABILITIES.md#qwen38).<!-- /cap -->
-- <!-- cap:summary:qwen36 -->Qwen3.6-35B-A3B runs in the desktop app and in the Terminal. Hardware: NVIDIA on Windows; NVIDIA on Linux; AMD on Windows; AMD on Linux. Package present but not tested: NVIDIA DGX Spark. Does not run on: Intel Arc on Linux, Apple silicon. Per-hardware limits and measurements: [CAPABILITIES.md](CAPABILITIES.md#qwen36).<!-- /cap -->
+- <!-- cap:summary:qwen38 -->The Strata project's release packages run Qwen3.8-Flash-Next on: NVIDIA on Windows; NVIDIA on Linux; NVIDIA DGX Spark (GB10); AMD on Windows (RX 6000, 7000 and 9000, Ryzen AI Max); AMD on Linux (RX 6000, 7000 and 9000, Radeon AI PRO R9700, Ryzen AI Max); Intel Arc on Linux (Arc A-series and B-series); Apple silicon (M1 or newer, macOS 15 or newer). Per-hardware limits and measurements: [CAPABILITIES.md](CAPABILITIES.md#qwen38).<!-- /cap -->
+- <!-- cap:summary:qwen36 -->The Strata project's release packages run Qwen3.6-35B-A3B on: NVIDIA on Windows; NVIDIA on Linux; AMD on Windows; AMD on Linux. Package present but not tested: NVIDIA DGX Spark. Does not run on: Intel Arc on Linux, Apple silicon. Per-hardware limits and measurements: [CAPABILITIES.md](CAPABILITIES.md#qwen36).<!-- /cap -->
 
 A field this page does not state is **unknown**, not zero and not unsupported. DeepSeek Harness is a coding tool;
 its presence does not establish support for a particular DeepSeek model.

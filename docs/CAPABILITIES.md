@@ -1,6 +1,8 @@
 # Which model runs on which hardware
 
-This page is built by `tools/capability_table.py` from [docs/data/capabilities.json](data/capabilities.json) and the package names of release v0.2.17 ([docs/data/release.json](data/release.json)). Do not edit it by hand.
+This page is built by `tools/capability_table.py` from [docs/data/capabilities.json](data/capabilities.json) and the package names of the Strata project's release v0.2.17 ([docs/data/release.json](data/release.json)). Do not edit it by hand.
+
+Those packages are the Strata project's engine for its own desktop app and Terminal, which this repository does not publish. PolyStrata's setup installs the same engine for these two families; the hardware setup covers is in [INSTALL.md](INSTALL.md#what-you-need). The models of PolyStrata's own engine are not on this page: see [the README](../README.md#what-you-need) and each model's page.
 
 - **Packaged**: the engine packages in the release for that hardware. Read from the release's file names.
 - **Supported**: what these docs commit to. *untested* means a package exists and nothing is claimed.

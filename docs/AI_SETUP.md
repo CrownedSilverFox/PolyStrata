@@ -102,9 +102,8 @@ takes that size, or a smaller one on a PC with too little RAM for it.
 
 `--family ornith122` (Ornith 1.5 122B, [ORNITH.md](ORNITH.md)) and `--family qwen36-strata` (Qwen3.6-35B-A3B on the
 Strata project's own engine, UD-Q4_K_XL and up, 32 GB of RAM or more, [QWEN36.md](QWEN36.md)) are also offered.
-[BACKENDS.md](BACKENDS.md#install) has what was measured. The Strata project's own release packages of that engine
-cover this hardware (they come with its desktop app and Terminal, which this repository does not publish):
-<!-- cap:summary:qwen36 -->Qwen3.6-35B-A3B runs in the desktop app and in the Terminal. Hardware: NVIDIA on Windows; NVIDIA on Linux; AMD on Windows; AMD on Linux. Package present but not tested: NVIDIA DGX Spark. Does not run on: Intel Arc on Linux, Apple silicon. Per-hardware limits and measurements: [CAPABILITIES.md](CAPABILITIES.md#qwen36).<!-- /cap -->
+[BACKENDS.md](BACKENDS.md#install) has what was measured.
+<!-- cap:summary:qwen36 -->The Strata project's release packages run Qwen3.6-35B-A3B on: NVIDIA on Windows; NVIDIA on Linux; AMD on Windows; AMD on Linux. Package present but not tested: NVIDIA DGX Spark. Does not run on: Intel Arc on Linux, Apple silicon. Per-hardware limits and measurements: [CAPABILITIES.md](CAPABILITIES.md#qwen36).<!-- /cap -->
 
 ## 4. Run setup without questions
 
