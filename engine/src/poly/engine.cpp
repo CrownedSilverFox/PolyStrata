@@ -6543,7 +6543,9 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         all += co[j].n;
     }
     if (n_co > 0 && !co_reads()) throw std::logic_error("read: co-reads are one card's, where a read is several calls");
-    if (n < 1 || all > read_rows_) throw std::logic_error("read takes 1 to max_read() tokens, co-reads among them");
+    // (a read of no tokens of its own takes co-reads: a request whose prompt the conversation holds but its last token)
+    if (n < (n_co > 0 ? 0 : 1) || all > read_rows_)
+        throw std::logic_error("read takes 1 to max_read() tokens, co-reads among them");
     if (all >= kStageRows) take_prompt();
     for (const Image& im : images_)
         if (im.at < pos_ + n && im.at + im.n > pos_)
@@ -6624,7 +6626,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         return (const std::function<bool(int, int)>*) &share;
     };
     // co-reads go through the layers in packs whatever the experts: one by one their calls would wait as long
-    if (n_calls == 1 || (n_co == 0 && (!mmq_ || all_cached() || all < opt_.stage_ahead))) {
+    if (n_co == 0 && (n_calls == 1 || !mmq_ || all_cached() || all < opt_.stage_ahead)) {
         turn = share_to(n_layer_);   // eval() takes the calls through the cards after this one
         // On several cards the next one takes a call on a thread of its own, while this one runs the call after
         // it.  Each card runs the calls as eval() does, in the same order.

@@ -482,6 +482,12 @@ struct Session {
                 co_done = with_co;
                 co_read.clear();
             } else {
+                // A request with nothing to read but its last token (the server's: one that wrote alone and goes on
+                // in a slot, its prompt in the conversation) reads the BCO prompts on their own first.
+                if (last && !co_read.empty()) {
+                    co_done = engine.read(ids.data() + i, 0, nullptr, 0, nullptr, co_read.data(), (int) co_read.size());
+                    co_read.clear();
+                }
                 if (last) engine.end_read();   // the last token, as the answer's, with the whole expert cache
                 engine.eval(ids.data() + i, (int) m, last);
             }
