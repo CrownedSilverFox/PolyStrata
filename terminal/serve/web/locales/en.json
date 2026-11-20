@@ -188,6 +188,14 @@
   "model.unloadingTitle": "The model is unloading",
   "model.unsupported": "Unload is not available",
   "model.waiting": "Waiting for the server",
+  "msg.next": "Next answer",
+  "msg.prev": "Previous answer",
+  "msg.regenEarlier": "Another answer to an earlier question",
+  "msg.regenEarlierText": {
+    "one": "The {n} message after it stays in the chat, and the next question still sends it.",
+    "other": "The {n} messages after it stay in the chat, and the next question still sends them."
+  },
+  "msg.regenerateTitle": "Write another answer to this question. The answer you have stays as a variant; the arrows go between them.",
   "pending.afterTool": "Waiting for the tool to finish, then sending: “{text}”",
   "pending.cutting": "Stopping the answer, then sending: “{text}”",
   "pending.one": "A message is already waiting",

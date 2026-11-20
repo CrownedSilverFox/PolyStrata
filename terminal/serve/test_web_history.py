@@ -73,7 +73,8 @@ class OffIsThePageFromBefore(unittest.TestCase):
     def test_an_interrupted_answer_keeps_what_was_written(self):
         self.assertIn("if (cut) m.interrupted = true;", self.app)
         self.assertIn("busy.cutAfterTool = true; return; }   // let the tool finish", self.app)
-        self.assertIn("settlePending(cut, !m.stopped && !m.error);", self.app)
+        self.assertIn("const finished = !m.stopped && !m.error;", self.app)
+        self.assertIn("settlePending(cut, finished);", self.app)
 
     def test_sending_while_busy_parks_nothing_unless_asked(self):
         self.assertIn('const parksWhileBusy = () => settings.whileBusy === "queue" || settings.whileBusy === "interject";', self.app)
