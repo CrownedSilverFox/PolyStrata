@@ -57,6 +57,7 @@ function fitHeader() {}
 const requestAnimationFrame = () => {};
 async function loadHealth() { await fetch("health"); }
 async function loadMcp() { await fetch("v1/mcp"); }
+async function loadModels() { await fetch("api/models"); }
 function showTab(name) { focus.push("tab:" + (name || "chat")); }
 async function send() { sends.push(input.value); await fetch("v1/chat/completions", {method: "POST", headers: {Authorization: "Bearer saved-key"}}); }
 %(autosize)s

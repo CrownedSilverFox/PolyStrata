@@ -1,17 +1,11 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let selected = null, detail = null, pane = "input", records = [], state = null, operating = false, stamp = "", actionError = "";
-// #142: inside the web app's Requests tab, the app's header, theme and saved API key stand in for this page's own
-let host = null;
-try { if (window.parent !== window) host = parent.document.documentElement; } catch (e) { /* framed by another site */ }
-let apiKey = sessionStorage.getItem("strata.monitor.key") || (host && JSON.parse(localStorage.getItem("strata.apikey") || '""')) || "";
-document.documentElement.dataset.theme = localStorage.getItem("strata.theme") || "dark";
-if (host) {
-  const sync = () => { document.documentElement.dataset.theme = host.dataset.theme; };
-  document.documentElement.classList.add("embedded");
-  sync();
-  new MutationObserver(sync).observe(host, {attributes: true, attributeFilter: ["data-theme"]});
-}
+// #142: the web app's Requests tab opens this page in a tab of its own; the API key and the theme the app keeps in this browser
+// are this page's too, so a key saved there is not asked for again
+let apiKey = sessionStorage.getItem("strata.monitor.key") || "";
+try { apiKey = apiKey || JSON.parse(localStorage.getItem("strata.apikey") || '""'); } catch (e) { /* no storage: the key is asked for */ }
+document.documentElement.dataset.theme = localStorage.getItem("strata.theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 const seconds = n => typeof n === "number" ? `${n.toFixed(2)} s` : "—";
 const speed = n => typeof n === "number" ? n.toFixed(1) : "—";
 const active = r => !["completed", "error", "disconnected"].includes(r.state);

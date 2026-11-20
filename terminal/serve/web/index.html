@@ -27,7 +27,7 @@
       <svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-image"/></svg><span data-i18n="tab.images">Images</span></button>
     <button class="st-tab" role="tab" id="tab-btn-monitor" aria-controls="view-monitor" aria-selected="false" data-tab="monitor">
       <svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-activity"/></svg><span data-i18n="tab.monitor">Monitor</span></button>
-    <button class="st-tab" role="tab" id="tab-btn-requests" aria-controls="view-requests" aria-selected="false" data-tab="requests" hidden>
+    <button class="st-tab" role="tab" id="tab-btn-requests" aria-controls="view-requests" aria-selected="false" data-tab="requests">
       <svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-layers"/></svg><span>Requests</span></button>
     <button class="st-tab" role="tab" id="tab-btn-experts" aria-controls="view-experts" aria-selected="false" data-tab="experts" hidden>
       <svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-experts"/></svg><span>Experts</span></button>
@@ -211,8 +211,16 @@
     </div>
   </section>
 
-  <!-- ============================ Requests ============================ -->
+  <!-- ============================ Requests (#142; English only, like Monitor) ============================ -->
   <section class="view view--requests" id="view-requests" role="tabpanel" aria-labelledby="tab-btn-requests" hidden>
+    <div class="about" id="requests-on" hidden>
+      <div class="st-card">
+        <span class="card-title">The API monitor</span>
+        <p class="muted">The last 100 requests from every client, with their prompts, answers and timings. It opens in a tab
+          of its own.</p>
+        <p><a class="st-btn st-btn--primary" id="requests-open" href="api-monitor" target="_blank" rel="noopener">Open the API monitor</a></p>
+      </div>
+    </div>
     <div class="about" id="requests-off" hidden>
       <div class="st-card">
         <span class="card-title">The API monitor is off</span>

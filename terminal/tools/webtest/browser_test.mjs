@@ -691,6 +691,108 @@ htest("ime: the key that commits or cancels a conversion does not send, end a re
   await page.close();
 });
 
+// ------------------------------------------------------------------------------------------------ the model list and Requests (#142)
+const withMock = async (opts, fn) => { const m = await startMock(opts); try { await fn(m); } finally { await m.stop(); } };
+const toastTitles = (page) => page.$$eval(".st-toast__title", (e) => e.map((x) => x.textContent));
+
+test("models: one installed model, no list; several, a list; choosing one loads it and starts a new chat", async ({ browser, mock }) => {
+  const one = await openPage(browser, mock);
+  await one.waitForFunction(() => document.querySelector("#model-select").dataset.current === "Mock-Model");
+  assert.equal(await one.$eval("#model-select", (e) => e.hidden), true, "nothing to choose from");
+  await one.close();
+  await withMock({ models: true }, async (m) => {
+    const page = await openPage(browser, m);
+    await ask(page, "first");
+    assert.equal(await page.$eval("#model-select", (e) => e.hidden), false);
+    assert.deepEqual(await page.$$eval("#model-select option", (o) => o.map((x) => [x.value, x.disabled, x.textContent])),
+                     [["Mock-Model", false, "Mock-Model"], ["Other-Model", false, "Other Model (Other-Model)"], ["Gone-Model", true, "Gone Model (Gone-Model) - unavailable"]]);
+    await page.select("#model-select", "Other-Model");
+    await page.waitForFunction(() => document.querySelector("#model-select").dataset.current === "Other-Model");
+    await idle(page);
+    assert.ok(m.state.calls.includes("POST /api/models/load"));
+    assert.deepEqual(await texts(page), [], "a new chat: the answers on the screen came from the other model");
+    assert.ok((await toastTitles(page)).includes("Other-Model is loaded"));
+    await ask(page, "second");
+    assert.equal(m.state.requests.at(-1).model, "Other-Model", "the next question goes to the model that was loaded");
+    // a switch the server refuses leaves the list and the chat as they were
+    m.state.failLoad = true;
+    await page.select("#model-select", "Mock-Model");
+    await page.waitForFunction(() => [...document.querySelectorAll(".st-toast__title")].some((t) => t.textContent === "The model was not switched"));
+    await page.waitForFunction(() => !document.querySelector("#model-select").disabled);
+    assert.equal(await page.$eval("#model-select", (e) => e.value), "Other-Model");
+    assert.deepEqual(await texts(page), ["u:second", "a:Mock answer 2."]);
+    // not while an answer is being written
+    await say(page, "#hold third");
+    await page.waitForFunction(() => busy !== null);
+    const loads = m.state.calls.filter((c) => c === "POST /api/models/load").length;
+    await page.select("#model-select", "Mock-Model");
+    await sleep(200);
+    assert.equal(m.state.calls.filter((c) => c === "POST /api/models/load").length, loads, "no switch was asked for");
+    assert.equal(await page.$eval("#model-select", (e) => e.value), "Other-Model");
+    assert.ok((await toastTitles(page)).includes("Still writing"));
+    await page.evaluate(() => document.querySelectorAll(".st-toast").forEach((t) => t.remove()));   // they sit over Stop
+    await page.click("#stop-btn");
+    await idle(page);
+    assert.deepEqual(pageErrors(page).filter((e) => !/ 409 .*\/api\/models\/load\)$/.test(e)), [], "(the refused switch logs its 409)");
+    await page.close();
+  });
+});
+
+test("models: with the list on, a switch starts a new chat in the list and keeps the old one there", async ({ browser }) => {
+  await withMock({ models: true }, async (m) => {
+    const page = await openPage(browser, m, { seed: { sampling: { chatList: true } } });
+    await ask(page, "kept question");
+    await page.select("#model-select", "Other-Model");
+    await page.waitForFunction(() => document.querySelector("#model-select").dataset.current === "Other-Model");
+    await sleep(100);
+    assert.deepEqual(await texts(page), []);
+    assert.deepEqual((await sidebarTitles(page)).sort(), ["New chat", "kept question"], "the earlier chat stays in the list; the open one is new");
+    await page.close();
+  });
+});
+
+test("models: the header with the model list fits a phone", async ({ browser }) => {
+  await withMock({ models: true }, async (m) => {
+    for (const width of [320, 360, 390, 420, 458, 500, 560, 640, 768]) {
+      const page = await openPage(browser, m, { width, height: 700 });
+      await page.waitForFunction(() => !document.querySelector("#model-select").hidden);
+      await waitBtn(page, "Unload");
+      const r = await page.evaluate(() => {
+        const box = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return [b.left, b.right]; };
+        return { select: box("model-select"), unload: box("unload-btn"), theme: box("theme-btn"), scroll: document.documentElement.scrollWidth, width: innerWidth };
+      });
+      for (const [l, rt] of [r.select, r.unload, r.theme]) assert.ok(l >= 0 && rt <= r.width, `${width}px: ${JSON.stringify(r)}`);
+      assert.ok(r.select[1] - r.select[0] >= 60, `${width}px: the list is too narrow to read: ${JSON.stringify(r)}`);
+      assert.ok(r.scroll <= r.width, `${width}px: the page scrolls sideways: ${JSON.stringify(r)}`);
+      await page.close();
+    }
+  });
+});
+
+test("requests: the tab says how to turn the API monitor on; on, it opens the monitor in a tab of its own, with the saved key", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  assert.equal(await page.$eval("#tab-btn-requests", (e) => e.hidden), false, "the tab is always there");
+  await page.click("#tab-btn-requests");
+  assert.equal(await page.$eval("#requests-off", (e) => e.hidden), false, "off: how to turn it on");
+  assert.equal(await page.$eval("#requests-on", (e) => e.hidden), true);
+  await page.close();
+  await withMock({ apiMonitor: true }, async (m) => {
+    const page2 = await openPage(browser, m, { seed: { apikey: "saved-key" }, hash: "#requests" });
+    assert.equal(await page2.$eval("#requests-off", (e) => e.hidden), true);
+    assert.equal(await page2.$eval("#requests-on", (e) => e.hidden), false);
+    assert.equal(await page2.$eval("#requests-open", (e) => [e.getAttribute("href"), e.target].join(" ")), "api-monitor _blank");
+    assert.equal(await page2.$("iframe"), null, "no frame: the page's policy allows none");
+    await page2.click("#requests-open");
+    const monitor = await (await page2.browserContext().waitForTarget((t) => t.url().endsWith("/api-monitor"))).page();
+    await monitor.waitForFunction(() => document.getElementById("updated").textContent.startsWith("Live"));
+    assert.equal(m.state.monitorAuth, "Bearer saved-key", "the key saved on the chat page is not asked for again");
+    assert.equal(await monitor.$eval("#auth", (e) => e.hidden), true);
+    assert.deepEqual(pageErrors(page2), []);
+    await monitor.close();
+    await page2.close();
+  });
+});
+
 const mock = await startMock();
 const browser = await launch();
 await run(async () => ({ browser, mock, close: async () => { await browser.close(); await mock.stop(); } }));

@@ -75,17 +75,24 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
 let tab = "chat";
 const bootHash = location.hash;                       // the tab asked for in the address, kept for a tab that shows later (Experts)
 function showTab(name) {
-  tab = ["chat", "images", "monitor", "experts", "about"].includes(name) ? name : "chat";
+  tab = ["chat", "images", "monitor", "experts", "requests", "about"].includes(name) ? name : "chat";
   if (tab === "experts" && $("tab-btn-experts").hidden) tab = "chat";          // only when the model saves its expert profile (#5723)
   for (const b of document.querySelectorAll(".st-tab")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-  for (const v of ["chat", "images", "monitor", "experts", "about"]) $(`view-${v}`).hidden = v !== tab;
+  for (const v of ["chat", "images", "monitor", "experts", "requests", "about"]) $(`view-${v}`).hidden = v !== tab;
   if (tab === "experts") StrataExperts.start($("view-experts")); else StrataExperts.stop();
   if (tab === "images") $("img-prompt").focus();
   if (location.hash.slice(1) !== tab) history.replaceState(null, "", tab === "chat" ? location.pathname : `#${tab}`);
   if (tab === "chat") $("input").focus();
   if (tab === "monitor") loadMcp();
   if (tab === "about") loadConfig();
+  if (tab === "requests") showRequests();
   if (lastMetrics) render(lastMetrics);
+}
+// #142: the Requests tab opens the API monitor (/api-monitor) in a browser tab of its own, since this page's policy allows no
+// frames (PAGE_CSP), or says how to turn it on. Nothing shows until /health has answered.
+function showRequests() {
+  $("requests-on").hidden = health.api_monitor !== true;
+  $("requests-off").hidden = health.api_monitor !== false;
 }
 for (const b of document.querySelectorAll(".st-tab")) b.onclick = () => showTab(b.dataset.tab);
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
@@ -123,12 +130,56 @@ async function loadHealth() {
     renderEmptyChat();
     $("tab-btn-images").hidden = !health.image_generation;
     if (location.hash === "#images" && health.image_generation) showTab("images");
+    if (tab === "requests") showRequests();
     StrataExperts.init({headers, timeStr});
-    StrataExperts.probe().then((on) => { $("tab-btn-experts").hidden = !on; if (on && bootHash === "#experts" && tab === "chat") showTab("experts"); fitHeader(); });
+    StrataExperts.probe().then((on) => {
+      $("tab-btn-experts").hidden = !on;
+      if (on && bootHash === "#experts" && tab === "chat") showTab("experts");
+      if (!on && tab === "experts") showTab("chat");                   // the model list switched to a model without a profile
+      fitHeader();
+    });
   } catch (e) {
     setTimeout(loadHealth, 2000);
   }
 }
+
+// ------------------------------------------------------------------ the model list (GET api/models, POST api/models/load)
+// The installed models, shown once there is more than one to choose from. Choosing one stops the model in memory, loads that
+// one and starts a new chat (the answers on the screen came from the other model).
+async function loadModels() {
+  const sel = $("model-select");
+  let models = [];
+  try {
+    const r = await fetch("api/models", {headers: headers()});
+    if (r.ok) models = (await r.json()).models || [];
+  } catch (e) { return; }
+  const unavailable = tr("model.unavailable", "unavailable");
+  sel.innerHTML = models.map((m) =>
+    `<option value="${esc(m.id)}"${m.current ? " selected" : ""}${m.status === "unavailable" ? ` disabled title="${esc(m.problem || "")}"` : ""}>` +
+    `${esc(m.display_name && m.display_name !== m.id ? `${m.display_name} (${m.id})` : m.id)}` +
+    `${m.status === "unavailable" ? ` - ${esc(unavailable)}` : ""}</option>`).join("");
+  sel.hidden = models.length < 2;
+  sel.dataset.current = (models.find((m) => m.current) || {}).id || "";
+  fitHeader();
+}
+$("model-select").onchange = async () => {
+  const sel = $("model-select"), name = sel.value;
+  if (busy) { stillWriting(); sel.value = sel.dataset.current; return; }
+  sel.disabled = true;
+  toast("info", tr("model.switching", "Switching to {name}", {name}),
+        tr("model.switchingText", "The model in memory is stopped first, then this one is loaded."), 8000);
+  let message = "";
+  try {
+    const r = await fetch("api/models/load", {method: "POST", headers: headers(true), body: JSON.stringify({model: name})});
+    if (!r.ok) message = ((await r.json().catch(() => ({}))).error || {}).message || tr("toast.httpAnswer", "The server answered HTTP {code}.", {code: r.status});
+  } catch (e) { message = tr("model.noAnswer", "The server did not answer."); }
+  sel.disabled = false;
+  await loadHealth();
+  await loadModels();
+  if (message) { toast("error", tr("model.notSwitched", "The model was not switched"), message, 10000); return; }
+  toast("success", tr("model.switched", "{name} is loaded", {name}), "");
+  if (!busy) (listOn ? startChat : clearChat)();       // a question sent during the switch is answered by the new model: kept
+};
 
 // ------------------------------------------------------------------ Monitor
 const METRICS = [
@@ -1544,7 +1595,7 @@ function autosize() { const t = $("input"); t.style.height = "auto"; t.style.hei
 $("input").addEventListener("input", autosize);
 
 // one chat, as before: New chat clears it, with an Undo (with the saved-chats list on, its own New chat button does this job)
-$("new-btn").onclick = () => {
+function clearChat() {
   if (busy) { stillWriting(); return; }
   if (panel) { closePanel(); }
   clearUndo();
@@ -1559,7 +1610,8 @@ $("new-btn").onclick = () => {
     if (busy || messages.length) return;                         // a new question since: the cleared chat is not put back over it
     messages = backup; saveChat(); renderChat();
   }});
-};
+}
+$("new-btn").onclick = clearChat;
 $("export-btn").onclick = () => {
   if (!messages.length) { toast("info", tr("export.nothing", "Nothing to save yet")); return; }
   const tools = (m) => (m.tools || []).filter((t) => t.result != null).map((t) =>
@@ -1795,6 +1847,7 @@ function showLanguage() {
   renderChat();
   setBusy(!!busy);
   if (lastMetrics) render(lastMetrics);
+  loadModels();                                         // "unavailable" in the model list
 }
 $("lang").onchange = async () => {
   store.set("lang", $("lang").value);
@@ -1820,6 +1873,7 @@ async function start() {
     autosize();
   }
   loadHealth().then(loadMcp);
+  loadModels();
   showTab(location.hash.slice(1) || "chat");
   if (startQuestion && tab === "chat") $("input").focus();
   poll();
