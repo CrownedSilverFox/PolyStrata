@@ -295,11 +295,6 @@ def ms_meta(repo: str, path: str):
 
 HF = hf("ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF")
 LLAMA_CPP_COMMIT = "3cf03257f219afbe7334045ff7c6a06ac68c627d"
-LLAMA_CPP_ZIP = f"https://github.com/ggml-org/llama.cpp/archive/{LLAMA_CPP_COMMIT}.zip"
-# The image encoder's own llama.cpp: MiniCPM-V 4.7's mtmd is newer than the engines' pin, and the engines stay on
-# the Strata project's pin until it moves; only strata-vision builds from this one (a second checkout, like #14 suggests).
-VISION_LLAMA_CPP_COMMIT = "69f201a2051ea9b9e9b50c3cc56afd9e2ae64414"
-VISION_LLAMA_CPP_ZIP = f"https://github.com/ggml-org/llama.cpp/archive/{VISION_LLAMA_CPP_COMMIT}.zip"
 
 # The ready-made engine: <PREBUILT_URL><asset>, a zip with strata(.exe), strata-vision(.exe) and BUILD.json, built
 # by tools/make_release.py.  Set this to the GitHub release download folder when publishing, e.g.
@@ -6270,7 +6265,7 @@ def build_engine_hip_win(gpu, llama, portable=False) -> Path:
                  f"-DCMAKE_HIP_COMPILER={rocm}/lib/llvm/bin/clang++.exe",
                  f"-DCMAKE_HIP_COMPILER_ROCM_ROOT={rocm}", f"-DCMAKE_PREFIX_PATH={rocm}",
                  f"-DCMAKE_HIP_FLAGS=--rocm-path={rocm} --rocm-device-lib-path={bitcode}",
-                 f"-DSTRATA_GGML_DIR={llama}"], vcvars, "build-strata-hip-win.bat")
+                 *ggml_defs(llama)], vcvars, "build-strata-hip-win.bat")
     if stale_binary(bdir / EXE):                       # #2054: no stamp for a binary of another source
         fail(f"the engine build finished without a new engine ({EXE} is version "
              f"{binary_engine_version(bdir / EXE)}, this source is {source_version()}): "
@@ -10144,7 +10139,7 @@ def build_engine_poly(gpu, yes, llama, vision="none", toolkit=13, portable=False
         # a folder per toolkit: CMake does not take another compiler into a folder configured with one
         bdir = ROOT / ("build-poly" if toolkit == 13 else "build-poly-cuda12")
         defs = ["-DSTRATA_ENABLE_CUDA=ON", "-DSTRATA_BUILD_TESTS=OFF", f"-DCMAKE_CUDA_ARCHITECTURES={cuda_archs}",
-                f"-DCMAKE_CUDA_COMPILER={nvcc}", f"-DSTRATA_GGML_DIR={llama}",
+                f"-DCMAKE_CUDA_COMPILER={nvcc}", *ggml_defs(llama),
                 f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}"]
         if min(archs) < CUDA13_MIN_ARCH:
             defs.append("-DSTRATA_EXPERIMENTAL_SM60=ON")
@@ -10152,8 +10147,7 @@ def build_engine_poly(gpu, yes, llama, vision="none", toolkit=13, portable=False
         shutil.copy2(bdir / POLY_EXE, eng / POLY_EXE)
     if not vision_ok:
         say("  Compiling the image encoder" + (" with CUDA (10-20 minutes, once) ..." if vision == "gpu" else " ..."))
-        defs = [f"-DLLAMA_DIR={get_llama_cpp(vision=True)}", f"-DSTRATA_VISION_CUDA={'ON' if vision == 'gpu' else 'OFF'}",
-                f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}"]
+        defs = [f"-DSTRATA_VISION_CUDA={'ON' if vision == 'gpu' else 'OFF'}", f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}"]
         if vision == "gpu":
             defs += [f"-DCMAKE_CUDA_ARCHITECTURES={cuda_archs}", f"-DCMAKE_CUDA_COMPILER={nvcc}"]
         # its own build folder: the Qwen engine's encoder may be built for another toolkit in build-vision/
@@ -10214,7 +10208,7 @@ def build_engine_poly_hip(gpu, llama, portable=False) -> Path:
                  f"-DCMAKE_HIP_COMPILER={rocm_clang(root)}", f"-DCMAKE_HIP_COMPILER_ROCM_ROOT={root}",
                  "-DCMAKE_PREFIX_PATH=" + ";".join([str(root), *libs]),
                  f"-DCMAKE_HIP_FLAGS=--rocm-path={root} --rocm-device-lib-path={bitcode}",
-                 f"-DSTRATA_GGML_DIR={llama}"], None, "")
+                 *ggml_defs(llama)], None, "")
     shutil.copy2(ROOT / "build-poly-hip" / POLY_EXE, eng / POLY_EXE)
     stamp.write_text(json.dumps({"source": "local-hip", "backend": "hip", "version": source_version(),
                                  "archs": archs, "vision": "none", "lib_dirs": dirs, "src": src,
@@ -10265,7 +10259,7 @@ def build_engine_poly_hip_win(gpu, llama, portable=False) -> Path:
                  f"-DCMAKE_HIP_COMPILER={rocm}/lib/llvm/bin/clang++.exe",
                  f"-DCMAKE_HIP_COMPILER_ROCM_ROOT={rocm}", f"-DCMAKE_PREFIX_PATH={rocm}",
                  f"-DCMAKE_HIP_FLAGS=--rocm-path={rocm} --rocm-device-lib-path={bitcode}",
-                 f"-DSTRATA_GGML_DIR={llama}"], vcvars, "build-strata-poly-hip.bat")
+                 *ggml_defs(llama)], vcvars, "build-strata-poly-hip.bat")
     shutil.copy2(bdir / POLY_EXE, eng / POLY_EXE)
     # the DLLs, the GEMM kernels and the .kpack files rocBLAS finds beside its DLL come from the ready-made main
     # engine's bundled ROCm (the same wheels; lib_dirs points there, so nothing is on the disk twice), else from
