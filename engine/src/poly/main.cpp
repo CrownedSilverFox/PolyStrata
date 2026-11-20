@@ -1923,8 +1923,12 @@ int main(int argc, char** argv) {
         // A fixed 8 GiB on a PC whose RAM the model's file already fills pushed that file out of the file cache.
         // Sized as Strata's engine sizes it (#3493); admit() still keeps min_free_mib free at every park.
         if (cache.park_auto && want_serve && cache.o.checkpoints > 0 && cache.o.park_slots > 0) {
-            cache.o.park_mib = strata::core::auto_conversation_cache_mib(strata::core::available_host_bytes(),
-                                                                        cache.min_free_mib);
+            std::optional<uint64_t> free_b = strata::core::available_host_bytes();
+#ifdef _WIN32
+            // the card's experts' pages, let go to the standby list, as the RAM budget counts them (Engine::load())
+            if (free_b) free_b = *free_b - std::min<uint64_t>(*free_b, engine.cached_file_bytes());
+#endif
+            cache.o.park_mib = strata::core::auto_conversation_cache_mib(free_b, cache.min_free_mib);
             if (cache.o.park_mib > 0)
                 std::fprintf(stderr, "strata-poly: conversation cache sized from the free RAM: %lld MiB for up to %d "
                                      "parked conversations (--conversation-cache-mib N sets it, 0 turns it off)\n",
