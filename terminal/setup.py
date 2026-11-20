@@ -10040,6 +10040,8 @@ def poly_verdict(d, ram, vram_gb, hip, windows=False) -> str:
 POLY_KV = {"q8_0": ("qwen36", "ornith", "ornith122", "tiel", "minicpmv", "kolibri", "flint", "lfm25"),
            "int8": ("gemma4",), "int8k": ("gemma4",)}
 STRATA_KV = ("int8", "q4_0", "k8v4")
+# the strata-poly families --kv-streaming on gives --kv-resident (their engine streams the attention caches from RAM)
+POLY_KV_STREAMING = ("ornith122", "ornith", "qwen36", "tiel")
 
 
 def poly_saved_kv(paths) -> str | None:
@@ -10434,7 +10436,8 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         ("--vision", not sees and a.vision not in (None, "no", "none")),
         ("--vision-tokens", not sees and a.vision_tokens is not None),
         ("--kv", a.kv and a.kv != "fp16" and family not in POLY_KV.get(a.kv, ())),
-        ("--kv-streaming", a.kv_streaming != "auto"), ("--rope-scaling", a.rope_scaling),
+        ("--kv-streaming", a.kv_streaming != "auto" and family not in POLY_KV_STREAMING),
+        ("--rope-scaling", a.rope_scaling),
         ("--rope-scale", a.rope_scale is not None), ("--low-ram", a.low_ram != "auto"),
         ("--resident-budget-gib", a.resident_budget_gib is not None),
         ("--draft-vocab", a.draft_vocab), ("--layer-split", a.layer_split and not multi), ("--calibrate", a.calibrate),
@@ -10721,7 +10724,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
     if kv:
         args += ["--kv", kv]
         ok(f"attention caches stored as {kv} (--kv in the config, docs/Q8_KV.md; --kv fp16 at setup takes it out)")
-    if family in ("ornith122", "ornith", "qwen36", "tiel") and not is_wsl() and ctx >= 65536 and a.kv_streaming == "on":
+    if family in POLY_KV_STREAMING and not is_wsl() and ctx >= 65536 and a.kv_streaming == "on":
         # Opt-in only: setup never turns KV streaming on by itself (it can decode slower and leave fewer experts in
         # VRAM at 64K+, see PR #180).  Only an explicit --kv-streaming on asks for --kv-resident.
         args += ["--kv-resident", "32768"]

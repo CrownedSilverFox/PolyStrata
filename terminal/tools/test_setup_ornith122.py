@@ -405,6 +405,9 @@ class NonInteractiveInstallFlow(unittest.TestCase):
         self.assertIsNotNone(cfg)
         self.assertIn("--kv-resident", cfg["args"])
         self.assertEqual(cfg["args"][cfg["args"].index("--kv-resident") + 1], "32768")
+        # the flag is used here, so setup does not list it among the ones the engine has no setting for
+        self.assertFalse([line for line in out.splitlines() if "not used with" in line and "--kv-streaming" in line],
+                         out)
 
     def test_setup_kv_streaming_is_opt_in_at_64k(self):
         """VecSzn, PR #180: setup must NOT turn KV streaming on by default from 64K; --kv-resident is opt-in."""
