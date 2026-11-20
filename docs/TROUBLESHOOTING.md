@@ -1,25 +1,22 @@
 # Troubleshooting
 
 This page is for anyone whose install or startup fails, or whose answers go wrong. Find your symptom below. Each entry gives one fix.
-Start from the route you installed: [desktop app or Terminal](INSTALL.md), or [source checkout](SOURCE_INSTALL.md).
-The normal release uses the app or `strata launch` and needs no `.bat` file. Detailed engine errors are in the
-[engine reference](DETAILS.md#troubleshooting).
+PolyStrata installs with `START-HERE.bat` (Windows) or `./setup.sh` (Linux, Mac): [INSTALL.md](INSTALL.md). The first section
+is about the Strata project's desktop app and Terminal (the `strata` command), which this repository does not publish.
+Detailed engine errors are in the [engine reference](DETAILS.md#troubleshooting).
 
-**Quick check.** Run these and keep the output for a bug report:
+**Quick check.** Run this and keep its output, and the end of `strata-<model>.log` in the `terminal` folder, for a bug report:
 
 ```sh
-strata --version
-strata doctor --live
-strata launch --status
+START-HERE.bat --check       # Linux and Mac: ./setup.sh --check
 ```
 
 ## The desktop app and the Terminal
 
 **I cannot find `START-HERE.bat` or `SETUP.bat`.**
-Open the installed PolyStrata app, or run `strata launch`. Those wrappers are in the source repository and are not the
-startup path for the app. For a fresh desktop install, download the one installer for your system
-(`PolyStrata-0.2.17-windows-x64-setup.exe`, `PolyStrata-0.2.17-linux-x86_64.AppImage` or `PolyStrata-0.2.17-macos-arm64.dmg`), not a
-`strata-engine-…` archive.
+`START-HERE.bat` (Windows) and `setup.sh` (Linux, Mac) are at the top of the PolyStrata folder you downloaded or cloned.
+`SETUP.bat` is gone since the 0.2.16 layout: `START-HERE.bat --setup` does what it did. The Strata project's app has
+neither: it is started from its own icon.
 
 **`strata` is not found.**
 On Windows, open a new PowerShell window after installing. On Linux or Mac, use the full path the installer printed,
@@ -48,7 +45,7 @@ missing combination.
 **An update says it succeeded but `strata --version` is still old.**
 The Terminal switches to the updated Control on the next command, so run `strata --version` again. If it is still old,
 run the one-line installer once more; it keeps models and settings. The app, Control and engine have separate version
-numbers; see [updating](INSTALL.md#updating) and the [release notes](https://github.com/Niko1221/Strata/releases).
+numbers. A PolyStrata copy is updated as in [updating](INSTALL.md#updating).
 
 **A new engine misbehaves after an update.**
 Stop the model, then use the app's rollback control or `strata components rollback`. An update keeps the engine it
@@ -100,7 +97,7 @@ checkout uses `START-HERE.bat` / `./setup.sh` to resume source setup; it continu
 
 **"blk.N.ffn_gate_exps.weight and blk.N.ffn_up_exps.weight have different types, which this engine does not run".**
 The file quantizes each expert's gate and up in two different formats, as IsValorum's APEX-I NanoPlus files do.
-Engines before 0.1.45-poly.6 refused such files; run `UPDATE.bat` (Linux: `./update.sh`) and it loads
+Engines before 0.1.45-poly.6 refused such files; run `UPDATE.bat` (Linux: `./setup.sh --update`) and it loads
 ([issue 103](https://github.com/simplexai-labs/PolyStrata/issues/103)).
 
 **Setup says the engine does not match GitHub's checksum.**
@@ -196,7 +193,7 @@ without pictures: `strata launch --vision off` (source checkout: `START-HERE.bat
 requests run. Do not disable system-wide protection as a routine fix, and include the blocked file and the exact message in
 a bug report. Feed signatures and Windows code signing are different checks.
 
-**UPDATE.bat / update.sh say "git pull did not succeed", or "has no commit in common" (#1276).**
+**UPDATE.bat / `./setup.sh --update` say "git pull did not succeed", or "has no commit in common" (#1276).**
 This is for a source checkout. The repository's history was cleaned up on 2026-10-06, so a clone made before that cannot
 be updated with `git pull`. The scripts from 0.1.40.2 handle it: when no tracked file is edited they keep your old commits
 in the branch `pre-cleanup-backup` and move the clone to the new history; otherwise they print the two commands for you.
@@ -242,8 +239,8 @@ PolyStrata prints a warning at start when it sees this limit.
 **The prompt exceeds the context.**
 The conversation is longer than the context you chose. Start a new chat, shorten the input, or use the app's Summarize and
 continue action. A larger context needs more memory. In the Terminal, restart your chosen model with an explicit
-`--context`, such as `64k`; keep its family, model and other choices. In a source checkout, run `SETUP.bat` and pick more
-context. Do not look for `SETUP.bat` in an app install.
+`--context`, such as `64k`; keep its family, model and other choices. In a PolyStrata copy, run `START-HERE.bat --setup`
+(Linux: `./setup.sh --setup`) and pick more context.
 
 **It is slower than the tables.**
 The monitor plugged into the graphics card and other GPU programs take VRAM from the expert cache; RAM running below its
@@ -319,7 +316,7 @@ flickers, the engine dies, and the Event Viewer shows `VIDEO_ENGINE_TIMEOUT_DETE
 Linux). PolyStrata 0.1.39 and newer say "the GPU stopped responding" in the log. It was seen with KV streaming on
 (`--kv-resident 32768`, which setup turns on from 64K context) while reading a long prompt on a gfx1201 card. Try these
 in order, one at a time, and tell us what changed:
-1. **Send us the evidence.** The last ~80 lines of the engine log (`strata-<model>.log` in the PolyStrata folder of a source checkout; the server window
+1. **Send us the evidence.** The last ~80 lines of the engine log (`strata-<model>.log` in the `terminal` folder of PolyStrata; the server window
    shows the same lines), your AMD driver version (AMD Software > System), your card and Windows version, the PolyStrata
    version, and the exact steps (context size, how long the prompt was, which app sent it). If Windows wrote a
    dump, the newest `.dmp` in `C:\Windows\LiveKernelReports\WATCHDOG` (or `C:\Windows\Minidump`) helps; it holds no
@@ -369,11 +366,11 @@ overwrite local branches or edits just to make `git pull` succeed.
   `desktop-crash-<date>.log` in `%LOCALAPPDATA%\PolyStrata\logs`; Save logs includes it, and so can you, by hand.
 - **Linux app crash:** if the window crashes or will not open, run the AppImage with `--save-logs` in a terminal; it writes
   the crash log and the other logs to one file in Downloads.
-- **Installer or source checkout:** `strata-<model>.log` from the PolyStrata folder.
+- **PolyStrata (START-HERE.bat or setup.sh):** `strata-<model>.log` from the `terminal` folder.
 - **Developer tools:** To open the developer tools in the app window on Windows or Linux, start the app with `STRATA_DEVTOOLS=1`.
 
 Look through a log before you send it, and never send an API key. Include model and quantization, OS, GPU/VRAM, RAM,
 driver, install route (app, Terminal or the installer), PolyStrata and engine versions, exact command, expected result and
-actual error. Open an [issue](https://github.com/Niko1221/Strata/issues) and attach the log. Follow
+actual error. Open an [issue](https://github.com/simplexai-labs/PolyStrata/issues) and attach the log. Follow
 [CONTRIBUTING.md](../.github/CONTRIBUTING.md). The full table of error messages, with the older engine fixes, is in the
 [details](DETAILS.md#troubleshooting).

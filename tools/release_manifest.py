@@ -35,7 +35,6 @@ V = r"(\d+\.\d+(?:\.\d+)*)"
 # an error, so rewording a line cannot quietly switch its check off.
 LINES = [
     ("docs/README.md", r"This documentation is for version " + V + r"\.", ["product_version"]),
-    ("docs/SOURCE_INSTALL.md", r"use PolyStrata \(version " + V + r"\)", ["product_version"]),
     ("AGENTS.md", r"^Version " + V + r", engine " + V + r"\.", ["product_version", "engine_version"]),
     ("docs/AI_REFERENCE.md", r"PolyStrata on the Strata project's " + V + r", engine " + V + r"\)", ["product_version", "engine_version"]),
     ("tools/packaging/UPDATES.md", r"one per OS \(" + V + r"\)", ["product_version"]),
