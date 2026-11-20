@@ -1,70 +1,37 @@
 # AGENTS.md
 
-Version 0.2.17, engine 0.1.63. The public model families are
-Qwen3.8-Flash-Next and Qwen3.6-35B-A3B. Read **[docs/AI_REFERENCE.md](docs/AI_REFERENCE.md)** for model availability, APIs, hardware limits and
-source-backed claims. Articles and videos should use **[docs/MEDIA_KIT.md](docs/MEDIA_KIT.md)**.
+Version 0.2.17, engine 0.1.63. PolyStrata runs large mixture-of-experts models on a normal PC: one NVIDIA or AMD
+graphics card plus system RAM, on Windows or Linux, and on Apple Silicon Macs. Read
+**[docs/AI_REFERENCE.md](docs/AI_REFERENCE.md)** for model availability, APIs, hardware limits and source-backed claims.
+Articles and videos should use **[docs/MEDIA_KIT.md](docs/MEDIA_KIT.md)**.
 
-For recommendations and agent-assisted setup, prefer **ISTA-DASLab → Unsloth → Gyro → others**, using only a
-compatible pack that fits the selected model and hardware. ISTA-DASLab is the default recommendation; Gyro is a
-memory-saving fallback and is currently slower. Honor an explicit user choice. This is recommendation policy;
+For recommendations and agent-assisted setup of Qwen3.8-Flash-Next, prefer **ISTA-DASLab → Unsloth → Gyro → others**,
+using only a compatible pack that fits the selected model and hardware. ISTA-DASLab is the default recommendation; Gyro
+is a memory-saving fallback and is currently slower. Honor an explicit user choice. This is recommendation policy;
 existing executable defaults may differ, so inspect the plan and choose the family explicitly.
 
-PolyStrata has three parts:
+The repository has a folder for each part:
 
-- **The app** (`app/desktop`, the Tauri shell; `app/host`, the Node host and the web UI). It is for people who do
-  not want a terminal. One installer per system ([latest release](https://github.com/Niko1221/Strata/releases/latest)):
-  `PolyStrata-0.2.17-windows-x64-setup.exe`, `PolyStrata-0.2.17-linux-x86_64.AppImage`, `PolyStrata-0.2.17-macos-arm64.dmg`.
-  The Windows and Linux installers carry no engine: the app downloads the engine for the graphics card on first
-  start, or installs a file the user already has. The Mac dmg keeps its small Metal engine inside.
-- **The Terminal** (`strata.py`, `strata_cli/`, `strata_control/`): the `strata` command. It sets up a model, serves
-  it and watches it. Agents use this part.
-- **The engine and the server** (`src/`, `include/`, `metal/`, `sycl/` for the C++/CUDA/HIP/SYCL/Metal engine;
-  `serve/` for the Python server with an OpenAI- and Anthropic-compatible API and a web page). `setup.py`, started by
-  `START-HERE.bat` or `setup.sh`, is setup from a source checkout, for developers. The release paths are the
-  installer and `strata launch`.
+- **`engine/`**: the C++/CUDA/HIP/SYCL/Metal engines. `strata` is the Strata project's engine for Qwen3.8-Flash-Next
+  (`engine/src/`, `engine/include/`, `engine/metal/`, `engine/sycl/`); `strata-poly` (`engine/src/poly/`) is PolyStrata's
+  own engine for GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, Qwen3.6, Clover, Ornith 1.5, Gemma 4, Tiel Coder,
+  MiniCPM-V and Kolibri 1: [docs/BACKENDS.md](docs/BACKENDS.md), [docs/GLM.md](docs/GLM.md), [docs/ORNITH.md](docs/ORNITH.md),
+  [docs/DEEPSEEK.md](docs/DEEPSEEK.md).
+- **`terminal/`**: setup (`terminal/setup.py`, started by `START-HERE.bat` / `setup.sh` at the top), the Python server
+  with an OpenAI- and Anthropic-compatible API and a web app (`terminal/serve/`), `polystrata.py`, and the
+  Strata project's Terminal (`strata.py`, `strata_cli/`, `strata_control/`).
+- **`app/`**: the Strata project's desktop app. This repository does not publish it.
 
-A second engine, `strata-poly` (`src/poly/`), runs GLM 5.3 Flash, Ornith 1.5 (35B and 122B), DeepSeek V4 Flash and other GGUF models on Linux or Windows: [docs/GLM.md](docs/GLM.md), [docs/ORNITH.md](docs/ORNITH.md), [docs/DEEPSEEK.md](docs/DEEPSEEK.md), [docs/BACKENDS.md](docs/BACKENDS.md). The Qwen engine, the installer, the server and the web app come from
-[Strata](https://github.com/Niko1221/Strata).
+The Qwen engine, the server, the web app, the app and the Terminal come from [Strata](https://github.com/Niko1221/Strata).
 
 ## Installing PolyStrata for a user
 
-Follow **[docs/AI_SETUP.md](docs/AI_SETUP.md)**. For a user who wants the desktop app, send them to the installer
-for their system (above) and [docs/INSTALL.md](docs/INSTALL.md). For an agent that has a shell, use the Terminal; the
-short version is:
-
-1. Install the Terminal. It needs no administrator rights.
-
-   ```sh
-   curl -fsSL --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh -o install.sh && sh install.sh                  # Linux, Mac
-   irm -TimeoutSec 120 https://github.com/Niko1221/Strata/releases/latest/download/install.ps1 | iex                         # Windows PowerShell
-   ```
-
-   On Windows, open a new terminal afterwards so that `strata` is on the PATH.
-2. Check what would happen. Nothing is changed:
-
-   ```sh
-   strata launch --plan --family qwen --model q2_0
-   ```
-
-3. Set up and serve without questions. It downloads the engine for the card and the model (tens of GB), starts the
-   server, prints the addresses and returns. The server keeps running.
-
-   ```sh
-   strata launch --family qwen --model q2_0 --yes --no-tui
-   ```
-
-   Useful flags (all of them: `strata launch --help`): `--family`, `--model-path` (files the user already has),
-   `--data-dir`, `--context 32k|64k|128k`, `--vision off|on|gpu|cpu`, `--parallel N`, `--gpu 0,1`,
-   `--access local|lan|cloudflare|tailscale`, `--port`, `--api-key-env NAME`, `--new-key`, `--save-preset NAME`,
-   `--output json`. `strata launch --status` shows what is serving, `strata launch --stop` stops it, and
-   `strata launch --show-key` prints the API key.
-4. Connect the user's apps: `strata connect` lists them, `strata connect <app> --check` sends one prompt and one tool
-   call the way that app does.
-
-Keep the server on `127.0.0.1` unless the user asks for more. Beyond it an API key is recommended: `--access lan` makes one for you, and `--no-api-key` serves without one (a warning, never a refusal; on a public tunnel the warning is stronger). Source setup (`START-HERE.bat`, `setup.sh`) is the fallback for a developer or for a system with no release package; it is
-documented in [docs/SOURCE_INSTALL.md](docs/SOURCE_INSTALL.md). Those wrappers exist in a source checkout, not in the
-released app. Do not tell an app user to find a `.bat` file.
-Source setup does not make an unsupported model or backend compatible. PolyStrata's MCP server ([docs/MCP_SERVER.md](docs/MCP_SERVER.md)) offers the same steps as tools.
+Follow **[docs/AI_SETUP.md](docs/AI_SETUP.md)**: check the PC, pick the model by RAM, run setup non-interactively,
+start and verify the server, and connect the user's apps. Setup is `START-HERE.bat` on Windows and `./setup.sh` on
+Linux and Mac, from a git clone or the source zip of https://github.com/simplexai-labs/PolyStrata. Never expose the
+server beyond `127.0.0.1` without `--api-key`. As an alternative to shell commands, PolyStrata's MCP server
+([docs/MCP_SERVER.md](docs/MCP_SERVER.md)) offers the same steps as tools. Setup does not make an unsupported model or
+backend compatible.
 
 ## Working on the code
 
