@@ -2,7 +2,7 @@
 // end inside a stage of 256 values (Gemma 4 26B's down: 704 values), against the same matrix with each row padded to
 // the next whole stage by blocks of zeros (scale 0), times rows padded with zeros: the padding adds nothing, so the two
 // must agree to the bit.  The unpadded matrices are allocated to their last byte, so that a read past them shows
-// under compute-sanitizer.
+// under compute-sanitizer.  Q4_0's products are checked against its weights' values as well.
 //
 // usage: poly_mmq_k32_test   (exit 0: every case agrees; 77: no card, or no int8 product on it)
 #include "mmq.hpp"
@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -21,12 +22,43 @@ using strata::poly::Mmq;
 namespace {
 
 struct Quant { const char* name; int type; int block; };   // ggml_type, bytes of a block of 32 values
-constexpr Quant kQuants[] = {{"Q5_0", 6, 22}, {"Q5_1", 7, 24}, {"Q8_0", 8, 34}, {"IQ4_NL", 20, 18}};
+constexpr Quant kQuants[] = {{"Q4_0", 2, 18}, {"Q5_0", 6, 22}, {"Q5_1", 7, 24}, {"Q8_0", 8, 34}, {"IQ4_NL", 20, 18}};
 constexpr int kRows = 200;   // weight rows a matrix: not a whole number of the kernel's tiles of 64
 
 bool ok(cudaError_t e, const char* what) {
     if (e != cudaSuccess) std::printf("%s: %s\n", what, cudaGetErrorString(e));
     return e == cudaSuccess;
+}
+
+float half_to_float(uint16_t h) {
+    const int e = (h >> 10) & 31, m = h & 1023;
+    const float v = e == 0 ? std::ldexp((float) m, -24) : std::ldexp((float) (m | 1024), e - 25);
+    return (h & 0x8000) ? -v : v;
+}
+
+// Q4_0 has no other test of its int8 decode: each product against the weights' values (scale * (nibble - 8), the low
+// nibbles first) times the rows as floats, within the int8 rows' rounding (1% of the sum of the terms' sizes)
+int q4_0_misses(const std::vector<uint8_t>& w, const std::vector<float>& x, const std::vector<float>& y, int k,
+                const std::vector<int32_t>& bounds) {
+    const int nb = k / 32;
+    int bad = 0;
+    for (size_t e = 0; e + 1 < bounds.size(); ++e)
+        for (int t = bounds[e]; t < bounds[e + 1]; ++t)
+            for (int r = 0; r < kRows; ++r) {
+                double sum = 0, size = 0;
+                for (int b = 0; b < nb; ++b) {
+                    const uint8_t* p = &w[(e * kRows + (size_t) r) * nb * 18 + (size_t) b * 18];
+                    const float d = half_to_float((uint16_t) (p[0] | p[1] << 8));
+                    for (int j = 0; j < 32; ++j) {
+                        const int q = (j < 16 ? p[2 + j] & 15 : p[2 + j - 16] >> 4) - 8;
+                        const double v = (double) d * q * x[(size_t) t * k + 32 * b + j];
+                        sum += v;
+                        size += std::fabs(v);
+                    }
+                }
+                bad += std::fabs(y[(size_t) t * kRows + r] - sum) > 0.01 * size + 1e-6;
+            }
+    return bad;
 }
 
 // n matrices of kRows rows of k values; returns how many output values differ from the padded run, -1 on an error
@@ -79,6 +111,7 @@ int run_case(const Quant& q, int k, int n, const std::vector<int>& rows, std::mt
             cudaMemcpy(b.data(), dyp, b.size() * 4, cudaMemcpyDeviceToHost);
             bad = 0;
             for (size_t i = 0; i < a.size(); ++i) bad += std::memcmp(&a[i], &b[i], 4) != 0;
+            if (q.type == 2) bad += q4_0_misses(w, x, a, k, bounds);
         }
     }
     for (void* p : {(void*) dw, (void*) dwp, (void*) dx, (void*) dxp, (void*) db, xq, xqp, (void*) dy, (void*) dyp})

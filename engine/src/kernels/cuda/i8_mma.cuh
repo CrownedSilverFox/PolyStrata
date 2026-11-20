@@ -23,7 +23,7 @@
 constexpr int I8M_NT = 256;
 constexpr int I8M_LD = 68;   // words of a shared row of codes: 64 + 4, so the 8 rows a warp reads at once lie in 8 banks
 
-#define STRATA_I8M_TYPES(X) X(6) X(7) X(8) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42)
+#define STRATA_I8M_TYPES(X) X(2) X(6) X(7) X(8) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42)
 __host__ __device__ constexpr bool i8m_type(int t) { return t == 11 || i8_block_bytes(t) != 0; }
 __host__ __device__ constexpr bool i8m_two(int t) { return t == 11 || i8_two_scales(t); }   // a scale per 16 values
 
@@ -175,6 +175,8 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         const uint32_t* t = (const uint32_t*) kvalues_iq4nl;
 #pragma unroll
         for (int i = 0; i < 4; ++i) kv[i] = t[i];
+    } else if constexpr (T == 2) {   // Q4_0: a nibble less 8, IQ4_NL's blocks otherwise
+        kv[0] = 0xFBFAF9F8u; kv[1] = 0xFFFEFDFCu; kv[2] = 0x03020100u; kv[3] = 0x07060504u;
     }
     if (tid < MT) s_id[tid] = tid < ntok ? (ids ? ids[c0 + tid] : c0 + tid) : -1;
 
