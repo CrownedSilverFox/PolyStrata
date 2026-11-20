@@ -69,7 +69,8 @@ private:
         uint16_t* keys = nullptr;   ///< max_context * n_kv * head_dim, fp16
         uint16_t* vals = nullptr;
         // q8_0 cache (opt-in): codes are n_kv*head_dim int8 a row; scales are one fp16 per 32-value block
-        // (n_kv*(head_dim/32) a row).  Used instead of keys/vals when Options::kv_format == kQ8_0.
+        // (n_kv*(head_dim/32) a row).  Used instead of keys/vals when Options::kv_format == kQ8_0.  With kv_rs_ the
+        // four point into a sequence's one array of codes and one of scales, kv_rs_ codes a row.
         int8_t*   k_codes  = nullptr;
         uint16_t* k_scales = nullptr;
         int8_t*   v_codes  = nullptr;
@@ -101,6 +102,7 @@ private:
     uint64_t axes_set_ = 0;
     int s_dim_ = 0, k_heads_ = 0, v_heads_ = 0, d_inner_ = 0, conv_dim_ = 0;
     int n_gdn_ = 0, n_attn_ = 0;
+    size_t kv_rs_ = 0;   ///< q8_0 on CUDA: the codes of every attention layer's key and value a row (Kvq8::rs)
     GdnMmaControl gdn_mma_;           ///< captured request and per-engine capability (STRATA_GDN_MMA=1)
     int chunk_ = 1;   ///< tokens the attention takes at a time
 

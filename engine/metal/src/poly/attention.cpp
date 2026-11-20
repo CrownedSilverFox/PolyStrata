@@ -30,12 +30,21 @@ void head_norm_rope(const float* x,int stride,const float* w,float* y,int dim,in
 }
 void store_f16(const float* x,uint16_t* cache,int n,int64_t pos,int rows,void* s) { store(x,cache,nullptr,n,pos,nullptr,rows,0,0,s); }
 void store_f16_at(const float* x,uint16_t* cache,int n,const long long* at,int rows,int ring,void* s) { store(x,cache,nullptr,n,0,at,rows,ring,0,s); }
-void store_q8(const float* x,int8_t* codes,uint16_t* scales,int n,int64_t pos,int rows,void* s) { store(x,codes,scales,n,pos,nullptr,rows,0,1,s); }
-void store_q8_at(const float* x,int8_t* codes,uint16_t* scales,int n,const long long* at,int rows,int ring,void* s) { store(x,codes,scales,n,0,at,rows,ring,1,s); }
+// The Metal kernels read a q8 cache's rows back to back (Kvq8::rs 0 or n); Qwen35 interleaves its layers on CUDA only.
+void store_q8(const float* x,int8_t* codes,uint16_t* scales,int n,int64_t pos,int rows,void* s,size_t rs) {
+    if(rs && rs!=size_t(n)) throw std::invalid_argument("Metal q8 cache rows are n codes apart");
+    store(x,codes,scales,n,pos,nullptr,rows,0,1,s);
+}
+void store_q8_at(const float* x,int8_t* codes,uint16_t* scales,int n,const long long* at,int rows,int ring,void* s,size_t rs) {
+    if(rs && rs!=size_t(n)) throw std::invalid_argument("Metal q8 cache rows are n codes apart");
+    store(x,codes,scales,n,0,at,rows,ring,1,s);
+}
 void attend(const float* q,const uint16_t* k,const uint16_t* v,int64_t pos,int rows,float*,int,float* out,
             int dim,int heads,int kv,float scale,void* s,int window,int ring,bool whole,const long long* at,int room,size_t,
             Kvq8 kq,Kvq8 vq,const float* sinks,size_t) {
     if(dim<=0 || dim>1024 || dim%4 || kv<=0 || heads%kv) throw std::invalid_argument("Metal attention shape");
+    if((kq.rs && kq.rs!=size_t(kv)*dim) || (vq.rs && vq.rs!=size_t(kv)*dim))
+        throw std::invalid_argument("Metal q8 cache rows are kv_heads * dim codes apart");
     if(sinks) throw std::invalid_argument("Metal attention has no attention sinks (Flint)");
     if(rows<=0) return;
     Args a;a.p[0]=q;a.p[1]=k;a.p[2]=v;a.p[3]=out;a.p[4]=at;

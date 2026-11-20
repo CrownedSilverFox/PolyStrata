@@ -126,17 +126,19 @@ void store_int8_at(const float* x, int8_t* code, uint16_t* delta, int n_kv, int 
                    const long long* at, int ring, void* stream);
 
 /// Stores the tokens' rows as ggml Q8_0 (one fp16 scale a 32-value block of int8 codes) from row `pos`.
-/// codes: n int8 a row; scales: n/32 fp16 a row.  n must be a multiple of 32 (QK8_0).
-void store_q8(const float* x, int8_t* codes, uint16_t* scales, int n, int64_t pos, int rows, void* stream);
+/// codes: n int8 a row; scales: n/32 fp16 a row.  n must be a multiple of 32 (QK8_0).  rs as Kvq8::rs.
+void store_q8(const float* x, int8_t* codes, uint16_t* scales, int n, int64_t pos, int rows, void* stream,
+              size_t rs = 0);
 /// The same from the row the card holds at `at` when the launch runs; with `ring`, a row is its number % ring.
 void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const long long* at, int rows, int ring,
-                 void* stream);
+                 void* stream, size_t rs = 0);
 /// store_q8_at() for rows of different sequences: row r into codes[r] and scales[r] at the row at[2 * r] (step()'s
 /// pairs of position and turn).  Each row gets the bits a call of its own gives.  CUDA only.
 struct RowCaches {
     static constexpr int kMax = 32;
     int8_t* codes[kMax] = {};
     uint16_t* scales[kMax] = {};
+    size_t rs = 0;   ///< the codes from a cache's row to its next, as Kvq8::rs; 0: n
 };
 void store_q8_rows(const float* x, const RowCaches& caches, int n, const long long* at, int rows, void* stream);
 /// Attention over cached latents for the tokens from position `pos`.  q: n_head * rank absorbed queries a token.
@@ -290,6 +292,7 @@ struct AttnSeqs {
     const uint16_t* vs[kMax] = {};
     const long long* at[kMax] = {};
     int keys[kMax] = {}, tokens[kMax] = {};
+    size_t rs = 0;   ///< every cache's codes from a row to the next, as Kvq8::rs; 0: kv_heads * dim
 };
 /// Whether attend_seqs() takes these sequences: what attend() would run for each of them, a q8_0 cache with no
 /// window, no ring and no sinks, has a kernel here.  It fills in score[k] and wt[k] from `score` (score_floats).
@@ -303,9 +306,12 @@ void head_norm_rope_rows(const float* x, int x_stride, const float* w, float* y,
 /// `n = kv_heads * dim`, row-major (`codes[row * n + blk * 32 + j]`, `scales[row * (n / 32) + blk]`).
 /// A q8 read is active wherever `codes` is not null.  The value a block holds is
 /// `(float)codes[..] * __half2float(scales[..])` with one scale a 32-value block.
+/// rs: the codes from a row to the next where that is not n (several caches' rows side by side in one array, as
+/// Qwen3.6's layers are on CUDA), and the scales rs / 32; 0 is n.  A multiple of 32.
 struct Kvq8 {
     const int8_t* codes = nullptr;
     const uint16_t* scales = nullptr;
+    size_t rs = 0;
 };
 
 /// Causal attention for the tokens from position `pos`: token t attends the rows 0 to pos + t, or with `window`
