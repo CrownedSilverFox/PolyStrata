@@ -33,6 +33,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace strata::gpu {
@@ -120,7 +121,7 @@ struct StreamImpl {
     int pending = 0;          // dispatches in the open command buffer
     GraphImpl* rec = nullptr;
     std::vector<std::shared_ptr<ResourceHold>> resources;
-    std::vector<uint64_t> enc_keys;
+    std::unordered_set<uint64_t> enc_keys;   // the allocations the open encoder has made resident
     bool fallback_residency = false;
 };
 
@@ -297,10 +298,8 @@ void use_hold(StreamImpl* s, MTL::ComputeCommandEncoder* e, const std::shared_pt
     if (!h) return;
     if (s->resources.empty() || s->resources.back() != h) s->resources.push_back(h);
     for (const auto& item : h->items) {
-        if (std::find(s->enc_keys.begin(), s->enc_keys.end(), item.key) == s->enc_keys.end()) {
-            s->enc_keys.push_back(item.key);
+        if (s->enc_keys.insert(item.key).second)
             e->useResource(item.buf, MTL::ResourceUsageRead | MTL::ResourceUsageWrite);
-        }
     }
 }
 void flush(StreamImpl* s) {
@@ -313,15 +312,11 @@ void flush(StreamImpl* s) {
     }
 #if defined(STRATA_METAL_TESTING)
     {
-        std::vector<uint64_t> seen;
+        std::unordered_set<uint64_t> seen;
         size_t bytes = 0;
         for (const auto& h : holds) if (h) {
-            for (const auto& item : h->items) {
-                if (std::find(seen.begin(), seen.end(), item.key) == seen.end()) {
-                    seen.push_back(item.key);
-                    bytes += item.bytes;
-                }
-            }
+            for (const auto& item : h->items)
+                if (seen.insert(item.key).second) bytes += item.bytes;
         }
         rt().residency_bytes.store(bytes);
     }
