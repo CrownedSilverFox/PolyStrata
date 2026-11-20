@@ -212,19 +212,22 @@ class Document(unittest.TestCase):
             self.assertIn(name, entry, f"docs/DOCKER.md lists {name} but docker/entrypoint.sh does not read it")
 
     def test_tags_in_the_document_match_the_compose_defaults(self):
+        # PolyStrata publishes no images: its page names the tags of an image built here, and says the compose files default
+        # to the Strata project's published images until STRATA_IMAGE names the local one
         doc = (ROOT.parent / "docs" / "DOCKER.md").read_text(encoding="utf-8")
-        for tag in ("0.2.7-cuda13", "0.2.7-cuda12", "0.2.7-rocm-gfx120x", "0.2.7-rocm-gfx110x", "0.2.7-rocm-gfx1151", "0.2.7-sycl"):
+        for tag in ("strata:cuda13", "strata:cuda12", "strata:rocm-gfx120x", "strata:rocm-gfx110x", "strata:rocm-gfx1151", "strata:sycl"):
             self.assertIn(tag, doc)
+        self.assertIn("STRATA_IMAGE", doc)
         for name, tag in (("docker-compose.nvidia.yml", "ghcr.io/niko1221/strata:0.2.7-cuda13"), ("docker-compose.amd.yml", "ghcr.io/niko1221/strata:0.2.7-rocm-gfx120x"),
                           ("docker-compose.intel.yml", "ghcr.io/niko1221/strata:0.2.7-sycl")):
             self.assertIn(tag, (DOCKER / "compose" / name).read_text(encoding="utf-8"))
 
-    def test_the_user_doc_says_images_are_published_from_0_2_1(self):
+    def test_the_user_doc_says_this_repository_publishes_no_images(self):
         doc = (ROOT.parent / "docs" / "DOCKER.md").read_text(encoding="utf-8")
         self.assertNotIn("TODO(owner)", doc)
         self.assertNotIn("not available yet", doc)
-        self.assertIn("published from version 0.2.1 on", doc)
-        self.assertIn("Publishing the images (for maintainers)", doc)
+        self.assertIn("PolyStrata does not publish ready-made images", doc)
+        self.assertNotIn("docker pull ghcr.io/niko1221", doc)
 
 
 class Publishing(unittest.TestCase):
@@ -247,7 +250,7 @@ class Publishing(unittest.TestCase):
         doc = (ROOT.parent / "docs" / "DOCKER.md").read_text(encoding="utf-8")
         self.assertTrue({"cuda13", "cuda12", "rocm-gfx120x", "rocm-gfx110x", "rocm-gfx1151", "sycl"} <= set(flavors), flavors)
         for flavor in flavors:
-            self.assertIn(f"0.2.7-{flavor}", doc)
+            self.assertIn(f"strata:{flavor}", doc)                # the tag the page gives the image built for that flavor
 
     def test_build_script_copies_everything_the_terminal_package_needs(self):
         """docker/build.sh lists the Terminal's files by hand; the list must cover package_terminal.py's payload (it once missed docs/TERMINAL_LAUNCH.md)."""
