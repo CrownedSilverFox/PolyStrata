@@ -3129,15 +3129,15 @@ void Engine::load(const Options& o) {
                          (double) avail / (1 << 30), (double) outside_bytes_ / (1 << 30));
         }
     }
-    // Under a budget the experts swapped into VRAM come from the pool or the disk, as the CPU's own do, and the two
-    // shared the reads: with RAM held to 8 GiB and 6,000 MiB of it for the pool, Qwen3.6 wrote 91 tokens/s at 8 GB of
-    // VRAM and 79 at 6 GB with 64 of them, 102 and 89 with none.  In unified memory a swap is a copy within RAM, and
-    // the GPU computes faster than the CPU: on the M5 Ultra held to 6-7 GiB, 64 of them wrote 3-5% faster than none.
-#if defined(STRATA_GPU_METAL)
+    // Under a budget the experts swapped into VRAM come from the pool or the disk, as the CPU's own do, and the one
+    // that goes out is read back for the CPU.  The cache that follows the answer is worth those reads all the same.
+    // On lab-241 (RTX 4090 D, RAM held by a scope, the file's pages dropped first), the answers after four long
+    // prompts found 30-76% of their experts in VRAM with none and 63-98% with 64, and wrote, tokens/s, with none
+    // and with 64: Qwen3.6 UD-Q3_K_M at 8 GB of VRAM and 6,000 MiB for the pool under 8 GiB 120 and 174, at 4.8 GB
+    // and 5,120 MiB 87 and 98, UD-Q4_K_M there 31 and 38, Gemma 4 UD-Q6_K_XL with 5,120 MiB under 11 GiB at 6.9 GB
+    // 100 and 137, at 2.9 GB 42 and 78.  In unified memory a swap is a copy within RAM: on the M5 Ultra held to 6-7
+    // GiB, 64 of them wrote 3-5% faster.
     if (opt_.expert_swaps < 0) opt_.expert_swaps = 64;
-#else
-    if (opt_.expert_swaps < 0) opt_.expert_swaps = opt_.ram_experts_mib >= 0 ? 0 : 64;
-#endif
     if (opt_.ram_experts_mib >= 0) {
         // each size of slot takes the share of the budget its experts outside VRAM have of all of those
         pool_size_of_.assign(layers_.size(), 0);
