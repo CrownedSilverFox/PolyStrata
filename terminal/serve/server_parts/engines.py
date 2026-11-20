@@ -340,7 +340,7 @@ def start_exit_note(rc: int | None, exe=None) -> str:
             note += f" ({', '.join(m.upper() for m in missing)} missing; {isa})"
         elif isa:
             note += f"; the CPU reports AVX, AVX2, FMA and F16C ({isa}), so this is a bug in the engine"
-        note += ".  Please report it with the CPU model (github.com/Niko1221/Strata/issues)."
+        note += ".  Please report it with the CPU model (github.com/simplexai-labs/PolyStrata/issues)."
     return note
 
 

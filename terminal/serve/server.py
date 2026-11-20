@@ -1120,10 +1120,10 @@ class StrataEngine:
         for line in reversed(wide.splitlines()):
             if "issue #29" in line:
                 return ("The engine stopped itself because it had stopped making progress - a hang it caught. Its log "
-                        "line: " + line.strip() + " - please report it at github.com/Niko1221/Strata/issues.")
+                        "line: " + line.strip() + " - please report it at github.com/simplexai-labs/PolyStrata/issues.")
         if (self.last_err or "").startswith("fatal GPU error"):    # #4350: the engine ended itself; the next request starts it again
             return ("The graphics card reported a fatal error (" + self.last_err[len("fatal GPU error:"):].strip()[:160] + "), so the engine "
-                    "ended. The next request starts it again. If this repeats, please report it at github.com/Niko1221/Strata/issues "
+                    "ended. The next request starts it again. If this repeats, please report it at github.com/simplexai-labs/PolyStrata/issues "
                     "with the log.")
         proc = self.proc                                 # None while a restart has not started the next one yet
         rc = proc.poll() if proc is not None else None
@@ -1143,14 +1143,14 @@ class StrataEngine:
                 sig = f"signal {-rc}"
             line = next((x.strip() for x in reversed(tail.splitlines()) if x.strip()), "(none)")
             return (f"The engine was ended by {sig}: a crash, or a signal from another program. Its last log line: "
-                    f"{line} - please report it at github.com/VecSzn/PolyStrata/issues with the log.")
+                    f"{line} - please report it at github.com/simplexai-labs/PolyStrata/issues with the log.")
         if rc is not None and rc >= 0 and self.last_err:  # its own last words on stdout: they say why
             return (f"The engine exited (code {rc}) after it reported: {self.last_err} - please report it at "
-                    "github.com/VecSzn/PolyStrata/issues with the log.")
+                    "github.com/simplexai-labs/PolyStrata/issues with the log.")
         last = next((x.strip() for x in reversed(tail.splitlines()) if x.strip().startswith(("strata", "ERR"))), "")
         if rc is not None and rc >= 0 and last:          # it ended by itself: its own last words say why (#215)
             return (f"The engine exited (code {rc}). Its last log line: {last} - if that does not explain it, please "
-                    "report it at github.com/Niko1221/Strata/issues with the log.")
+                    "report it at github.com/simplexai-labs/PolyStrata/issues with the log.")
         rt_note = rttime_limit_note() if rc == -9 else ""
         if rt_note:                                       # #3238: the kernel killed it, but not for RAM
             return ("The engine was ended by signal 9. " + rt_note + " If dmesg (sudo dmesg | grep -i -E 'killed "
@@ -2744,9 +2744,9 @@ class StrataEngine:
     def _silent(self, what: str) -> EngineSilent:
         """#481: end an engine that lost step with the server (its main thread waits for a command the server never
         sends), so the next request starts it again: killed now, its GPU and RAM go back with the process."""
-        self.silent_note = ("The engine and the server lost step (issue #481; a very slow PC can raise "
-                            "\"engine_silence_s\" in the config, 0 = wait forever). If it happens again, please add "
-                            "the end of the engine log to github.com/Niko1221/Strata/issues/481.")
+        self.silent_note = ("The engine and the server lost step (the Strata project's issue #481; a very slow PC can raise "
+                            "\"engine_silence_s\" in the config, 0 = wait forever). If it happens again, please report it with "
+                            "the end of the engine log at github.com/simplexai-labs/PolyStrata/issues.")
         self.ended = True                               # not alive from now: the next request restarts it
         proc = self.proc
         try:
