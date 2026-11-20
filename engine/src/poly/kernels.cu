@@ -2584,20 +2584,33 @@ attn_flash128_kernel(const float* __restrict__ q, const half* __restrict__ kcach
 // attend_batch() for heads of 256 values in groups of G = 8 or 16 (Qwen3.6's, Clover's, Ornith's), causal, from
 // position 0, as attn_flash128_kernel goes: a warp has 16 rows of queries, two tokens' 8 heads or one token's 16, and
 // the keys go 32 at a time, so that a row's 128 sums and its queries stay in the registers.
-template <int G> constexpr int kFlash256Tokens = G == 8 ? 8 : 4;
+#if STRATA_POLY_MMA
+__device__ __forceinline__ float fast_exp2(float x) {
+    float y;
+    asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
+    return y;
+}
+#endif
+
+constexpr int FLASH256_WARPS = 4;
+template <int G> constexpr int kFlash256Tokens = G == 8 ? 2 * FLASH256_WARPS : FLASH256_WARPS;
 constexpr int FLASH256_KEYS = 32, FLASH256_ROW = 256 + 8;
-constexpr int FLASH256_SMEM = 2 * 2 * FLASH256_KEYS * FLASH256_ROW * int(sizeof(half));
+// one buffer of keys and one of values: the next keys come in while the values are multiplied, and the next values
+// while the scores are, so that two blocks fit an SM (each takes all the registers it may)
+constexpr int FLASH256_SMEM = 2 * FLASH256_KEYS * FLASH256_ROW * int(sizeof(half));
 
 template <int G>
-__global__ void __launch_bounds__(4 * WARP)
+__global__ void __launch_bounds__(FLASH256_WARPS * WARP, 2)
 attn_flash256_kernel(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
                      float* __restrict__ out, int rows, int n_head, int kv_heads, long long pos, float scale_log2) {
 #if STRATA_POLY_MMA
     constexpr int DIM = 256, KEYS = FLASH256_KEYS, ROW = FLASH256_ROW, TOKENS = kFlash256Tokens<G>;
     extern __shared__ __align__(16) half flash_sm[];
-    half(*ks)[KEYS][ROW] = reinterpret_cast<half(*)[KEYS][ROW]>(flash_sm);
-    half(*vs)[KEYS][ROW] = reinterpret_cast<half(*)[KEYS][ROW]>(flash_sm + 2 * KEYS * ROW);
-    const int g = blockIdx.y, t0 = blockIdx.x * TOKENS, lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
+    half(*ks)[ROW] = reinterpret_cast<half(*)[ROW]>(flash_sm);
+    half(*vs)[ROW] = reinterpret_cast<half(*)[ROW]>(flash_sm + KEYS * ROW);
+    // the last tokens, which read the most keys, go first, so that the short blocks fill the end of the launch
+    const int g = blockIdx.y, t0 = (gridDim.x - 1 - blockIdx.x) * TOKENS;
+    const int lane = threadIdx.x % WARP, w = threadIdx.x / WARP;
     const int gid = lane / 4, tig = lane % 4;
     // the thread's rows gid and gid + 8: a head of two tokens, or two heads of one token
     const int tok[2] = {G == 8 ? t0 + 2 * w : t0 + w, G == 8 ? t0 + 2 * w + 1 : t0 + w};
@@ -2615,73 +2628,80 @@ attn_flash256_kernel(const float* __restrict__ q, const half* __restrict__ kcach
     float o[DIM / 8][4], m[2] = {-INFINITY, -INFINITY}, l[2] = {0.0f, 0.0f};
     for (int n = 0; n < DIM / 8; ++n) o[n][0] = o[n][1] = o[n][2] = o[n][3] = 0.0f;
     const long long hi = pos + min(t0 + TOKENS, rows);   // the block's tokens attend positions [0, hi)
-    const auto fetch = [&](int buf, long long k0) {
-        for (int i = threadIdx.x; i < KEYS * DIM / 8; i += 4 * WARP) {
+    const auto fetch = [&](half(*dst)[ROW], const half* src, long long k0) {
+        for (int i = threadIdx.x; i < KEYS * DIM / 8; i += FLASH256_WARPS * WARP) {
             const int r = i / (DIM / 8), c = 8 * (i % (DIM / 8));
             const long long key = k0 + r;
             const bool whole = key < hi;   // the others are zeros, which no weight reads
-            const size_t at = whole ? (size_t(key) * kv_heads + g) * DIM + c : 0;
-            flash_copy(&ks[buf][r][c], kcache + at, whole);
-            flash_copy(&vs[buf][r][c], vcache + at, whole);
+            flash_copy(&dst[r][c], src + (whole ? (size_t(key) * kv_heads + g) * DIM + c : 0), whole);
         }
         flash_commit();
     };
-    fetch(0, 0);
-    int buf = 0;
-    for (long long k0 = 0; k0 < hi; k0 += KEYS, buf ^= 1) {
-        __syncthreads();   // the buffer the last block was worked on in is free
-        if (k0 + KEYS < hi) {
-            fetch(buf ^ 1, k0 + KEYS);
-            flash_wait<1>();
-        } else {
-            flash_wait<0>();
-        }
+    // the groups in flight, oldest first: the keys of this step, then its values
+    fetch(ks, kcache, 0);
+    fetch(vs, vcache, 0);
+    for (long long k0 = 0; k0 < hi; k0 += KEYS) {
+        const bool more = k0 + KEYS < hi;
+        flash_wait<1>();   // the keys
         __syncthreads();
         float s[KEYS / 8][4];
         for (int n = 0; n < KEYS / 8; ++n) {
             s[n][0] = s[n][1] = s[n][2] = s[n][3] = 0.0f;
             for (int k = 0; k < DIM / 16; k += 2) {
                 uint32_t b[4];   // keys 8 n.., values 16 k.. and 16 (k + 1)..
-                ldmatrix_x4(b, &ks[buf][8 * n + lane % 8][16 * k + 8 * (lane / 8)], false);
+                ldmatrix_x4(b, &ks[8 * n + lane % 8][16 * k + 8 * (lane / 8)], false);
                 mma16816(s[n], qa[k], b);
                 mma16816(s[n], qa[k + 1], b + 2);
             }
         }
+        __syncthreads();   // every warp has read the keys
+        if (more) fetch(ks, kcache, k0 + KEYS);
+        const bool edge = k0 + KEYS > pos + t0;   // the block's first token sees none of the keys past it
+        float f[2];
         for (int i = 0; i < 2; ++i) {
             const long long own = pos + tok[i];
             float mx = -INFINITY;
             for (int n = 0; n < KEYS / 8; ++n)
                 for (int j = 2 * i; j < 2 * i + 2; ++j) {
-                    if (k0 + 8 * n + 2 * tig + j % 2 > own) s[n][j] = -INFINITY;
+                    if (edge && k0 + 8 * n + 2 * tig + j % 2 > own) s[n][j] = -INFINITY;
                     mx = fmaxf(mx, s[n][j]);
                 }
             mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
             mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
             const float now = fmaxf(m[i], mx), base = now == -INFINITY ? 0.0f : now;
-            const float f = exp2f(m[i] - base);
+            f[i] = fast_exp2(m[i] - base);
             m[i] = now;
-            l[i] *= f;
-            for (int n = 0; n < DIM / 8; ++n) {
-                o[n][2 * i] *= f;
-                o[n][2 * i + 1] *= f;
-            }
+            l[i] *= f[i];
             for (int n = 0; n < KEYS / 8; ++n)
                 for (int j = 2 * i; j < 2 * i + 2; ++j) {
-                    s[n][j] = exp2f(s[n][j] - base);
+                    s[n][j] = fast_exp2(s[n][j] - base);
                     l[i] += s[n][j];
                 }
         }
+        // the sums go down only where a row's largest score went up: after the first keys, seldom
+        if (!__all_sync(0xffffffffu, f[0] == 1.0f && f[1] == 1.0f))
+            for (int n = 0; n < DIM / 8; ++n) {
+                o[n][0] *= f[0];
+                o[n][1] *= f[0];
+                o[n][2] *= f[1];
+                o[n][3] *= f[1];
+            }
+        if (more) flash_wait<1>();   // the values (the next keys may still be on their way)
+        else flash_wait<0>();
+        __syncthreads();
         for (int k = 0; k < KEYS / 16; ++k) {   // keys 16 k..: the weights as an A fragment
             const uint32_t pa[4] = {half2_bits(s[2 * k][0], s[2 * k][1]), half2_bits(s[2 * k][2], s[2 * k][3]),
                                     half2_bits(s[2 * k + 1][0], s[2 * k + 1][1]),
                                     half2_bits(s[2 * k + 1][2], s[2 * k + 1][3])};
             for (int n = 0; n < DIM / 8; n += 2) {
                 uint32_t b[4];   // keys 16 k.., values 8 n.. and 8 (n + 1)..
-                ldmatrix_x4(b, &vs[buf][16 * k + lane % 8 + 8 * (lane / 8 % 2)][8 * n + 8 * (lane / 16)], true);
+                ldmatrix_x4(b, &vs[16 * k + lane % 8 + 8 * (lane / 8 % 2)][8 * n + 8 * (lane / 16)], true);
                 mma16816(o[n], pa, b);
                 mma16816(o[n + 1], pa, b + 2);
             }
         }
+        __syncthreads();   // every warp has read the values
+        if (more) fetch(vs, vcache, k0 + KEYS);
     }
     for (int i = 0; i < 2; ++i) {
         l[i] += __shfl_xor_sync(0xffffffffu, l[i], 1);
@@ -4812,7 +4832,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
         if (e != cudaSuccess)
             throw std::runtime_error(std::string("attend_batch: shared memory: ") + cudaGetErrorString(e));
         const int tokens = per == 8 ? kFlash256Tokens<8> : kFlash256Tokens<16>;
-        k<<<dim3(grid(rows, tokens), kv_heads), 4 * WARP, FLASH256_SMEM, cs(stream)>>>(
+        k<<<dim3(grid(rows, tokens), kv_heads), FLASH256_WARPS * WARP, FLASH256_SMEM, cs(stream)>>>(
             q, (const half*) kcache, (const half*) vcache, out, rows, n_head, kv_heads, (long long) pos,
             scale * 1.44269504f);
         return;
