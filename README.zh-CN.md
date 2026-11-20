@@ -228,7 +228,7 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 - **你的应用和编程智能体：** 添加一个“OpenAI 兼容”的提供商，base URL 填 **`http://127.0.0.1:8080/v1`**。
   API key 和模型名随便填都行。
   - 使用 Anthropic API 的应用：`http://127.0.0.1:8080/v1/messages`（Claude Code：
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`，并在 `strata-<model>.json` 里加 `"fit_max_tokens": true`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`，并在 `strata-<model>.json` 里加 `"anthropic_thinking": "on_request"`
     （[原因](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)））。
   - Codex CLI 和其他使用 OpenAI Responses API 的应用：`/v1/responses`
     （[设置方法](docs/DETAILS.md#the-responses-api-and-codex-cli)）。

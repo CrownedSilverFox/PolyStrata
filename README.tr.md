@@ -268,7 +268,7 @@ On iki modelin hepsi aynı şekilde kullanılır: aynı uygulama, aynı API.
 - **Uygulamaların ve kodlama ajanların:** temel URL'si **`http://127.0.0.1:8080/v1`** olan "OpenAI-compatible" bir
   sağlayıcı ekle. Herhangi bir API anahtarı ve herhangi bir model adı çalışır.
   - Anthropic'in API'sini kullanan uygulamalar: `http://127.0.0.1:8080/v1/messages` (Claude Code:
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` ve `strata-<model>.json` içinde `"fit_max_tokens": true`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` ve `strata-<model>.json` içinde `"anthropic_thinking": "on_request"`
     ([neden](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI ve OpenAI Responses API'yi kullanan diğer uygulamalar: `/v1/responses`
     ([kurulum](docs/DETAILS.md#the-responses-api-and-codex-cli)).

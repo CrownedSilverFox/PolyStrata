@@ -243,7 +243,7 @@ PolyStrata のインストール、起動、停止もできます。
 - **アプリやコーディングエージェントから：** 「OpenAI-compatible」プロバイダーを追加し、ベース URL に
   **`http://127.0.0.1:8080/v1`** を指定します。API キーとモデル名は何でもかまいません。
   - Anthropic の API を使うアプリ：`http://127.0.0.1:8080/v1/messages`（Claude Code：
-    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`、`strata-<model>.json` に `"fit_max_tokens": true`
+    `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`、`strata-<model>.json` に `"anthropic_thinking": "on_request"`
     （[理由](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)））。
   - Codex CLI など OpenAI Responses API を使うアプリ：`/v1/responses`
     （[設定方法](docs/DETAILS.md#the-responses-api-and-codex-cli)）。
