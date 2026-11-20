@@ -101,7 +101,7 @@ checkout uses `START-HERE.bat` / `./setup.sh` to resume source setup; it continu
 **"blk.N.ffn_gate_exps.weight and blk.N.ffn_up_exps.weight have different types, which this engine does not run".**
 The file quantizes each expert's gate and up in two different formats, as IsValorum's APEX-I NanoPlus files do.
 Engines before 0.1.45-poly.6 refused such files; run `UPDATE.bat` (Linux: `./update.sh`) and it loads
-([issue 103](https://github.com/VecSzn/PolyStrata/issues/103)).
+([issue 103](https://github.com/simplexai-labs/PolyStrata/issues/103)).
 
 **Setup says the engine does not match GitHub's checksum.**
 Setup checks the downloaded ready-made engine against the SHA-256 GitHub publishes. On a mismatch the file is corrupt or

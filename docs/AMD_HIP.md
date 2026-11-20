@@ -501,7 +501,7 @@ before it installs a model.
 - The attention caches take their VRAM at load on an AMD card (`--kv-whole`; setup writes it into the config and
   adds it to an older one on update). On NVIDIA they grow with the conversation, and the expert cache gives VRAM
   up to them as it grows; on ROCm the VRAM that `hipMemUnmap` and `hipMemRelease` give back never returns to the
-  free pool (an RX 7600 showed 48 MiB free after releasing 1 GiB, [#13](https://github.com/VecSzn/PolyStrata/issues/13)), so a long prompt was refused
+  free pool (an RX 7600 showed 48 MiB free after releasing 1 GiB, [#13](https://github.com/simplexai-labs/PolyStrata/issues/13)), so a long prompt was refused
   with "no VRAM for the attention cache". With the caches whole, 32K of context fits on 8 GB beside 4,592 of
   Qwen3.6's 10,496 experts (4.4 GiB).
 - On Linux a card whose BAR does not cover its VRAM (a PC without Resizable BAR; the kernel log says
@@ -536,7 +536,7 @@ before it installs a model.
   116K tokens read and answered with no error. Those cards have no Resizable BAR: there a mapping is not usable the
   moment it is made, and the pool needs the wait for it (`Engine::vmm_settle()`, above). That is the pool's only run on Linux ROCm so far.
 - Measured by the port's author on an RX 7600 (gfx1102, 8 GB; Ryzen 5 5600X, 30 GB of RAM) with the README's
-  benchmark, `--kv-whole` on ([#13](https://github.com/VecSzn/PolyStrata/issues/13)):
+  benchmark, `--kv-whole` on ([#13](https://github.com/simplexai-labs/PolyStrata/issues/13)):
 
   | Model | Short chat, writes | After a 32K prompt, reads / writes |
   | --- | --- | --- |
@@ -654,13 +654,13 @@ On Windows, setup's ready-made engine runs an RX 6800 beside a 780M iGPU (HIP nu
 - **gfx1032** (RX 6600 / 6600 XT / 6650 XT): setup knows it (the `gfx103X-all` wheels, unvalidated). One owner ran it
   on Fedora with an RX 6600 XT 8 GB and 32 GB DDR5: setup built the engine for gfx1032 from the `gfx103X-all`
   7.13.0a20260515 wheels, and Qwen3.6 UD-Q4_K_M on strata-poly wrote at 69 tok/s over a 2,331-token answer with
-  71.1% of the experts from VRAM ([discussion 49](https://github.com/VecSzn/PolyStrata/discussions/49)). The card
+  71.1% of the experts from VRAM ([discussion 49](https://github.com/simplexai-labs/PolyStrata/discussions/49)). The card
   needs no `HSA_OVERRIDE_GFX_VERSION`. One left in the shell from an older guide (10.3.0 makes the card a gfx1030)
   stops this engine at the first request with `rms_norm: device kernel image is invalid`; unset it.
 - **gfx1010** (RX 5600 XT / 5700 / 5700 XT, RDNA1): setup knows it (unvalidated). One owner ran an RX 5700 XT 8 GB
   under Windows 11, the engine compiled for gfx1010 from AMD's TheRock 10.2.0a20260930 Windows packages with no
   patch: the official suite at 32K for Qwen3.6, Ornith, Tiel Coder and Gemma 4, 132 requests with no errors, short
-  chats written at 28.6 to 31.4 tok/s ([PR 102](https://github.com/VecSzn/PolyStrata/pull/102),
+  chats written at 28.6 to 31.4 tok/s ([PR 102](https://github.com/simplexai-labs/PolyStrata/pull/102),
   `bench/results/2026-10-27-community-rx5700xt-windows-qwen36-q3`). On Linux it takes the `gfx101X-dgpu` wheels and
   has not been tried.
 

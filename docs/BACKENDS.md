@@ -2137,7 +2137,7 @@ the 256 tokens of each of the three answers were the same as with every expert i
 cannot hand their memory to another program. Without it they are pages of the file, which Windows counts in the
 engine's working set and Linux in its page cache, and either takes them back when memory runs short; a token that
 needs one then reads it from the disk again. A user's 16.7 GB file had 3.4 GB of it left in memory under Linux
-([issue 79](https://github.com/VecSzn/PolyStrata/issues/79)). The engine locks them once the load has read them
+([issue 79](https://github.com/simplexai-labs/PolyStrata/issues/79)). The engine locks them once the load has read them
 in (mlock under Linux, VirtualLock under Windows), and between requests unlocks the ones the cache has taken and
 locks the ones it has given up. Linux locks no more than `ulimit -l` allows; past it the engine says how much it
 locked and the rest stay in the file cache. It does not go with `--ram-experts-mib`.
