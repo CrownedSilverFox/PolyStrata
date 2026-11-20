@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
@@ -52,6 +53,16 @@ void Qwen35::begin_pass() {
     n_gdn_ = n_attn_ = 0;
 }
 
+Qwen35::~Qwen35() {
+    if (kv_stream_) cudaStreamSynchronize(cs(kv_stream_));
+    for (int i = 0; i < 2; ++i) {
+        if (kv_ev_[i]) cudaEventDestroy((cudaEvent_t) kv_ev_[i]);
+        if (kv_use_ev_[i]) cudaEventDestroy((cudaEvent_t) kv_use_ev_[i]);
+    }
+    if (kv_store_ev_) cudaEventDestroy((cudaEvent_t) kv_store_ev_);
+    if (kv_stream_) cudaStreamDestroy(cs(kv_stream_));
+}
+
 void Qwen35::check_draft_block() {
     if (blocks_[(size_t) n_layer_].gdn)
         throw std::runtime_error("the block that guesses ahead is not one this engine runs; --no-draft loads "
@@ -68,8 +79,9 @@ void Qwen35::load_geometry() {
     n_head_ = shape_i("attention.head_count");
     n_kv_ = shape_i("attention.head_count_kv");
     head_dim_ = shape_i("attention.key_length");
-    if (opt_.kv_format == KvFmt::kQ8_0 && (n_kv_ * head_dim_) % 32 != 0)
-        throw std::runtime_error("--kv q8_0 needs n_kv*head_dim to be a multiple of 32 (ggml QK8_0); this model "
+    if (codes_read() && (n_kv_ * head_dim_) % 32 != 0)
+        throw std::runtime_error("--kv " + std::string(opt_.kv_format == KvFmt::kQ4_0 ? "q4_0" : "q8_0") +
+                                 " needs n_kv*head_dim to be a multiple of 32 (ggml QK8_0 / QK4_0); this model "
                                  "has " + std::to_string(n_kv_ * head_dim_));
     const MetaValue* rot = find("rope.dimension_count");
     n_rot_ = rot ? (int) rot->u : head_dim_;
@@ -128,7 +140,9 @@ void Qwen35::load_layer(int il) {
     L.attn_norm = f32("attn_norm.weight", n_embd_);
     L.ffn_norm = f32("post_attention_norm.weight", n_embd_);
     B.gdn = tensor(il, "attn_qkv.weight") != nullptr;
-    L.fixed = true;   // the attention's launches read the position on the card when they are recorded
+    // the attention's launches read the position on the card when they are recorded; a streamed layer's are not
+    // recorded (its copies from host RAM are issued from the host, in prefetch_layer() and attn_stream())
+    L.fixed = B.gdn || kv_ring() == 0;
     if (B.gdn) {
         B.wqkv = mat("attn_qkv.weight", n_embd_, conv_dim_);
         B.wz = mat("attn_gate.weight", n_embd_, d_inner_);
@@ -171,20 +185,34 @@ int Qwen35::widest() const { return std::max(d_inner_, n_head_ * head_dim_); }
 
 // The attention layers' caches, and each recurrent layer's convolution and delta-rule state in state_.
 void Qwen35::alloc_caches() {
+    const int ring = kv_ring();
+    if (ring > 0 && !axes_)
+        std::fprintf(stderr,
+                     "strata-poly: KV resident: %d cells in VRAM, %d in pinned RAM (ping-pong streaming + GDN prefetch)\n",
+                     ring, opt_.max_context);
     if (opt_.kv_format == KvFmt::kQ8_0 && !axes_) {
         const size_t row_bytes = (size_t) n_kv_ * head_dim_ + (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t);
         std::fprintf(stderr, "strata-poly: q8_0 KV cache: %zu bytes a row\n", row_bytes);
     }
+    if (opt_.kv_format == KvFmt::kQ4_0 && !axes_) {
+        const size_t q4_row_bytes = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);
+        std::fprintf(stderr, "strata-poly: q4_0 KV cache: %zu bytes a row (%zu K + %zu V)\n", 2 * q4_row_bytes,
+                     q4_row_bytes, q4_row_bytes);
+    }
     const size_t past_n = size_t(3) * conv_dim_, s_n = size_t(v_heads_) * s_dim_ * s_dim_;
     const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
     const size_t width = (size_t) n_kv_ * head_dim_;   // a key's or a value's codes a row
+    const size_t codes_row = width;                                                  // int8
+    const size_t scales_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t);  // fp16
+    const size_t q4_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);    // Q4_0
     int8_t* codes = nullptr;
     uint16_t* scales = nullptr;
 #if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
     // q8_0 on CUDA: a row of every attention layer's keys and values side by side, in one array of codes and one of
     // scales a sequence.  The cache grows kKvGrow rows at a time in whole 2 MB pieces of each array, and 44 arrays
-    // of Qwen3.6's took 132 MB a sequence for its first rows where these two take 48 MB.
-    if (opt_.kv_format == KvFmt::kQ8_0) {
+    // of Qwen3.6's took 132 MB a sequence for its first rows where these two take 48 MB.  A streamed cache (ring)
+    // keeps each layer's rows apart: its ring rows are not the sequence's rows, so there is no shared array for it.
+    if (opt_.kv_format == KvFmt::kQ8_0 && ring == 0) {
         int attn = 0;
         for (int il = 0; il < (int) blocks_.size(); ++il) attn += runs(il) && !blocks_[(size_t) il].gdn;
         kv_rs_ = size_t(attn) * 2 * width;
@@ -210,16 +238,41 @@ void Qwen35::alloc_caches() {
             B.v_scales = scales + width / 32;
             codes += 2 * width;
             scales += 2 * width / 32;
-        } else if (opt_.kv_format == KvFmt::kQ8_0) {
-            const size_t codes_row = width;                                                 // int8
-            const size_t scales_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t);  // fp16
+        } else if (opt_.kv_format == KvFmt::kQ4_0) {
+            // the Q4_0 rows (the whole cache unless streamed) and the Q8 codes the attention reads, dequantized from them
+            if (ring == 0) {
+                B.k_q4 = (block_q4_0*) kv_alloc(q4_row, 1);
+                B.v_q4 = (block_q4_0*) kv_alloc(q4_row, 1);
+            }
             B.k_codes = (int8_t*) kv_alloc(codes_row, 1);
             B.k_scales = (uint16_t*) kv_alloc(scales_row, 1);
             B.v_codes = (int8_t*) kv_alloc(codes_row, 1);
             B.v_scales = (uint16_t*) kv_alloc(scales_row, 1);
+            if (ring > 0 && !axes_) {
+                const size_t full = (size_t) opt_.max_context;
+                B.h_k_q4 = (block_q4_0*) hmalloc(full * q4_row, "pinned RAM attention k_q4");
+                B.h_v_q4 = (block_q4_0*) hmalloc(full * q4_row, "pinned RAM attention v_q4");
+            }
+        } else if (opt_.kv_format == KvFmt::kQ8_0) {
+            B.k_codes = (int8_t*) kv_alloc(codes_row, 1);
+            B.k_scales = (uint16_t*) kv_alloc(scales_row, 1);
+            B.v_codes = (int8_t*) kv_alloc(codes_row, 1);
+            B.v_scales = (uint16_t*) kv_alloc(scales_row, 1);
+            if (ring > 0 && !axes_) {
+                const size_t full = (size_t) opt_.max_context;
+                B.h_k_codes = (int8_t*) hmalloc(full * codes_row, "pinned RAM attention k_codes");
+                B.h_k_scales = (uint16_t*) hmalloc(full * scales_row, "pinned RAM attention k_scales");
+                B.h_v_codes = (int8_t*) hmalloc(full * codes_row, "pinned RAM attention v_codes");
+                B.h_v_scales = (uint16_t*) hmalloc(full * scales_row, "pinned RAM attention v_scales");
+            }
         } else {
             B.keys = (uint16_t*) kv_alloc(row, 1);
             B.vals = (uint16_t*) kv_alloc(row, 1);
+            if (ring > 0 && !axes_) {
+                const size_t full = (size_t) opt_.max_context;
+                B.h_keys = (uint16_t*) hmalloc(full * row, "pinned RAM attention keys");
+                B.h_vals = (uint16_t*) hmalloc(full * row, "pinned RAM attention vals");
+            }
         }
     }
     // a block of guesses attends in one launch (attn_block_pass())
@@ -231,6 +284,61 @@ void Qwen35::alloc_caches() {
     // two layouts (scratch_layouts()) share them.  In each they were 64 MB of Qwen3.6's at 131,072 tokens.
     score_ = (float*) dmalloc((size_t) chunk_ * n_head_ * opt_.max_context * sizeof(float), "the attention's scores");
 #endif
+    if (ring > 0) {
+        // --kv-resident: the staging buffers for the cold rows (two of each, ping-pong), the q4_0 write stage, a
+        // stream for the copies in, and the events that order them against the compute and the copies out
+        const size_t srows = (size_t) kv_stage_rows();
+        q4_stage_srows_ = std::max((int) srows, opt_.prompt_batch > 0 ? opt_.prompt_batch : 2048);
+        if (opt_.kv_format == KvFmt::kQ4_0) {
+            q4_stage_k_ = (block_q4_0*) dmalloc((size_t) q4_stage_srows_ * q4_row, "KV Q4 write stage K");
+            q4_stage_v_ = (block_q4_0*) dmalloc((size_t) q4_stage_srows_ * q4_row, "KV Q4 write stage V");
+        }
+        for (int b = 0; b < 2; ++b) {
+            KvStage& S = kv_stage_[b];
+            if (opt_.kv_format == KvFmt::kQ4_0) {
+                S.k_q4 = (block_q4_0*) dmalloc(srows * q4_row, "KV ping-pong k_q4");
+                S.v_q4 = (block_q4_0*) dmalloc(srows * q4_row, "KV ping-pong v_q4");
+                S.k_codes = (int8_t*) dmalloc(srows * codes_row, "KV ping-pong k_codes");
+                S.k_scales = (uint16_t*) dmalloc(srows * scales_row, "KV ping-pong k_scales");
+                S.v_codes = (int8_t*) dmalloc(srows * codes_row, "KV ping-pong v_codes");
+                S.v_scales = (uint16_t*) dmalloc(srows * scales_row, "KV ping-pong v_scales");
+            } else if (opt_.kv_format == KvFmt::kQ8_0) {
+                S.k_codes = (int8_t*) dmalloc(srows * codes_row, "KV ping-pong k_codes");
+                S.k_scales = (uint16_t*) dmalloc(srows * scales_row, "KV ping-pong k_scales");
+                S.v_codes = (int8_t*) dmalloc(srows * codes_row, "KV ping-pong v_codes");
+                S.v_scales = (uint16_t*) dmalloc(srows * scales_row, "KV ping-pong v_scales");
+            } else {
+                S.keys = (uint16_t*) dmalloc(srows * row, "KV ping-pong keys");
+                S.vals = (uint16_t*) dmalloc(srows * row, "KV ping-pong vals");
+            }
+        }
+        cudaStream_t kst = nullptr;
+        ck(cudaStreamCreateWithFlags(&kst, cudaStreamNonBlocking), "kv_stream");
+        kv_stream_ = kst;
+        for (int b = 0; b < 2; ++b) {
+            cudaEvent_t ev = nullptr, uev = nullptr;
+            ck(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming), "kv_ev");
+            ck(cudaEventCreateWithFlags(&uev, cudaEventDisableTiming), "kv_use_ev");
+            kv_ev_[b] = ev;
+            kv_use_ev_[b] = uev;
+        }
+        cudaEvent_t sev = nullptr;
+        ck(cudaEventCreateWithFlags(&sev, cudaEventDisableTiming), "kv_store_ev");
+        kv_store_ev_ = sev;
+        // each layer names the next attention layer, whose first cold chunk a GDN layer before it may prefetch
+        const int limit = draft_ ? n_layer_ + 1 : n_layer_;
+        for (int il = 0; il < (int) blocks_.size(); ++il) {
+            if (!runs(il)) continue;
+            int next = -1;
+            for (int j = il + 1; j < limit; ++j) {
+                if (runs(j) && !blocks_[(size_t) j].gdn) {
+                    next = j;
+                    break;
+                }
+            }
+            blocks_[(size_t) il].next_attn = next;
+        }
+    }
     axes_ = (int32_t*) dmalloc((size_t) rows_ * 3 * sizeof(int32_t), "a call's rotary positions");
     h_axes_.resize((size_t) rows_ * 3);
 }
@@ -292,10 +400,15 @@ void Qwen35::assign_scratch() {
         score_ = fbuf((size_t) chunk_ * n_head_ * opt_.max_context);   // else alloc_caches()'s
 #endif
         if (!scratch_alias && buf_rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
-        if (buf_rows_ >= kStageRows && opt_.kv_format == KvFmt::kQ8_0) {
+        if (buf_rows_ >= kStageRows && codes_read()) {
             // the K and V blocks a q8 prompt batch dequantizes, side by side; work_halves_ halves each
             work_halves_ = kQ8WorkRows * (size_t) n_kv_ * head_dim_;
             q8w_ = fbuf((2 * work_halves_ + 1) / 2);
+        }
+        if (kv_ring() > 0) {
+            // a streamed layer's attention pieces: each piece's output and its (max, sum) pairs (attn_stream())
+            part_out_ = fbuf(heads);
+            part_ml_ = fbuf(4 * n * n_head_);
         }
     }
     if (gdn_mma_.initialize([&] {
@@ -366,6 +479,7 @@ void Qwen35::save_layer(int il, int64_t, uint8_t* dst) {
 }
 
 size_t Qwen35::card_row_bytes() const {
+    if (opt_.kv_format == KvFmt::kQ4_0) return (size_t) n_attn_ * 2 * (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);
     if (opt_.kv_format == KvFmt::kQ8_0)
         return (size_t) n_attn_ * 2 *
                ((size_t) n_kv_ * head_dim_ + (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t));
@@ -376,6 +490,27 @@ void Qwen35::save_card_rows(int64_t first, int64_t n, uint8_t* dst) {
     if (first < 0 || n < 0 || first + n > opt_.max_context)
         throw std::logic_error("save_rows: the rows are outside the context");
     ck(cudaStreamSynchronize(cs(st_)), "save rows");
+    if (kv_stream_) ck(cudaStreamSynchronize(cs(kv_stream_)), "save rows kv_stream");
+    const int ring = kv_ring();   // a streamed cache's rows are in its host copy
+    if (opt_.kv_format == KvFmt::kQ4_0) {
+        const size_t q4_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);
+        const size_t at = (size_t) first * q4_row, bytes = (size_t) n * q4_row;
+        for (const Block& B : blocks_) {
+            if ((!B.k_q4 && !B.h_k_q4) || n == 0) continue;
+            if (ring > 0) {
+                std::memcpy(dst, (const uint8_t*) B.h_k_q4 + at, bytes);
+                dst += bytes;
+                std::memcpy(dst, (const uint8_t*) B.h_v_q4 + at, bytes);
+                dst += bytes;
+                continue;
+            }
+            ck(cudaMemcpy(dst, (const uint8_t*) B.k_q4 + at, bytes, cudaMemcpyDeviceToHost), "save rows k_q4");
+            dst += bytes;
+            ck(cudaMemcpy(dst, (const uint8_t*) B.v_q4 + at, bytes, cudaMemcpyDeviceToHost), "save rows v_q4");
+            dst += bytes;
+        }
+        return;
+    }
     if (opt_.kv_format == KvFmt::kQ8_0) {
         // q8_0: each attention block writes k_codes, k_scales, v_codes, v_scales, in that order, so that a load
         // can walk the same runs back.  Same layout as card_row_bytes() sums to (n * card_row_bytes() / n_attn_).
@@ -384,23 +519,36 @@ void Qwen35::save_card_rows(int64_t first, int64_t n, uint8_t* dst) {
         // a cache's rows lie pc and ps bytes apart (kv_rs_: every layer's side by side)
         const size_t pc = kv_rs_ ? kv_rs_ : crow, ps = kv_rs_ ? kv_rs_ / 32 * sizeof(uint16_t) : srow;
         const size_t at_c = (size_t) first * pc, at_s = (size_t) first * ps;
-        const auto save = [&](const void* cache, size_t at, size_t pitch, size_t width) {
-            copy_rows(dst, width, (const uint8_t*) cache + at, pitch, width, (size_t) n, cudaMemcpyDeviceToHost,
-                      "save rows");
+        // a streamed cache's rows come from its host copy, which holds the whole context at the same offsets
+        const auto save = [&](const void* cache, bool host, size_t at, size_t pitch, size_t width) {
+            if (host) {
+                std::memcpy(dst, (const uint8_t*) cache + at, (size_t) n * width);
+            } else {
+                copy_rows(dst, width, (const uint8_t*) cache + at, pitch, width, (size_t) n, cudaMemcpyDeviceToHost,
+                          "save rows");
+            }
             dst += (size_t) n * width;
         };
         for (const Block& B : blocks_) {
             if (!B.k_codes || n == 0) continue;
-            save(B.k_codes, at_c, pc, crow);
-            save(B.k_scales, at_s, ps, srow);
-            save(B.v_codes, at_c, pc, crow);
-            save(B.v_scales, at_s, ps, srow);
+            const bool h = ring > 0;
+            save(h ? (const void*) B.h_k_codes : (const void*) B.k_codes, h, at_c, pc, crow);
+            save(h ? (const void*) B.h_k_scales : (const void*) B.k_scales, h, at_s, ps, srow);
+            save(h ? (const void*) B.h_v_codes : (const void*) B.v_codes, h, at_c, pc, crow);
+            save(h ? (const void*) B.h_v_scales : (const void*) B.v_scales, h, at_s, ps, srow);
         }
         return;
     }
     const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t), at = (size_t) first * row, bytes = (size_t) n * row;
     for (const Block& B : blocks_) {
         if (!B.keys || bytes == 0) continue;
+        if (ring > 0) {
+            std::memcpy(dst, (const uint8_t*) B.h_keys + at, bytes);
+            dst += bytes;
+            std::memcpy(dst, (const uint8_t*) B.h_vals + at, bytes);
+            dst += bytes;
+            continue;
+        }
         for (const uint16_t* cache : {B.keys, B.vals}) {
             ck(cudaMemcpy(dst, (const uint8_t*) cache + at, bytes, cudaMemcpyDeviceToHost), "save rows");
             dst += bytes;
@@ -408,11 +556,108 @@ void Qwen35::save_card_rows(int64_t first, int64_t n, uint8_t* dst) {
     }
 }
 
+// --kv-resident: the ring's last kv_ring() rows, from the host copy of the whole context (after a load, or a state
+// brought back).  Cells not yet written past pos are left alone.
+void Qwen35::sync_hot_ring(int64_t pos) {
+    const int ring = kv_ring();
+    if (ring <= 0) return;
+    if (kv_stream_) ck(cudaStreamSynchronize(cs(kv_stream_)), "sync_hot_ring kv_stream");
+    prefetched_il_ = -1;
+    if (pos <= 0) return;
+    cover(pos);
+    const int64_t hot_lo = std::max<int64_t>(0, pos - ring);
+    if (opt_.kv_format == KvFmt::kQ4_0) {
+        const size_t q4_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);
+        const int kv_stride = n_kv_ * head_dim_;
+        const int nb = kv_stride / 32;
+        for (const Block& B : blocks_) {
+            if (!B.h_k_q4) continue;
+            for (int64_t r = hot_lo; r < pos; ) {
+                const int p0 = (int) (r % ring);
+                const int m = (int) std::min<int64_t>(pos - r, ring - p0);
+                const int chunk = std::min(m, q4_stage_srows_);
+                ck(cudaMemcpy(q4_stage_k_, (const uint8_t*) B.h_k_q4 + (size_t) r * q4_row,
+                              (size_t) chunk * q4_row, cudaMemcpyHostToDevice), "sync_hot_ring k_q4");
+                ck(cudaMemcpy(q4_stage_v_, (const uint8_t*) B.h_v_q4 + (size_t) r * q4_row,
+                              (size_t) chunk * q4_row, cudaMemcpyHostToDevice), "sync_hot_ring v_q4");
+                dequant_q4_to_q8(q4_stage_k_, B.k_codes + (size_t) p0 * kv_stride,
+                                 B.k_scales + (size_t) p0 * nb, kv_stride, chunk, st_);
+                dequant_q4_to_q8(q4_stage_v_, B.v_codes + (size_t) p0 * kv_stride,
+                                 B.v_scales + (size_t) p0 * nb, kv_stride, chunk, st_);
+                r += chunk;
+            }
+        }
+        ck(cudaStreamSynchronize(cs(st_)), "sync_hot_ring unpack");
+        return;
+    }
+    if (opt_.kv_format == KvFmt::kQ8_0) {
+        const size_t crow = (size_t) n_kv_ * head_dim_,
+                     srow = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t);
+        for (const Block& B : blocks_) {
+            if (!B.k_codes || !B.h_k_codes) continue;
+            for (int64_t r = hot_lo; r < pos; ) {
+                const int p0 = (int) (r % ring);
+                const int m = (int) std::min<int64_t>(pos - r, ring - p0);
+                ck(cudaMemcpy((uint8_t*) B.k_codes + (size_t) p0 * crow, (const uint8_t*) B.h_k_codes + (size_t) r * crow,
+                              (size_t) m * crow, cudaMemcpyHostToDevice), "sync_hot_ring");
+                ck(cudaMemcpy((uint8_t*) B.k_scales + (size_t) p0 * srow, (const uint8_t*) B.h_k_scales + (size_t) r * srow,
+                              (size_t) m * srow, cudaMemcpyHostToDevice), "sync_hot_ring");
+                ck(cudaMemcpy((uint8_t*) B.v_codes + (size_t) p0 * crow, (const uint8_t*) B.h_v_codes + (size_t) r * crow,
+                              (size_t) m * crow, cudaMemcpyHostToDevice), "sync_hot_ring");
+                ck(cudaMemcpy((uint8_t*) B.v_scales + (size_t) p0 * srow, (const uint8_t*) B.h_v_scales + (size_t) r * srow,
+                              (size_t) m * srow, cudaMemcpyHostToDevice), "sync_hot_ring");
+                r += m;
+            }
+        }
+        return;
+    }
+    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    for (const Block& B : blocks_) {
+        if (!B.keys || !B.h_keys) continue;
+        for (int64_t r = hot_lo; r < pos; ) {
+            const int p0 = (int) (r % ring);
+            const int m = (int) std::min<int64_t>(pos - r, ring - p0);
+            ck(cudaMemcpy((uint8_t*) B.keys + (size_t) p0 * row, (const uint8_t*) B.h_keys + (size_t) r * row,
+                          (size_t) m * row, cudaMemcpyHostToDevice), "sync_hot_ring");
+            ck(cudaMemcpy((uint8_t*) B.vals + (size_t) p0 * row, (const uint8_t*) B.h_vals + (size_t) r * row,
+                          (size_t) m * row, cudaMemcpyHostToDevice), "sync_hot_ring");
+            r += m;
+        }
+    }
+}
+
+// The engine's state for a position is brought back: the ring follows it.
+void Qwen35::load_extra(const uint8_t*, int64_t pos) { sync_hot_ring(pos); }
+
 void Qwen35::load_card_rows(const uint8_t* src, int64_t from, int64_t count, int64_t first, int64_t n) {
     if (from < 0 || first < from || n < 0 || first + n > from + count || first + n > opt_.max_context)
         throw std::logic_error("load_rows: the rows are outside what was saved");
     cover(first + n);
     ck(cudaStreamSynchronize(cs(st_)), "load rows");
+    if (kv_stream_) ck(cudaStreamSynchronize(cs(kv_stream_)), "load rows kv_stream");
+    prefetched_il_ = -1;
+    const int ring = kv_ring();
+    if (opt_.kv_format == KvFmt::kQ4_0) {
+        const size_t q4_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);
+        const size_t at = (size_t) first * q4_row, bytes = (size_t) n * q4_row;
+        const size_t sk = (size_t) (first - from) * q4_row, all = (size_t) count * q4_row;
+        for (const Block& B : blocks_) {
+            if ((!B.k_q4 && !B.h_k_q4) || n == 0) continue;
+            if (ring > 0) {
+                std::memcpy((uint8_t*) B.h_k_q4 + at, src + sk, bytes);
+                src += all;
+                std::memcpy((uint8_t*) B.h_v_q4 + at, src + sk, bytes);
+                src += all;
+                continue;
+            }
+            ck(cudaMemcpy((uint8_t*) B.k_q4 + at, src + sk, bytes, cudaMemcpyHostToDevice), "load rows k_q4");
+            src += all;
+            ck(cudaMemcpy((uint8_t*) B.v_q4 + at, src + sk, bytes, cudaMemcpyHostToDevice), "load rows v_q4");
+            src += all;
+        }
+        if (ring > 0 && n > 0) sync_hot_ring(first + n);
+        return;
+    }
     if (opt_.kv_format == KvFmt::kQ8_0) {
         // q8_0: mirror save_card_rows run for run, advancing by each run's own saved size (count * row) so
         // multi-layer blobs line up; the rows wanted start `first - from` rows into the run.
@@ -420,29 +665,44 @@ void Qwen35::load_card_rows(const uint8_t* src, int64_t from, int64_t count, int
                      srow = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t);
         const size_t pc = kv_rs_ ? kv_rs_ : crow, ps = kv_rs_ ? kv_rs_ / 32 * sizeof(uint16_t) : srow;
         const size_t at_c = (size_t) first * pc, at_s = (size_t) first * ps;
-        const auto load = [&](void* cache, size_t at, size_t pitch, size_t width) {
-            copy_rows((uint8_t*) cache + at, pitch, src + (size_t) (first - from) * width, width, width, (size_t) n,
-                      cudaMemcpyHostToDevice, "load rows");
+        // a streamed cache's rows go to its host copy, which holds the whole context at the same offsets
+        const auto load = [&](void* cache, bool host, size_t at, size_t pitch, size_t width) {
+            if (host) {
+                std::memcpy((uint8_t*) cache + at, src + (size_t) (first - from) * width, (size_t) n * width);
+            } else {
+                copy_rows((uint8_t*) cache + at, pitch, src + (size_t) (first - from) * width, width, width, (size_t) n,
+                          cudaMemcpyHostToDevice, "load rows");
+            }
             src += (size_t) count * width;
         };
         for (const Block& B : blocks_) {
             if (!B.k_codes || n == 0) continue;
-            load(B.k_codes, at_c, pc, crow);
-            load(B.k_scales, at_s, ps, srow);
-            load(B.v_codes, at_c, pc, crow);
-            load(B.v_scales, at_s, ps, srow);
+            const bool h = ring > 0;
+            load(h ? (void*) B.h_k_codes : (void*) B.k_codes, h, at_c, pc, crow);
+            load(h ? (void*) B.h_k_scales : (void*) B.k_scales, h, at_s, ps, srow);
+            load(h ? (void*) B.h_v_codes : (void*) B.v_codes, h, at_c, pc, crow);
+            load(h ? (void*) B.h_v_scales : (void*) B.v_scales, h, at_s, ps, srow);
         }
+        if (ring > 0 && n > 0) sync_hot_ring(first + n);
         return;
     }
     const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t), at = (size_t) first * row, bytes = (size_t) n * row;
     const size_t skip = (size_t) (first - from) * row, all = (size_t) count * row;
     for (const Block& B : blocks_) {
         if (!B.keys || bytes == 0) continue;
+        if (ring > 0) {
+            std::memcpy((uint8_t*) B.h_keys + at, src + skip, bytes);
+            src += all;
+            std::memcpy((uint8_t*) B.h_vals + at, src + skip, bytes);
+            src += all;
+            continue;
+        }
         for (uint16_t* cache : {B.keys, B.vals}) {
             ck(cudaMemcpy((uint8_t*) cache + at, src + skip, bytes, cudaMemcpyHostToDevice), "load rows");
             src += all;
         }
     }
+    if (ring > 0 && bytes > 0) sync_hot_ring(first + n);
 }
 
 // The gated delta net.  One projection gives the queries, keys and values, which a convolution over the last
@@ -568,7 +828,28 @@ void Qwen35::attn_store(Block& B, int64_t pos, int n) {
     lin_pair(B.wk, B.wv, xn_, kraw_, v_, n, xq_);
     head_norm_rope(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, first, n, rms_eps_, st_,
                    nullptr, axes, sections_, at ? at + 1 : nullptr);
-    if (opt_.kv_format == KvFmt::kQ8_0) {
+    if (kv_ring() > 0) {
+        store_ring(B, pos, n, k_, v_);
+        return;
+    }
+    const int kv_stride = n_kv_ * head_dim_;
+    if (opt_.kv_format == KvFmt::kQ4_0) {
+        // the rows as Q4_0 (the cache's own), then the Q8 codes the attention reads, dequantized from them
+        const int nb = kv_stride / 32;
+        if (at) {
+            store_q4_at(k_, B.k_q4, kv_stride, at, n, 0, st_);
+            store_q4_at(v_, B.v_q4, kv_stride, at, n, 0, st_);
+            dequant_q4_to_q8(B.k_q4, B.k_codes, B.k_scales, kv_stride, n, st_, at);
+            dequant_q4_to_q8(B.v_q4, B.v_codes, B.v_scales, kv_stride, n, st_, at);
+        } else {
+            store_q4(k_, B.k_q4, kv_stride, pos, n, st_);
+            store_q4(v_, B.v_q4, kv_stride, pos, n, st_);
+            dequant_q4_to_q8(B.k_q4 + (size_t) pos * nb, B.k_codes + (size_t) pos * kv_stride,
+                             B.k_scales + (size_t) pos * nb, kv_stride, n, st_);
+            dequant_q4_to_q8(B.v_q4 + (size_t) pos * nb, B.v_codes + (size_t) pos * kv_stride,
+                             B.v_scales + (size_t) pos * nb, kv_stride, n, st_);
+        }
+    } else if (opt_.kv_format == KvFmt::kQ8_0) {
         if (at) {
             store_q8_at(k_, B.k_codes, B.k_scales, n_kv_ * head_dim_, at, n, 0, st_, kv_rs_);
             store_q8_at(v_, B.v_codes, B.v_scales, n_kv_ * head_dim_, at, n, 0, st_, kv_rs_);
@@ -585,6 +866,353 @@ void Qwen35::attn_store(Block& B, int64_t pos, int n) {
     }
 }
 
+// --kv-resident: n rows from position pos leave a streamed layer.  The ring takes them at slot p % ring, a run that
+// wraps the ring going in two parts, and the host copy of the whole context takes the same rows at their own offsets,
+// copied from the ring slots in the same parts.  ks and vs are the rows' keys (normed and turned) and values.
+void Qwen35::store_ring(Block& B, int64_t pos, int n, const float* ks, const float* vs) {
+    const int ring = kv_ring();
+    const int kv_stride = n_kv_ * head_dim_;
+    if (pos < prefetched_m_) prefetched_il_ = -1;   // a chunk staged before these rows is stale
+    if (opt_.kv_format == KvFmt::kQ4_0) {
+        const int nb = kv_stride / 32;
+        const size_t q4_row = (size_t) nb * sizeof(block_q4_0);
+        // a step of at most the ring and the write stage: Q4_0 into the stage, then dequantized into the ring's slots
+        for (int s0 = 0, step = 0; s0 < n; s0 += step) {
+            step = std::min({ring, n - s0, q4_stage_srows_});
+            const int64_t r0 = pos + s0;
+            const int p0 = (int) (r0 % ring);
+            const float* kf = ks + (size_t) s0 * kv_stride;
+            const float* vf = vs + (size_t) s0 * kv_stride;
+            store_q4(kf, q4_stage_k_, kv_stride, 0, step, st_);
+            store_q4(vf, q4_stage_v_, kv_stride, 0, step, st_);
+            if (p0 + step <= ring) {
+                dequant_q4_to_q8(q4_stage_k_, B.k_codes + (size_t) p0 * kv_stride, B.k_scales + (size_t) p0 * nb,
+                                 kv_stride, step, st_);
+                dequant_q4_to_q8(q4_stage_v_, B.v_codes + (size_t) p0 * kv_stride, B.v_scales + (size_t) p0 * nb,
+                                 kv_stride, step, st_);
+            } else {
+                const int n1 = ring - p0;
+                const int n2 = step - n1;
+                dequant_q4_to_q8(q4_stage_k_, B.k_codes + (size_t) p0 * kv_stride, B.k_scales + (size_t) p0 * nb,
+                                 kv_stride, n1, st_);
+                dequant_q4_to_q8(q4_stage_v_, B.v_codes + (size_t) p0 * kv_stride, B.v_scales + (size_t) p0 * nb,
+                                 kv_stride, n1, st_);
+                dequant_q4_to_q8(q4_stage_k_ + (size_t) n1 * nb, B.k_codes, B.k_scales, kv_stride, n2, st_);
+                dequant_q4_to_q8(q4_stage_v_ + (size_t) n1 * nb, B.v_codes, B.v_scales, kv_stride, n2, st_);
+            }
+            if (B.h_k_q4) {
+                ck(cudaMemcpyAsync((uint8_t*) B.h_k_q4 + (size_t) r0 * q4_row, (const uint8_t*) q4_stage_k_,
+                                   (size_t) step * q4_row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h k_q4");
+                ck(cudaMemcpyAsync((uint8_t*) B.h_v_q4 + (size_t) r0 * q4_row, (const uint8_t*) q4_stage_v_,
+                                   (size_t) step * q4_row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h v_q4");
+            }
+        }
+    } else if (opt_.kv_format == KvFmt::kQ8_0) {
+        const size_t crow = (size_t) kv_stride;
+        const size_t srow = (size_t) (kv_stride / 32) * sizeof(uint16_t);
+        for (int s0 = 0, step = 0; s0 < n; s0 += step) {
+            step = std::min(ring, n - s0);
+            const int64_t r0 = pos + s0;
+            const int p0 = (int) (r0 % ring);
+            const float* kf = ks + (size_t) s0 * kv_stride;
+            const float* vf = vs + (size_t) s0 * kv_stride;
+            if (p0 + step <= ring) {
+                store_q8(kf, B.k_codes, B.k_scales, kv_stride, p0, step, st_);
+                store_q8(vf, B.v_codes, B.v_scales, kv_stride, p0, step, st_);
+                if (B.h_k_codes) {
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_k_codes + (size_t) r0 * crow,
+                                       (const uint8_t*) B.k_codes + (size_t) p0 * crow,
+                                       (size_t) step * crow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h k_codes");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_k_scales + (size_t) r0 * srow,
+                                       (const uint8_t*) B.k_scales + (size_t) p0 * srow,
+                                       (size_t) step * srow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h k_scales");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_v_codes + (size_t) r0 * crow,
+                                       (const uint8_t*) B.v_codes + (size_t) p0 * crow,
+                                       (size_t) step * crow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h v_codes");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_v_scales + (size_t) r0 * srow,
+                                       (const uint8_t*) B.v_scales + (size_t) p0 * srow,
+                                       (size_t) step * srow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h v_scales");
+                }
+            } else {
+                const int n1 = ring - p0;
+                const int n2 = step - n1;
+                store_q8(kf, B.k_codes, B.k_scales, kv_stride, p0, n1, st_);
+                store_q8(vf, B.v_codes, B.v_scales, kv_stride, p0, n1, st_);
+                store_q8(kf + (size_t) n1 * kv_stride, B.k_codes, B.k_scales, kv_stride, 0, n2, st_);
+                store_q8(vf + (size_t) n1 * kv_stride, B.v_codes, B.v_scales, kv_stride, 0, n2, st_);
+                if (B.h_k_codes) {
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_k_codes + (size_t) r0 * crow,
+                                       (const uint8_t*) B.k_codes + (size_t) p0 * crow,
+                                       (size_t) n1 * crow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h k_codes 1");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_k_codes + (size_t) (r0 + n1) * crow,
+                                       (const uint8_t*) B.k_codes, (size_t) n2 * crow, cudaMemcpyDeviceToHost, cs(st_)),
+                       "kv d2h k_codes 2");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_k_scales + (size_t) r0 * srow,
+                                       (const uint8_t*) B.k_scales + (size_t) p0 * srow,
+                                       (size_t) n1 * srow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h k_scales 1");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_k_scales + (size_t) (r0 + n1) * srow,
+                                       (const uint8_t*) B.k_scales, (size_t) n2 * srow, cudaMemcpyDeviceToHost, cs(st_)),
+                       "kv d2h k_scales 2");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_v_codes + (size_t) r0 * crow,
+                                       (const uint8_t*) B.v_codes + (size_t) p0 * crow,
+                                       (size_t) n1 * crow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h v_codes 1");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_v_codes + (size_t) (r0 + n1) * crow,
+                                       (const uint8_t*) B.v_codes, (size_t) n2 * crow, cudaMemcpyDeviceToHost, cs(st_)),
+                       "kv d2h v_codes 2");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_v_scales + (size_t) r0 * srow,
+                                       (const uint8_t*) B.v_scales + (size_t) p0 * srow,
+                                       (size_t) n1 * srow, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h v_scales 1");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_v_scales + (size_t) (r0 + n1) * srow,
+                                       (const uint8_t*) B.v_scales, (size_t) n2 * srow, cudaMemcpyDeviceToHost, cs(st_)),
+                       "kv d2h v_scales 2");
+                }
+            }
+        }
+    } else {
+        const size_t row = (size_t) kv_stride * sizeof(uint16_t);
+        for (int s0 = 0, step = 0; s0 < n; s0 += step) {
+            step = std::min(ring, n - s0);
+            const int64_t r0 = pos + s0;
+            const int p0 = (int) (r0 % ring);
+            const float* kf = ks + (size_t) s0 * kv_stride;
+            const float* vf = vs + (size_t) s0 * kv_stride;
+            if (p0 + step <= ring) {
+                store_f16(kf, B.keys, kv_stride, p0, step, st_);
+                store_f16(vf, B.vals, kv_stride, p0, step, st_);
+                if (B.h_keys) {
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_keys + (size_t) r0 * row, (const uint8_t*) B.keys + (size_t) p0 * row,
+                                       (size_t) step * row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h keys");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_vals + (size_t) r0 * row, (const uint8_t*) B.vals + (size_t) p0 * row,
+                                       (size_t) step * row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h vals");
+                }
+            } else {
+                const int n1 = ring - p0;
+                const int n2 = step - n1;
+                store_f16(kf, B.keys, kv_stride, p0, n1, st_);
+                store_f16(vf, B.vals, kv_stride, p0, n1, st_);
+                store_f16(kf + (size_t) n1 * kv_stride, B.keys, kv_stride, 0, n2, st_);
+                store_f16(vf + (size_t) n1 * kv_stride, B.vals, kv_stride, 0, n2, st_);
+                if (B.h_keys) {
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_keys + (size_t) r0 * row, (const uint8_t*) B.keys + (size_t) p0 * row,
+                                       (size_t) n1 * row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h keys 1");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_keys + (size_t) (r0 + n1) * row, (const uint8_t*) B.keys,
+                                       (size_t) n2 * row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h keys 2");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_vals + (size_t) r0 * row, (const uint8_t*) B.vals + (size_t) p0 * row,
+                                       (size_t) n1 * row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h vals 1");
+                    ck(cudaMemcpyAsync((uint8_t*) B.h_vals + (size_t) (r0 + n1) * row, (const uint8_t*) B.vals,
+                                       (size_t) n2 * row, cudaMemcpyDeviceToHost, cs(st_)), "kv d2h vals 2");
+                }
+            }
+        }
+    }
+    if (kv_store_ev_) ck(cudaEventRecord((cudaEvent_t) kv_store_ev_, cs(st_)), "kv_store_ev");
+}
+
+// A streamed layer's attention: its rows are in attn_store()'s place already.  The gate and the output projection
+// follow, as attn() has them.  whole: the block of guesses' (attn_block_pass()).
+void Qwen35::attn_run(Block& B, int il, int64_t pos, int n, bool whole) {
+    if (recording_) throw std::logic_error("a streamed attention layer is not recorded: its copies come from the host");
+    int64_t first;
+    const int32_t* axes = turns(pos, n, &first);
+    lin(B.wq, xn_, qg_, n, xq_);
+    head_norm_rope(qg_, 2 * head_dim_, fp(B.q_norm), q_, head_dim_, n_head_, n_rot_, theta_scale_, first, n, rms_eps_,
+                   st_, nullptr, axes, sections_, nullptr);
+    attn_store(B, pos, n);
+    attn_stream(B, il, pos, n, whole, q_, att_);
+    mul_sigmoid(att_, qg_ + head_dim_, head_dim_, n * n_head_, 2 * head_dim_, false, st_);
+    lin(B.wo, att_, ao_, n);
+}
+
+// The attention of n tokens from position pos, from q (n_head * head_dim floats a token) into out.  Whatever rows fit
+// the ring are attended in their slots, as the caches lie.  The rows before the ring are cold: they come from the host
+// copy through the two staging buffers, a chunk at a time, and each chunk's result is merged into out by its (max,
+// sum) pairs, an exact online softmax.  The hot rows, the ring's, come last.  whole: each token sees the call's rows.
+void Qwen35::attn_stream(Block& B, int il, int64_t pos, int n, bool whole, const float* q, float* out) {
+    const int ring = kv_ring();
+    const bool q8 = codes_read();
+    const float scale = 1.f / std::sqrt((float) head_dim_);
+    const size_t score_floats = (size_t) chunk_ * n_head_ * opt_.max_context;
+    const bool fd = fdec_ && pos >= fdec_from_;   // HEAD's rule for the decode kernels: from fdec_from_ positions
+    if (pos + n <= ring) {
+        const Kvq8 kq8{B.k_codes, B.k_scales}, vq8{B.v_codes, B.v_scales};
+        if (whole) {
+            attend(q, q8 ? nullptr : B.keys, q8 ? nullptr : B.vals, pos, n, score_, chunk_, out, head_dim_, n_head_, n_kv_,
+                   scale, st_, 0, 0, true, nullptr, 0, 0, q8 ? kq8 : Kvq8{}, q8 ? vq8 : Kvq8{});
+        } else if (n >= kStageRows) {
+            const uint16_t* kc = q8 ? nullptr : B.keys;
+            const uint16_t* vc = q8 ? nullptr : B.vals;
+            uint16_t* kw = q8 ? (uint16_t*) q8w_ : nullptr;
+            uint16_t* vw = q8 ? kw + work_halves_ : nullptr;
+            if (!(fattn_ && (q8 ? fattn_q8(q, kq8, vq8, pos, n, out, head_dim_, n_head_, n_kv_, scale, score_, score_floats, st_)
+                             : fattn_f16(q, B.keys, B.vals, pos, n, out, head_dim_, n_head_, n_kv_, scale, score_, score_floats,
+                                         st_))))
+                attend_batch(blas_, q, kc, vc, pos, n, score_, score_floats, awork_, out, head_dim_, n_head_, n_kv_, scale,
+                             st_, 0, 0, false, q8 ? kq8 : Kvq8{}, q8 ? vq8 : Kvq8{}, kw, vw, q8 ? work_halves_ : 0);
+        } else if (!(fd && (q8 ? fdec_q8(q, kq8, vq8, pos, n, nullptr, 0, out, head_dim_, n_head_, n_kv_, scale, score_,
+                                         score_floats, st_)
+                            : fdec_f16(q, B.keys, B.vals, pos, n, nullptr, 0, out, head_dim_, n_head_, n_kv_, scale, score_,
+                                       score_floats, st_)))) {
+            attend(q, q8 ? nullptr : B.keys, q8 ? nullptr : B.vals, pos, n, score_, chunk_, out, head_dim_, n_head_, n_kv_,
+                   scale, st_, 0, 0, false, nullptr, 0, score_floats, q8 ? kq8 : Kvq8{}, q8 ? vq8 : Kvq8{});
+        }
+        return;
+    }
+
+    const int64_t total = pos + n;
+    const int64_t cold = total - ring;
+    const int stage_rows = kv_stage_rows();
+    const size_t kv_stride = (size_t) n_kv_ * head_dim_;
+    const size_t s_stride = kv_stride / 32;
+    const size_t hq = (size_t) n_head_ * head_dim_;
+    float* acc_ml = part_ml_;                               // the running (max, sum) pairs
+    float* piece_ml = part_ml_ + 2 * (size_t) n * n_head_;  // the piece's
+
+    // one piece of rows, [r0, r0 + m): the tokens that see all of it, and those inside it, which see up to their own
+    const auto eval_piece = [&](const uint16_t* kc, const uint16_t* vc, Kvq8 kp, Kvq8 vp, int64_t r0, int m,
+                                bool first_piece) {
+        const int t0 = whole ? 0 : (int) std::clamp<int64_t>(r0 - pos, 0, n);
+        const int t1 = whole ? 0 : (int) std::clamp<int64_t>(r0 + m - pos, 0, n);
+        const int n_causal = t1 - t0;
+        const int n_full = n - t1;
+        if (n_causal > 0) {
+            const float* q_sub = q + (size_t) t0 * hq;
+            float* dst_out = first_piece ? (out + (size_t) t0 * hq) : part_out_;
+            float* dst_ml = first_piece ? (acc_ml + 2 * (size_t) t0 * n_head_) : piece_ml;
+            attn_piece(q_sub, kc, vc, kp, vp, (pos + t0) - r0, n_causal, false, dst_out, dst_ml, fd);
+            if (!first_piece)
+                merge_attn_piece(out + (size_t) t0 * hq, acc_ml + 2 * (size_t) t0 * n_head_, part_out_, piece_ml, n_causal,
+                                 n_head_, head_dim_, st_);
+        }
+        if (n_full > 0) {
+            const float* q_sub = q + (size_t) t1 * hq;
+            float* dst_out = first_piece ? (out + (size_t) t1 * hq) : part_out_;
+            float* dst_ml = first_piece ? (acc_ml + 2 * (size_t) t1 * n_head_) : piece_ml;
+            attn_piece(q_sub, kc, vc, kp, vp, (int64_t) m - n_full, n_full, true, dst_out, dst_ml, fd);
+            if (!first_piece)
+                merge_attn_piece(out + (size_t) t1 * hq, acc_ml + 2 * (size_t) t1 * n_head_, part_out_, piece_ml, n_full,
+                                 n_head_, head_dim_, st_);
+        }
+    };
+
+    // The cold rows, in chunks of the staging buffers: the next chunk's copy goes on while this one is computed.
+    const int m0 = (int) std::min<int64_t>(cold, stage_rows);
+    const bool have_prefetch = prefetched_il_ == il && prefetched_m_ == m0 && m0 <= pos && !shared_ahead_;
+    prefetched_il_ = -1;
+    if (!have_prefetch) start_kv_stage_dma(B, 0, 0, m0, m0 > pos || shared_ahead_);
+    for (int64_t c0 = 0, step = 0, step_idx = 0; c0 < cold; c0 += step, ++step_idx) {
+        const int buf = (int) (step_idx & 1);
+        step = std::min<int64_t>(cold - c0, stage_rows);
+        if (c0 + step < cold) {
+            const int64_t next_c0 = c0 + step;
+            const int next_m = (int) std::min<int64_t>(cold - next_c0, stage_rows);
+            start_kv_stage_dma(B, buf ^ 1, next_c0, next_m, next_c0 + next_m > pos || shared_ahead_);
+        }
+        ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) kv_ev_[buf], 0), "wait kv stage");
+        const KvStage& S = kv_stage_[buf];
+        if (opt_.kv_format == KvFmt::kQ4_0) {
+            dequant_q4_to_q8(S.k_q4, S.k_codes, S.k_scales, (int) kv_stride, (int) step, st_);
+            dequant_q4_to_q8(S.v_q4, S.v_codes, S.v_scales, (int) kv_stride, (int) step, st_);
+        }
+        eval_piece(q8 ? nullptr : S.keys, q8 ? nullptr : S.vals, q8 ? Kvq8{S.k_codes, S.k_scales} : Kvq8{},
+                   q8 ? Kvq8{S.v_codes, S.v_scales} : Kvq8{}, c0, (int) step, c0 == 0);
+        ck(cudaEventRecord((cudaEvent_t) kv_use_ev_[buf], cs(st_)), "kv stage used");
+    }
+
+    // The next attention layer's first cold chunk, copied while the MoE and the GDN layers between run (prefetch_layer()
+    // does it for the layers that come before).
+    if (B.next_attn > il && !shared_ahead_ && !(windowed_ && !all_cached() && halves_)) {
+        if (m0 <= pos) {
+            start_kv_stage_dma(blocks_[(size_t) B.next_attn], 0, 0, m0, false);
+            prefetched_il_ = B.next_attn;
+            prefetched_m_ = m0;
+        }
+    }
+
+    // The hot rows [cold, total): the ring's last `ring` rows, in one or two slices
+    const int p0 = (int) (cold % ring);
+    const int m1 = ring - p0;
+    const int m2 = p0;
+    eval_piece(q8 ? nullptr : B.keys + (size_t) p0 * kv_stride, q8 ? nullptr : B.vals + (size_t) p0 * kv_stride,
+               q8 ? Kvq8{B.k_codes + (size_t) p0 * kv_stride, B.k_scales + (size_t) p0 * s_stride} : Kvq8{},
+               q8 ? Kvq8{B.v_codes + (size_t) p0 * kv_stride, B.v_scales + (size_t) p0 * s_stride} : Kvq8{}, cold, m1,
+               false);
+    if (m2 > 0)
+        eval_piece(q8 ? nullptr : B.keys, q8 ? nullptr : B.vals, q8 ? Kvq8{B.k_codes, B.k_scales} : Kvq8{},
+                   q8 ? Kvq8{B.v_codes, B.v_scales} : Kvq8{}, cold + m1, m2, false);
+}
+
+// attend() of one piece of a streamed layer: the piece's rows are its caches from 0, pos is the position in them.
+void Qwen35::attn_piece(const float* q, const uint16_t* kc, const uint16_t* vc, Kvq8 kq8, Kvq8 vq8, int64_t pos, int n,
+                        bool whole, float* out, float* ml_out, bool fd) {
+    const float scale = 1.f / std::sqrt((float) head_dim_);
+    const bool q8 = codes_read();
+    const size_t score_floats = (size_t) chunk_ * n_head_ * opt_.max_context;
+    if (n >= kStageRows) {
+        uint16_t* kw = q8 ? (uint16_t*) q8w_ : nullptr;
+        uint16_t* vw = q8 ? kw + work_halves_ : nullptr;
+        attend_batch(blas_, q, kc, vc, pos, n, score_, score_floats, awork_, out, head_dim_, n_head_, n_kv_, scale, st_, 0,
+                     0, whole, kq8, vq8, kw, vw, q8 ? work_halves_ : 0, nullptr, ml_out);
+        return;
+    }
+    if (!(fd && (q8 ? fdec_q8(q, kq8, vq8, pos, n, nullptr, 0, out, head_dim_, n_head_, n_kv_, scale, score_, score_floats,
+                              st_, whole, ml_out)
+                    : fdec_f16(q, kc, vc, pos, n, nullptr, 0, out, head_dim_, n_head_, n_kv_, scale, score_, score_floats,
+                               st_, whole, ml_out))))
+        attend(q, kc, vc, pos, n, score_, chunk_, out, head_dim_, n_head_, n_kv_, scale, st_, 0, 0, whole, nullptr, 0,
+               score_floats, kq8, vq8, nullptr, score_floats, ml_out);
+}
+
+// The cold rows [row0, row0 + m) of a streamed layer copied from its host copy into staging buffer buf, on the copy
+// stream, once the buffer's last reader is through (and, with wait_store, the rows stored just before are in the copy).
+void Qwen35::start_kv_stage_dma(const Block& B, int buf, int64_t row0, int m, bool wait_store) {
+    if (m <= 0) return;
+    if (wait_store && kv_store_ev_) ck(cudaStreamWaitEvent(cs(kv_stream_), (cudaEvent_t) kv_store_ev_, 0), "wait kv store");
+    ck(cudaStreamWaitEvent(cs(kv_stream_), (cudaEvent_t) kv_use_ev_[buf], 0), "wait kv stage free");
+    KvStage& S = kv_stage_[buf];
+    if (opt_.kv_format == KvFmt::kQ4_0) {
+        const size_t q4_row = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(block_q4_0);
+        ck(cudaMemcpyAsync(S.k_q4, (const uint8_t*) B.h_k_q4 + (size_t) row0 * q4_row, (size_t) m * q4_row,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage k_q4");
+        ck(cudaMemcpyAsync(S.v_q4, (const uint8_t*) B.h_v_q4 + (size_t) row0 * q4_row, (size_t) m * q4_row,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage v_q4");
+    } else if (opt_.kv_format == KvFmt::kQ8_0) {
+        const size_t crow = (size_t) n_kv_ * head_dim_;
+        const size_t srow = (size_t) n_kv_ * (head_dim_ / 32) * sizeof(uint16_t);
+        ck(cudaMemcpyAsync(S.k_codes, (const uint8_t*) B.h_k_codes + (size_t) row0 * crow, (size_t) m * crow,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage k_codes");
+        ck(cudaMemcpyAsync(S.k_scales, (const uint8_t*) B.h_k_scales + (size_t) row0 * srow, (size_t) m * srow,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage k_scales");
+        ck(cudaMemcpyAsync(S.v_codes, (const uint8_t*) B.h_v_codes + (size_t) row0 * crow, (size_t) m * crow,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage v_codes");
+        ck(cudaMemcpyAsync(S.v_scales, (const uint8_t*) B.h_v_scales + (size_t) row0 * srow, (size_t) m * srow,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage v_scales");
+    } else {
+        const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+        ck(cudaMemcpyAsync(S.keys, (const uint8_t*) B.h_keys + (size_t) row0 * row, (size_t) m * row,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage keys");
+        ck(cudaMemcpyAsync(S.vals, (const uint8_t*) B.h_vals + (size_t) row0 * row, (size_t) m * row,
+                           cudaMemcpyHostToDevice, cs(kv_stream_)), "kv stage vals");
+    }
+    ck(cudaEventRecord((cudaEvent_t) kv_ev_[buf], cs(kv_stream_)), "kv stage ready");
+}
+
+// Before a GDN layer, the next attention layer's first cold chunk is copied (the copy overlaps this layer and the
+// MoE): run() calls this before each layer, graph-replayed or not.
+void Qwen35::prefetch_layer(int il, int n) {
+    const int ring = kv_ring();
+    if (ring <= 0 || rows_of_ || recording_ || shared_ahead_) return;
+    const Block& B = blocks_[(size_t) il];
+    if (!B.gdn || B.next_attn < 0 || pos_ + n <= ring) return;
+    const int64_t cold = pos_ + n - ring;
+    const int m0 = (int) std::min<int64_t>(cold, kv_stage_rows());
+    if (prefetched_il_ == B.next_attn && prefetched_m_ == m0) return;
+    if (m0 <= pos_) {
+        start_kv_stage_dma(blocks_[(size_t) B.next_attn], 0, 0, m0, false);
+        prefetched_il_ = B.next_attn;
+        prefetched_m_ = m0;
+    }
+}
+
 // The recordings of an attention layer's head are numbered by the rows they are sized for.
 int Qwen35::head_key(int il, int n) const { return blocks_[(size_t) il].gdn ? 0 : room_key(n); }
 
@@ -594,8 +1222,9 @@ int64_t Qwen35::turn(int64_t row) const {
     return thw[0];
 }
 
-void Qwen35::attn(Block& B, int64_t pos, int n) {
-    if (rows_of_) return attn_rows(B, n);
+void Qwen35::attn(Block& B, int il, int64_t pos, int n) {
+    if (rows_of_) return attn_rows(B, il, n);
+    if (kv_ring() > 0) return attn_run(B, il, pos, n, false);
     int64_t first;
     const int32_t* axes = turns(pos, n, &first);
     const long long* at = recording_ ? at_ : nullptr;
@@ -604,7 +1233,7 @@ void Qwen35::attn(Block& B, int64_t pos, int n) {
                    st_, nullptr, axes, sections_, at ? at + 1 : nullptr);
     attn_store(B, pos, n);
     const float scale = 1.f / std::sqrt((float) head_dim_);
-    const bool q8 = opt_.kv_format == KvFmt::kQ8_0;
+    const bool q8 = codes_read();
     // a prompt batch through cuBLAS; a few tokens with the kernels that give a token the same bits in any company
     if (n >= kStageRows) {
         // a prompt batch: the fp16 path passes the caches where they lie (null caches and no workspace under q8);
@@ -637,7 +1266,8 @@ void Qwen35::attn(Block& B, int64_t pos, int n) {
 
 // attn() for a block of guesses: the block's tokens see each other, each attending to the rows up to the block's last.
 // One launch (chunk_ holds a window), so a recording reads the position on the card as attn()'s do.
-void Qwen35::attn_block_pass(Block& B, int64_t pos, int n) {
+void Qwen35::attn_block_pass(Block& B, int il, int64_t pos, int n) {
+    if (kv_ring() > 0) return attn_run(B, il, pos, n, true);
     int64_t first;
     const int32_t* axes = turns(pos, n, &first);
     const long long* at = recording_ ? at_ : nullptr;
@@ -645,7 +1275,7 @@ void Qwen35::attn_block_pass(Block& B, int64_t pos, int n) {
     head_norm_rope(qg_, 2 * head_dim_, fp(B.q_norm), q_, head_dim_, n_head_, n_rot_, theta_scale_, first, n, rms_eps_,
                    st_, nullptr, axes, sections_, at ? at + 1 : nullptr);
     attn_store(B, pos, n);
-    const bool q8 = opt_.kv_format == KvFmt::kQ8_0;
+    const bool q8 = codes_read();
     attend(q_, q8 ? nullptr : B.keys, q8 ? nullptr : B.vals, pos, n, score_, chunk_, att_, head_dim_, n_head_, n_kv_,
            1.f / std::sqrt((float) head_dim_), st_, 0, 0, true, at, at ? room(n) : 0, 0,
            q8 ? Kvq8{B.k_codes, B.k_scales, kv_rs_} : Kvq8{}, q8 ? Kvq8{B.v_codes, B.v_scales, kv_rs_} : Kvq8{});
@@ -655,17 +1285,21 @@ void Qwen35::attn_block_pass(Block& B, int64_t pos, int n) {
 
 // step()'s rows, each of its own sequence: the products for all of them at once, each row's position from at_, and
 // each row's keys and values stored and attended to in its own sequence's caches.
-void Qwen35::attn_rows(Block& B, int n) {
+void Qwen35::attn_rows(Block& B, int il, int n) {
     const long long* at = at_;
     lin(B.wq, xn_, qg_, n, xq_);
     lin_pair(B.wk, B.wv, xn_, kraw_, v_, n, xq_);
     const float scale = 1.f / std::sqrt((float) head_dim_);
     const bool q8 = opt_.kv_format == KvFmt::kQ8_0;
+    const bool q4 = opt_.kv_format == KvFmt::kQ4_0;
+    const bool codes = q8 || q4;   // the attention reads Q8_0 codes (q4_0's are dequantized into them)
+    const int ring = kv_ring();
     const size_t kv = (size_t) n_kv_ * head_dim_, hq = (size_t) n_head_ * head_dim_;
 #if !defined(STRATA_GPU_METAL)
     // Under a q8_0 cache the turns and the stores are a row's alone: every row of every sequence in one launch
-    // each, a row's own turn and cache from at_ and seq_buf().  Then the attention, a sequence at a time.
-    if (q8 && n <= RowCaches::kMax) {
+    // each, a row's own turn and cache from at_ and seq_buf().  Then the attention, a sequence at a time.  Not for a
+    // streamed cache: its rows are the ring's, not the sequence's.
+    if (q8 && ring == 0 && n <= RowCaches::kMax) {
         head_norm_rope_rows(qg_, 2 * head_dim_, fp(B.q_norm), q_, head_dim_, n_head_, n_rot_, theta_scale_, n,
                             rms_eps_, st_, sections_, at + 1);
         head_norm_rope_rows(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, n, rms_eps_,
@@ -742,9 +1376,25 @@ void Qwen35::attn_rows(Block& B, int n) {
                        theta_scale_, 0, m, rms_eps_, st_, nullptr, nullptr, sections_, ai + 1);
         head_norm_rope(kraw_ + i * kv, head_dim_, fp(B.k_norm), k_ + i * kv, head_dim_, n_kv_, n_rot_, theta_scale_, 0, m,
                        rms_eps_, st_, nullptr, nullptr, sections_, ai + 1);
+        if (ring > 0) {
+            // a streamed layer: the rows go to the ring and the host copy, and attend from there (attn_stream())
+            store_ring(B, r.pos, m, k_ + i * kv, v_ + i * kv);
+            attn_stream(B, il, r.pos, m, false, q_ + i * hq, att_ + i * hq);
+            continue;
+        }
         Kvq8 kq{}, vq{};
         uint16_t *kc = nullptr, *vc = nullptr;
-        if (q8) {
+        if (q4) {
+            // the rows as Q4_0 at their positions, then the Q8 codes the attention reads, dequantized from them
+            kq = {(int8_t*) seq_buf(r.seq, B.k_codes), (uint16_t*) seq_buf(r.seq, B.k_scales), 0};
+            vq = {(int8_t*) seq_buf(r.seq, B.v_codes), (uint16_t*) seq_buf(r.seq, B.v_scales), 0};
+            block_q4_0* kb = (block_q4_0*) seq_buf(r.seq, B.k_q4);
+            block_q4_0* vb = (block_q4_0*) seq_buf(r.seq, B.v_q4);
+            store_q4_at(k_ + i * kv, kb, (int) kv, ai, m, 0, st_);
+            store_q4_at(v_ + i * kv, vb, (int) kv, ai, m, 0, st_);
+            dequant_q4_to_q8(kb, (int8_t*) kq.codes, (uint16_t*) kq.scales, (int) kv, m, st_, ai);
+            dequant_q4_to_q8(vb, (int8_t*) vq.codes, (uint16_t*) vq.scales, (int) kv, m, st_, ai);
+        } else if (q8) {
             kq = {(int8_t*) seq_buf(r.seq, B.k_codes), (uint16_t*) seq_buf(r.seq, B.k_scales), kv_rs_};
             vq = {(int8_t*) seq_buf(r.seq, B.v_codes), (uint16_t*) seq_buf(r.seq, B.v_scales), kv_rs_};
             store_q8_at(k_ + i * kv, (int8_t*) kq.codes, (uint16_t*) kq.scales, (int) kv, ai, m, 0, st_, kv_rs_);
@@ -761,7 +1411,7 @@ void Qwen35::attn_rows(Block& B, int n) {
         pos_ = keep;
         const size_t sf = (size_t) chunk_ * n_head_ * opt_.max_context;
         if (!(fdec_ && r.pos >= fdec_from_ &&
-              (q8 ? fdec_q8(q_ + i * hq, kq, vq, r.pos, m, ai, sized, att_ + i * hq, head_dim_, n_head_, n_kv_,
+              (codes ? fdec_q8(q_ + i * hq, kq, vq, r.pos, m, ai, sized, att_ + i * hq, head_dim_, n_head_, n_kv_,
                                      scale, score_, sf, st_)
                            : fdec_f16(q_ + i * hq, kc, vc, r.pos, m, ai, sized, att_ + i * hq, head_dim_, n_head_,
                                       n_kv_, scale, score_, sf, st_))))
@@ -788,11 +1438,11 @@ void Qwen35::layer_head(Layer& L, int il, int n) {
     dbg("attn_in", il, xn_, n_embd_);
     if (block_pass_) {
         if (B.gdn) gdn_block_pass(B, n);
-        else attn_block_pass(B, pos_, n);
+        else attn_block_pass(B, il, pos_, n);
     } else if (B.gdn) {
         gdn(B, n);
     } else {
-        attn(B, pos_, n);
+        attn(B, il, pos_, n);
     }
     dbg("attn", il, ao_, n_embd_);
 #if defined(STRATA_GPU_METAL)
@@ -885,7 +1535,7 @@ void Qwen35::moe_shared(const Layer& L, int il, int n) {
 }
 
 // The draft block is one more attention layer.
-void Qwen35::block_attend(int64_t pos, int n) { attn(blocks_[(size_t) n_layer_], pos, n); }
+void Qwen35::block_attend(int64_t pos, int n) { attn(blocks_[(size_t) n_layer_], n_layer_, pos, n); }
 void Qwen35::block_rows(int64_t pos, int n) { attn_store(blocks_[(size_t) n_layer_], pos, n); }
 
 }  // namespace strata::poly
