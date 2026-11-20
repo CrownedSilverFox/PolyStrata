@@ -29,7 +29,23 @@ __host__ __device__ constexpr bool i8m_type(int t) { return t == 10 || t == 11 |
 __host__ __device__ constexpr bool i8m_two(int t) { return t == 10 || t == 11 || i8_two_scales(t); }   // a scale per 16 values
 __host__ __device__ constexpr bool i8m_min16(int t) { return t == 10; }   // and a minimum per 16 values (Q2_K)
 
-template <int T, int NJ, int WR>
+// Bytes of a weight row's stage (256 values) as stored.  The block copies a stage's rows as they are, coalesced, into
+// shared memory with cp.async while the stage before is multiplied, and decodes them from there (RAW).  Read row by row
+// by each thread, their 4-byte pieces took a quarter of a launch to issue: the 32 lanes of a load are in 8 rows.  A row's
+// stage keeps its place in a 16-byte piece (a Q6_K one may start 2 bytes in), so the loaders read it as they would read
+// the card's memory: the copy is of the 16-byte pieces that hold it, and a row's slot has one piece more than the bytes
+// (RW, the words of a slot), but for a type whose stages are whole pieces (Q8_0, Q4_K, ...: the host sees that the rows
+// are too).
+__host__ __device__ constexpr int i8m_raw_bytes(int t) {
+    return t == 2 || t == 20 ? 144 : t == 6 ? 176 : t == 7 ? 192 : t == 8 ? 272 : t == 10 ? 84 : t == 11 ? 110 : t == 12 ? 144
+         : t == 13 ? 176 : t == 14 ? 210 : t == 16 ? 66 : t == 17 ? 74 : t == 18 ? 98 : t == 21 ? 110 : t == 22 ? 82
+         : t == 23 ? 136 : t == 29 ? 56 : t == 42 ? 72 : 0;
+}
+// The types read so: those of whole pieces, and Q6_K.  On an RTX PRO 6000 the others' experts of 2,048 values a row were
+// slower so (Q3_K 617 -> 660 us, IQ3_XXS 513 -> 547, Q2_K 806 -> 820) though those of 512 were faster.
+__host__ __device__ constexpr bool i8m_raw_type(int t) { return i8m_raw_bytes(t) != 0 && (i8m_raw_bytes(t) % 16 == 0 || t == 14); }
+
+template <int T, int NJ, int WR, bool RAW = false>
 struct I8mSmem {
     static constexpr int MT = 16 * NJ;                                           // activation rows of a tile
     static constexpr int GW = !i8_gg_type(T) && i8_grid_words(T) > 4 ? (i8_grid_words(T) + 3) / 4 * 4 : 0;
@@ -46,7 +62,9 @@ struct I8mSmem {
     static constexpr int S16 = MT + 4;
     static constexpr int o_sg = GW, o_w = o_sg + SG, o_x = o_w + WR * I8M_LD, o_ws = o_x + MT * I8M_LD, o_wm = o_ws + WR * LDS,
                          o_xq = (o_wm + MN * WR * LDB + M16 * WR * LDM + 3) / 4 * 4, o_x16 = o_xq + 8 * XSTR,
-                         o_id = o_x16 + M16 * 16 * S16, total = (o_id + MT + 3) / 4 * 4;
+                         o_id = o_x16 + M16 * 16 * S16, o_raw = (o_id + MT + 3) / 4 * 4,
+                         RW = !RAW ? 0 : i8m_raw_bytes(T) % 16 == 0 ? i8m_raw_bytes(T) / 4 : ((i8m_raw_bytes(T) + 15) / 16 + 1) * 4,
+                         total = o_raw + WR * RW;
     static constexpr size_t bytes = (size_t) total * 4;
 };
 
@@ -73,6 +91,24 @@ __device__ __forceinline__ void i8m_ldsm4(uint32_t (&r)[4], const uint32_t* p) {
     asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
                  : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
                  : "r"((uint32_t) __cvta_generic_to_shared(p)));
+#endif
+}
+
+// cp.async: 16 bytes from the card's memory into shared memory, the first n of them read and the rest zeros, without
+// registers.  i8m_cp_wait: this thread's copies have landed.
+__device__ __forceinline__ void i8m_cp16n(void* s, const void* g, int n) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"((uint32_t) __cvta_generic_to_shared(s)), "l"(g), "r"(n));
+#endif
+}
+__device__ __forceinline__ void i8m_cp_commit() {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    asm volatile("cp.async.commit_group;\n" ::);
+#endif
+}
+__device__ __forceinline__ void i8m_cp_wait() {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    asm volatile("cp.async.wait_all;\n" ::: "memory");
 #endif
 }
 
@@ -260,14 +296,14 @@ __global__ void __launch_bounds__(I8M_NT) i8m_quantize4_kernel(const float* __re
     }
 }
 
-template <int T, int NJ, int WR>
+template <int T, int NJ, int WR, bool RAW>
 __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__ W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
                                                     const uint8_t* __restrict__ X, const float* __restrict__ XD,
                                                     const float* __restrict__ XS, const int32_t* __restrict__ bounds, int ch_per_e,
                                                     const int32_t* __restrict__ ids, const int32_t* __restrict__ from,
                                                     float* __restrict__ Y, long long ldy) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800   // (a pass for an older card compiles this empty: the host asks i8m_arch_kernel first)
-    using SM = I8mSmem<T, NJ, WR>;
+    using SM = I8mSmem<T, NJ, WR, RAW>;
     constexpr int MT = SM::MT, LDS = SM::LDS, LDB = SM::LDB, XQ = SM::XQ, XSTR = SM::XSTR;
     constexpr int RT = I8M_NT / WR;   // threads of a weight row: each decodes 8 / RT of its 8 sub-blocks a stage
     constexpr int NA = WR / 64;       // tiles of 16 weight rows a warp multiplies
@@ -285,6 +321,7 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
     float* const s_m16 = s_wm + SM::MN * WR * LDB;           // Q2_K: [WR][LDM]: minimum of (weight row, 16 values)
     float* const s_x16 = (float*) (smem + SM::o_x16);        // Q2_K: [16][S16]: scale * sum of 16 codes, by activation row
     int* const s_id = (int*) (smem + SM::o_id);              // [MT]: the row of Y, -1 past the last
+    uint32_t* const s_raw = smem + SM::o_raw;                // RAW: [WR][RW]: a stage of the weight rows as stored
 
     const int e = blockIdx.y / ch_per_e, ch = blockIdx.y % ch_per_e;
     const int c0 = bounds[e] + ch * MT, r1 = bounds[e + 1];
@@ -362,7 +399,29 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
     // its end are not read, and go in as zeros, codes and scales, so they add nothing.
     const auto here = [&](int S, int ib) { return S * 256 + ib * 32 < K; };
     const auto fetch = [&](int S) {
-        if (w_in) {
+        if constexpr (RAW) {   // the pieces of each row's stage, 16 bytes at a time: consecutive threads, consecutive pieces
+            constexpr int RB = i8m_raw_bytes(T), NP = SM::RW / 4;
+            const uint8_t* const mat = W + (size_t) e * mat_bytes;
+            if constexpr (RB % 16 == 0) {
+                const uint8_t* const src = mat + (size_t) n0 * row_bytes + (size_t) S * RB;
+                for (int i = tid; i < WR * NP; i += I8M_NT) {
+                    const int r = i / NP, c = i - r * NP;
+                    const bool ok = n0 + r < n_out;
+                    i8m_cp16n(s_raw + r * SM::RW + 4 * c, ok ? src + (size_t) r * row_bytes + 16 * c : W, ok ? 16 : 0);
+                }
+                i8m_cp_commit();
+            } else {
+                const uint8_t* const end = mat + (size_t) n_out * row_bytes;   // (a piece past it is read only up to it)
+                for (int i = tid; i < WR * NP; i += I8M_NT) {
+                    const int r = i / NP, c = i - r * NP;
+                    const uint8_t* const at = mat + (size_t) (n0 + r) * row_bytes + (size_t) S * RB;
+                    const uint8_t* const pc = (const uint8_t*) ((uintptr_t) at & ~(uintptr_t) 15) + 16 * c;
+                    const bool ok = n0 + r < n_out && pc < at + RB;
+                    i8m_cp16n(s_raw + r * SM::RW + 4 * c, ok ? pc : W, !ok ? 0 : end - pc < 16 ? (int) (end - pc) : 16);
+                }
+                i8m_cp_commit();
+            }
+        } else if (w_in) {
 #pragma unroll
             for (int part = 0; part < PER; ++part) {
                 const int ib = i8m_sub<T, RT>(r0, part);
@@ -395,6 +454,21 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         }
     };
     const auto put = [&](int S) {
+        if constexpr (RAW) {   // this thread's sub-blocks out of the raw stage, read as fetch() reads the card's memory
+            const uintptr_t at = (uintptr_t) (W + (size_t) e * mat_bytes + (size_t) (n0 + wr) * row_bytes + (size_t) S * i8m_raw_bytes(T));
+            I8P const rb = I8_GPTR((const uint8_t*) (s_raw + wr * SM::RW) + (at & 15) - (size_t) S * i8m_raw_bytes(T));
+#pragma unroll
+            for (int part = 0; part < PER; ++part) {
+                const int ib = i8m_sub<T, RT>(r0, part);
+                if (!w_in) continue;
+                if constexpr (T == 11) i8m_q3k_load(rb, S, ib, wraw[part]);
+                else if constexpr (T == 10) i8m_q2k_load(rb, S, ib, wraw[part]);
+                else if constexpr (T == 8) i8m_q8_load(rb, S, ib, wraw[part]);
+                else if constexpr (T == 14) i8m_q6k_load(rb, S, ib, wraw[part]);
+                else if constexpr (T == 23) i8m_iq4xs_load(rb, S, ib, wraw[part]);
+                else i8_load<T>(rb, i8_offs<T>(0, ib & 3), 2 * S + (ib >> 2), wraw[part]);
+            }
+        }
 #pragma unroll
         for (int part = 0; part < PER; ++part) {
             const int ib = i8m_sub<T, RT>(r0, part);
@@ -574,6 +648,7 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
     const int stages = (K + 255) / 256;
     fetch(0);
     for (int S = 0; S < stages; ++S) {
+        if constexpr (RAW) i8m_cp_wait();   // this thread's pieces of the raw stage (fetch() after put() reads it: one copy)
         __syncthreads();   // the stage before is multiplied (and the tables are written)
         put(S);
         __syncthreads();
@@ -613,7 +688,7 @@ __global__ void i8m_arch_kernel(int* out) {
 
 struct I8mCard {
     bool read = false, on = false;
-    size_t shared = 0;
+    size_t shared = 0, shared_sm = 0;   // a block's most, a multiprocessor's
 };
 
 // the current card: int8 tensor cores in the code it runs, and the shared memory it gives a block
@@ -629,6 +704,7 @@ I8mCard i8m_card() {
         c.read = true;
         int v = 0, *d_arch = nullptr, arch = 0;
         if (cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) == cudaSuccess) c.shared = (size_t) v;
+        if (cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev) == cudaSuccess) c.shared_sm = (size_t) v;
         if (cudaMalloc(&d_arch, sizeof(int)) == cudaSuccess) {
             i8m_arch_kernel<<<1, 1>>>(d_arch);
             if (cudaMemcpy(&arch, d_arch, sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) arch = 0;
@@ -641,17 +717,17 @@ I8mCard i8m_card() {
     return known[dev];
 }
 
-template <int T, int NJ, int WR>
+template <int T, int NJ, int WR, bool RAW>
 bool i8m_launch(int dev, dim3 grid, cudaStream_t s, const uint8_t* W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
                 const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int ch, const int32_t* ids,
                 const int32_t* from, float* Y, long long ldy) {
-    constexpr size_t bytes = I8mSmem<T, NJ, WR>::bytes;
+    constexpr size_t bytes = I8mSmem<T, NJ, WR, RAW>::bytes;
     static bool attr[64];   // the attribute belongs to a card (see gemm_iq_f16_grouped)
     if (!attr[dev]) {
-        cudaFuncSetAttribute(i8m_kernel<T, NJ, WR>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) bytes);
+        cudaFuncSetAttribute(i8m_kernel<T, NJ, WR, RAW>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) bytes);
         attr[dev] = true;
     }
-    i8m_kernel<T, NJ, WR><<<grid, I8M_NT, bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch, ids, from, Y,
+    i8m_kernel<T, NJ, WR, RAW><<<grid, I8M_NT, bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch, ids, from, Y,
                                                      ldy);
     return cudaGetLastError() == cudaSuccess;
 }
@@ -661,8 +737,9 @@ bool i8m_launch(int dev, dim3 grid, cudaStream_t s, const uint8_t* W, size_t mat
 #define STRATA_I8M_TILES(X) X(1, 64) X(2, 64) X(4, 64) X(8, 64)
 
 template <int T>
-size_t i8m_tile_bytes(int nj, int wr) {
-#define STRATA_I8M_SIZE(NJ_, WR_) if (nj == NJ_ && wr == WR_) return I8mSmem<T, NJ_, WR_>::bytes;
+size_t i8m_tile_bytes(int nj, int wr, bool raw) {
+#define STRATA_I8M_SIZE(NJ_, WR_) \
+    if (nj == NJ_ && wr == WR_) return raw ? I8mSmem<T, NJ_, WR_, true>::bytes : I8mSmem<T, NJ_, WR_>::bytes;
     STRATA_I8M_TILES(STRATA_I8M_SIZE)
 #undef STRATA_I8M_SIZE
     return (size_t) -1;
@@ -675,15 +752,26 @@ bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t
                      const int32_t* ids, const int32_t* from, float* Y, long long ldy) {
     int nj = max_rows <= 16 ? 1 : max_rows <= 32 ? 2 : max_rows <= 64 ? 4 : 8;
     const int wr = 64;
-    while (nj > 1 && i8m_tile_bytes<T>(nj, wr) > card.shared) nj /= 2;
-    if (i8m_tile_bytes<T>(nj, wr) > card.shared) return false;
+    // The raw stage: whole stages, no piece before the matrices' start, rows of whole pieces for a type read so; and as
+    // many blocks a multiprocessor as without it (its shared memory took Qwen3.6's experts, 64 rows of activations, from
+    // two blocks to one: 6% slower).  (The blocks a multiprocessor by shared memory, 1 KB of it the system's a block.)
+    static const bool raw_on = [] { const char* v = std::getenv("STRATA_I8M_RAW"); return v == nullptr || v[0] != '0'; }();
+    const auto per_sm = [&](size_t b) { return card.shared_sm / (b + 1024); };
+    const bool raw = raw_on && i8m_raw_type(T) && K % 256 == 0 && (uintptr_t) W % 16 == 0 &&
+                     (i8m_raw_bytes(T) % 16 != 0 || (row_bytes % 16 == 0 && mat_bytes % 16 == 0)) &&
+                     i8m_tile_bytes<T>(nj, wr, true) <= card.shared &&
+                     per_sm(i8m_tile_bytes<T>(nj, wr, true)) >= per_sm(i8m_tile_bytes<T>(nj, wr, false));
+    while (nj > 1 && i8m_tile_bytes<T>(nj, wr, raw) > card.shared) nj /= 2;
+    if (i8m_tile_bytes<T>(nj, wr, raw) > card.shared) return false;
     const long long ch = (max_rows + 16 * nj - 1) / (16 * nj), gy = (long long) n_mats * ch;
     if (gy > 65535) return false;
     const dim3 grid((unsigned) ((n_out + wr - 1) / wr), (unsigned) gy);
 #define STRATA_I8M_GO(NJ_, WR_) \
     if (nj == NJ_ && wr == WR_) \
-        return i8m_launch<T, NJ_, WR_>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, (int) ch, ids, from, \
-                                       Y, ldy);
+        return raw ? i8m_launch<T, NJ_, WR_, i8m_raw_type(T)>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, \
+                                                                     bounds, (int) ch, ids, from, Y, ldy) \
+                   : i8m_launch<T, NJ_, WR_, false>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, (int) ch, \
+                                                    ids, from, Y, ldy);
     STRATA_I8M_TILES(STRATA_I8M_GO)
 #undef STRATA_I8M_GO
     return false;
