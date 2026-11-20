@@ -11,9 +11,12 @@
 #include "../poly/launch.hpp"
 #include "mmq.hpp"
 #include "ggml.h"
+#include <cmath>
 #include <stdexcept>
 namespace strata::kernels {
 using namespace poly::metal_detail;
+// Qwen3.6's SwiGLU has no clamp; poly's swiglu_clamp_rows clamps to its limit, and a limit of 0 makes every output 0
+constexpr float kNoClamp = INFINITY;
 bool native_q8_0_packed_enabled() { return false; }
 bool native_q8_0_packed_eligible(int,int) { return false; }
 void native_q8_0_pack_host(const void*,void*,int,int) { throw std::logic_error("CUDA Q8 packing is not used on Metal"); }
@@ -43,7 +46,7 @@ void native_expert_grouped(const NativeExpertLayout& l,const unsigned long long*
     QArgs a;a.p[0]=ptr;a.p[1]=x;a.p[2]=gu;a.p[3]=tok;a.p[4]=bounds;a.p[5]=count;
     a.ni=l.n_embd;a.no=2*l.n_ff;a.rows=rows;a.xstride=native_q8_1_bytes(a.ni);a.ystride=a.no;a.kind=4;
     qrun(std::string("poly_mul_")+quant_name(l.gu_type),a,s,{uint32_t(a.no),uint32_t(rows),uint32_t(groups)});
-    poly::swiglu_clamp_rows(gu,h,l.n_ff,rows,0,s);
+    poly::swiglu_clamp_rows(gu,h,l.n_ff,rows,kNoClamp,s);
     native_quantize_q8_1(h,hq,l.n_ff,rows,s);
     a.p[1]=hq;a.p[2]=out;a.p[3]=dst;a.ni=l.n_ff;a.no=l.n_embd;a.xstride=native_q8_1_bytes(a.ni);
     a.ystride=a.no;a.offset=l.down_off;a.kind=5;
@@ -110,7 +113,7 @@ void Context::run(const Product& p,void* s){
 }
 void swiglu(const float* gu,float* h,int64_t rows,int64_t f,bool interleaved,void* s){
     if(interleaved)throw std::invalid_argument("q36 GGUF experts use split gate/up rows");
-    poly::swiglu_clamp_rows(gu,h,f,rows,0,s);
+    poly::swiglu_clamp_rows(gu,h,f,rows,kernels::kNoClamp,s);
 }
 void iota(int32_t* dst,int64_t n,void* s){
     struct Args{int32_t* dst;int64_t n;}a{dst,n};
