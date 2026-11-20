@@ -4,7 +4,7 @@
 //   WEBTEST_MODULES=<folder with node_modules/puppeteer-core> [CHROME_BIN=<chrome>] node tools/webtest/browser_test.mjs [name]
 import assert from "node:assert/strict";
 import { startMock } from "./mock.mjs";
-import { launch, openPage, say, idle, sleep, runner } from "./lib.mjs";
+import { launch, openPage, say, idle, sleep, runner, pageErrors } from "./lib.mjs";
 
 const { test, run } = runner("web page browser tests");
 
@@ -335,7 +335,7 @@ htest("list: chats are kept, found, renamed, deleted with an Undo, and survive a
   assert.deepEqual(await texts(page), ["u:beta question", "a:Mock answer 2."]);
   await (await row("Garden plan")).click();
   assert.deepEqual(await texts(page), ["u:alpha question", "a:Mock answer 1."]);
-  assert.deepEqual(page.errors, []);
+  assert.deepEqual(pageErrors(page), []);
   await page.close();
 });
 
@@ -434,16 +434,173 @@ htest("branch: a new chat from here; the original stays; the title stays; a link
   await page.close();
 });
 
-htest("regenerate: a new answer to the same question; Undo brings the old one back", async ({ browser, mock }) => {
-  reset(mock);
+// ---- the answers of one question (#12): ↻ adds a variant, the arrows go between them
+const regen = async (page, i) => { await page.click(`[data-i="${i}"] [data-msg-regen]`); await idle(page); await sleep(50); };
+const arrow = async (page, i, which) => { await page.click(`[data-i="${i}"] [data-msg-${which}]`); await sleep(50); };
+const counter = (page, i) => page.$eval(`[data-i="${i}"] [data-swipe-count]`, (e) => (e.hidden ? "" : e.textContent));
+const shown = (page, i) => page.evaluate((n) => messages[n].text, i);
+const actionLabels = (page, i) => page.$$eval(`[data-i="${i}"] .history-actions button`, (b) => b.map((x) => x.textContent));
+
+htest("regenerate: the old answer stays as a variant; the arrows go between them; a new one drops the ones after the one shown", async ({ browser, mock }) => {
   const page = await openPage(browser, mock, { seed: on() });
-  await ask(page, "q1"); await ask(page, "q2");
-  await clickAction(page, 3, "Regenerate");
+  await ask(page, "q1");
+  assert.equal(await counter(page, 1), "", "one answer: no count, no arrows");
+  assert.equal(await page.$eval('[data-i="1"] [data-msg-prev]', (e) => e.hidden), true);
+  assert.ok(!(await actionLabels(page, 1)).includes("Regenerate"), "an answer has its ↻; the history row does not repeat it");
+  await regen(page, 1);
+  assert.deepEqual(requestTexts(mock), ["u:q1"], "the old answer is not sent");
+  assert.equal(await shown(page, 1), "Mock answer 2.");
+  assert.equal(await counter(page, 1), "2/2");
+  await regen(page, 1);
+  assert.equal(await counter(page, 1), "3/3");
+  await arrow(page, 1, "prev");
+  assert.equal(await shown(page, 1), "Mock answer 2.");
+  assert.equal(await counter(page, 1), "2/3");
+  await arrow(page, 1, "prev");
+  await arrow(page, 1, "prev");
+  assert.equal(await shown(page, 1), "Mock answer 3.", "the arrows go round");
+  await arrow(page, 1, "next");
+  assert.equal(await counter(page, 1), "1/3");
+  await arrow(page, 1, "next");
+  await regen(page, 1);
+  assert.equal(await shown(page, 1), "Mock answer 4.");
+  assert.deepEqual(await page.evaluate(() => messages[1].swipes.map((v) => v.text)), ["Mock answer 1.", "Mock answer 2.", "Mock answer 4."],
+                   "from 2/3 the new answer replaces the variant after it");
+  assert.equal(await page.$("#history-undo"), null, "the variants are the way back: no Undo bar");
+  // the next question reads the answer on the screen
+  await arrow(page, 1, "prev");
+  await ask(page, "q2");
+  assert.deepEqual(requestTexts(mock), ["u:q1", "a:Mock answer 2.", "u:q2"]);
+  // kept in the browser like the rest of the chat
+  await page.reload({ waitUntil: "networkidle0" });
+  assert.equal(await counter(page, 1), "2/3");
+  assert.equal(await shown(page, 1), "Mock answer 2.");
+  assert.deepEqual(pageErrors(page), []);
+  await page.close();
+});
+
+htest("regenerate: an earlier answer is asked for with the messages before it only; the later ones stay", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  await ask(page, "q1"); await ask(page, "q2"); await ask(page, "q3");
+  await regen(page, 1);
+  assert.deepEqual(requestTexts(mock), ["u:q1"], "the question it answers, and nothing after it");
+  assert.deepEqual(await texts(page), ["u:q1", "a:Mock answer 4.", "u:q2", "a:Mock answer 2.", "u:q3", "a:Mock answer 3."]);
+  assert.equal(await counter(page, 1), "2/2");
+  assert.ok((await toastTitles(page)).includes("Another answer to an earlier question"), "the toast says the later messages stay");
+  await regen(page, 3);
+  assert.deepEqual(requestTexts(mock), ["u:q1", "a:Mock answer 4.", "u:q2"]);
+  await ask(page, "q4");
+  assert.deepEqual(requestTexts(mock), ["u:q1", "a:Mock answer 4.", "u:q2", "a:Mock answer 5.", "u:q3", "a:Mock answer 3.", "u:q4"],
+                   "the next question sends the chat as it is on the screen");
+  await page.close();
+});
+
+htest("regenerate: a failed one puts the answer back; a stopped one keeps what it wrote", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  await ask(page, "#think q1");
+  await page.evaluate(() => { messages[0].text = "#error q1"; saveChat(); });   // the next request for this question fails
+  await regen(page, 1);
+  assert.equal(await shown(page, 1), "Thought through. The answer is 42.", "the answer is back");
+  assert.equal(await page.$eval('[data-i="1"] details.think', (e) => e.hidden), false, "with its thinking");
+  assert.equal(await page.evaluate(() => messages[1].swipes.length), 1, "no variant was added");
+  assert.equal(await counter(page, 1), "");
+  await page.evaluate(() => { messages[0].text = "#hold q1"; saveChat(); });
+  await page.click('[data-i="1"] [data-msg-regen]');
+  await page.waitForFunction(() => messages[1].text.startsWith("Working"));
+  await page.evaluate(() => document.querySelectorAll(".st-toast").forEach((t) => t.remove()));   // the failure's toast sits over Stop
+  await page.click("#stop-btn");
   await idle(page);
-  assert.deepEqual(requestTexts(mock), ["u:q1", "a:Mock answer 1.", "u:q2"], "the old answer is not sent");
-  assert.deepEqual(await texts(page), ["u:q1", "a:Mock answer 1.", "u:q2", "a:Mock answer 3."]);
-  await page.click("#history-undo button");
-  assert.deepEqual(await texts(page), ["u:q1", "a:Mock answer 1.", "u:q2", "a:Mock answer 2."]);
+  assert.match(await shown(page, 1), /^Working on it/, "what it wrote stays");
+  assert.equal(await counter(page, 1), "2/2");
+  assert.equal(await page.$eval('[data-i="1"] details.think', (e) => e.hidden), true, "this variant has no thinking");
+  await arrow(page, 1, "prev");
+  assert.equal(await page.$eval('[data-i="1"] details.think', (e) => e.hidden), false, "the first one has");
+  // stopped before it wrote anything: no empty variant, the answer on the screen is back
+  await page.evaluate(() => { document.querySelector('[data-i="1"] [data-msg-regen]').click(); busy.controller.abort(); });
+  await idle(page);
+  assert.equal(await counter(page, 1), "1/2");
+  assert.equal(await shown(page, 1), "Thought through. The answer is 42.");
+  await page.close();
+});
+
+htest("regenerate: the buttons wait while an answer is written; with the history on, an unanswered question is asked again from its row", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock, { seed: { ...on(), chat: [turn("user", "q1"), turn("assistant", "a1"), turn("user", "q2")] } });
+  assert.deepEqual(await actionLabels(page, 2), ["Regenerate", "Rewind to here"]);
+  await clickAction(page, 2, "Regenerate");
+  await idle(page);
+  assert.deepEqual(await texts(page), ["u:q1", "a:a1", "u:q2", "a:Mock answer 1."]);
+  await say(page, "#hold q3");
+  await page.waitForFunction(() => busy !== null);
+  assert.deepEqual(await page.$$eval("[data-msg-regen]", (b) => b.map((x) => x.disabled)), [true, true, true], "no ↻ while an answer is written");
+  await page.click("#stop-btn");
+  await idle(page);
+  assert.deepEqual(await page.$$eval("[data-msg-regen]", (b) => b.map((x) => x.disabled)), [false, false, false]);
+  await page.close();
+});
+
+// ---- edit a question (PR #75): ✎, the answers after it go, a new one to the new wording, Undo in the toast
+const editTo = async (page, i, text) => {
+  await page.click(`[data-i="${i}"] [data-msg-edit]`);
+  await page.$eval(".edit-box", (e, t) => { e.value = t; }, text);
+};
+
+htest("edit a question: the messages after it go, tool calls too; a new answer is written to the new wording; Undo brings them back", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  await ask(page, "q1"); await ask(page, "#tool q2"); await ask(page, "q3");
+  assert.equal(await page.evaluate(() => messages[3].tools.length), 1, "the second answer called a tool");
+  const before = await texts(page);
+  await editTo(page, 0, "q1 changed");
+  await page.click(".edit-actions .st-btn--primary");
+  await idle(page);
+  assert.deepEqual(await texts(page), ["u:q1 changed", "a:Mock answer 4."]);
+  assert.deepEqual(mock.state.requests.at(-1).messages, [{ role: "user", content: "q1 changed" }], "the model reads the new wording and nothing after it");
+  assert.match(await page.$eval(".st-toast .t-text", (e) => e.textContent), /^5 later messages removed/);
+  await page.evaluate(() => [...document.querySelectorAll(".st-toast button")].find((b) => b.textContent === "Undo").click());
+  await sleep(50);
+  assert.deepEqual(await texts(page), before);
+  assert.equal(await page.evaluate(() => messages[3].tools.length), 1, "the tool call is back with its answer");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("strata.chat")).length), 6, "and the chat as saved");
+  // an edit of the last question has nothing to remove
+  await editTo(page, 4, "q3 again");
+  await page.click(".edit-actions .st-btn--primary");
+  await idle(page);
+  assert.deepEqual((await texts(page)).slice(4), ["u:q3 again", "a:Mock answer 5."]);
+  assert.deepEqual(pageErrors(page), []);
+  await page.close();
+});
+
+htest("edit a question: Cancel and Escape keep the text, Ctrl+Enter saves; not while an answer is written, and no Undo after a new question", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  await ask(page, "q1"); await ask(page, "q2");
+  await editTo(page, 0, "changed but cancelled");
+  await page.click(".edit-actions .st-btn--secondary");
+  assert.equal(await page.$(".edit-box"), null, "the editor is closed");
+  assert.equal(await page.$eval('[data-i="0"] .st-bubble', (e) => e.textContent), "q1");
+  await editTo(page, 0, "changed but escaped");
+  await page.focus(".edit-box");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.$(".edit-box"), null);
+  assert.equal(await shown(page, 0), "q1");
+  await editTo(page, 2, "q2 by keyboard");
+  await page.focus(".edit-box");
+  await page.keyboard.down("Control"); await page.keyboard.press("Enter"); await page.keyboard.up("Control");
+  await idle(page);
+  assert.deepEqual(await texts(page), ["u:q1", "a:Mock answer 1.", "u:q2 by keyboard", "a:Mock answer 3."]);
+  // the toast's Undo does nothing once something else was sent
+  await editTo(page, 0, "q1 changed");
+  await page.click(".edit-actions .st-btn--primary");
+  await idle(page);
+  await ask(page, "q-next");
+  await page.evaluate(() => [...document.querySelectorAll(".st-toast button")].find((b) => b.textContent === "Undo").click());
+  await sleep(50);
+  assert.deepEqual(await texts(page), ["u:q1 changed", "a:Mock answer 4.", "u:q-next", "a:Mock answer 5."]);
+  await say(page, "#hold q");
+  await page.waitForFunction(() => busy !== null);
+  assert.deepEqual(await page.$$eval("[data-msg-edit]", (b) => b.map((x) => x.disabled)), [true, true, true], "no edit while an answer is written");
+  await page.evaluate(() => document.querySelectorAll(".st-toast").forEach((t) => t.remove()));
+  await page.click("#stop-btn");
+  await idle(page);
+  assert.deepEqual(await page.$$eval("[data-msg-edit]", (b) => b.map((x) => x.disabled)), [false, false, false]);
   await page.close();
 });
 
@@ -486,10 +643,12 @@ htest("history: an attachment that was only kept by name is not sent as if it we
   reset(mock);
   const lost = [{ role: "user", text: "see file", time: 1, files: [{ name: "notes.txt" }], images: [] }, { role: "assistant", text: "ok", time: 2 }];
   const page = await openPage(browser, mock, { seed: { ...on(), chat: lost, sampling: { chatEdit: true } } });
-  await clickAction(page, 1, "Regenerate");
+  await page.click('[data-i="1"] [data-msg-regen]');
   await sleep(200);
   assert.equal(mock.state.requests.length, 0, "no request with a missing file");
   assert.match(await page.$eval(".st-toast__title", (e) => e.textContent), /Attachments need to be added again/);
+  await page.click('[data-i="0"] [data-msg-edit]');
+  assert.equal(await page.$(".edit-box"), null, "an edit, which would send the question again, is not started either");
   await clickAction(page, 0, "Rewind to here");
   await page.$eval(".history-panel .st-btn--primary", (b) => b.click());
   assert.equal(await page.$eval("#input", (e) => e.value), "see file");
@@ -641,7 +800,7 @@ htest("language: /?lang= is for one visit, an unknown code stays English, every 
     assert.equal(await page.evaluate(() => StrataI18n.lang), lang);
     assert.notEqual(await page.$eval("#send-btn", (e) => e.getAttribute("aria-label")), "Send", lang);
     await ask(page, "hello " + lang);
-    assert.deepEqual(page.errors, [], lang);
+    assert.deepEqual(pageErrors(page), [], lang);
     await page.close();
   }
 });
@@ -687,8 +846,110 @@ htest("ime: the key that commits or cancels a conversion does not send, end a re
   await sleep(100);
   await page.keyboard.press("Escape");
   assert.equal(await page.$(".history-editor"), null);
-  assert.deepEqual(page.errors, []);
+  assert.deepEqual(pageErrors(page), []);
   await page.close();
+});
+
+// ------------------------------------------------------------------------------------------------ the model list and Requests (#142)
+const withMock = async (opts, fn) => { const m = await startMock(opts); try { await fn(m); } finally { await m.stop(); } };
+const toastTitles = (page) => page.$$eval(".st-toast__title", (e) => e.map((x) => x.textContent));
+
+test("models: one installed model, no list; several, a list; choosing one loads it and starts a new chat", async ({ browser, mock }) => {
+  const one = await openPage(browser, mock);
+  await one.waitForFunction(() => document.querySelector("#model-select").dataset.current === "Mock-Model");
+  assert.equal(await one.$eval("#model-select", (e) => e.hidden), true, "nothing to choose from");
+  await one.close();
+  await withMock({ models: true }, async (m) => {
+    const page = await openPage(browser, m);
+    await ask(page, "first");
+    assert.equal(await page.$eval("#model-select", (e) => e.hidden), false);
+    assert.deepEqual(await page.$$eval("#model-select option", (o) => o.map((x) => [x.value, x.disabled, x.textContent])),
+                     [["Mock-Model", false, "Mock-Model"], ["Other-Model", false, "Other Model (Other-Model)"], ["Gone-Model", true, "Gone Model (Gone-Model) - unavailable"]]);
+    await page.select("#model-select", "Other-Model");
+    await page.waitForFunction(() => document.querySelector("#model-select").dataset.current === "Other-Model");
+    await idle(page);
+    assert.ok(m.state.calls.includes("POST /api/models/load"));
+    assert.deepEqual(await texts(page), [], "a new chat: the answers on the screen came from the other model");
+    assert.ok((await toastTitles(page)).includes("Other-Model is loaded"));
+    await ask(page, "second");
+    assert.equal(m.state.requests.at(-1).model, "Other-Model", "the next question goes to the model that was loaded");
+    // a switch the server refuses leaves the list and the chat as they were
+    m.state.failLoad = true;
+    await page.select("#model-select", "Mock-Model");
+    await page.waitForFunction(() => [...document.querySelectorAll(".st-toast__title")].some((t) => t.textContent === "The model was not switched"));
+    await page.waitForFunction(() => !document.querySelector("#model-select").disabled);
+    assert.equal(await page.$eval("#model-select", (e) => e.value), "Other-Model");
+    assert.deepEqual(await texts(page), ["u:second", "a:Mock answer 2."]);
+    // not while an answer is being written
+    await say(page, "#hold third");
+    await page.waitForFunction(() => busy !== null);
+    const loads = m.state.calls.filter((c) => c === "POST /api/models/load").length;
+    await page.select("#model-select", "Mock-Model");
+    await sleep(200);
+    assert.equal(m.state.calls.filter((c) => c === "POST /api/models/load").length, loads, "no switch was asked for");
+    assert.equal(await page.$eval("#model-select", (e) => e.value), "Other-Model");
+    assert.ok((await toastTitles(page)).includes("Still writing"));
+    await page.evaluate(() => document.querySelectorAll(".st-toast").forEach((t) => t.remove()));   // they sit over Stop
+    await page.click("#stop-btn");
+    await idle(page);
+    assert.deepEqual(pageErrors(page).filter((e) => !/ 409 .*\/api\/models\/load\)$/.test(e)), [], "(the refused switch logs its 409)");
+    await page.close();
+  });
+});
+
+test("models: with the list on, a switch starts a new chat in the list and keeps the old one there", async ({ browser }) => {
+  await withMock({ models: true }, async (m) => {
+    const page = await openPage(browser, m, { seed: { sampling: { chatList: true } } });
+    await ask(page, "kept question");
+    await page.select("#model-select", "Other-Model");
+    await page.waitForFunction(() => document.querySelector("#model-select").dataset.current === "Other-Model");
+    await sleep(100);
+    assert.deepEqual(await texts(page), []);
+    assert.deepEqual((await sidebarTitles(page)).sort(), ["New chat", "kept question"], "the earlier chat stays in the list; the open one is new");
+    await page.close();
+  });
+});
+
+test("models: the header with the model list fits a phone", async ({ browser }) => {
+  await withMock({ models: true }, async (m) => {
+    for (const width of [320, 360, 390, 420, 458, 500, 560, 640, 768]) {
+      const page = await openPage(browser, m, { width, height: 700 });
+      await page.waitForFunction(() => !document.querySelector("#model-select").hidden);
+      await waitBtn(page, "Unload");
+      const r = await page.evaluate(() => {
+        const box = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return [b.left, b.right]; };
+        return { select: box("model-select"), unload: box("unload-btn"), theme: box("theme-btn"), scroll: document.documentElement.scrollWidth, width: innerWidth };
+      });
+      for (const [l, rt] of [r.select, r.unload, r.theme]) assert.ok(l >= 0 && rt <= r.width, `${width}px: ${JSON.stringify(r)}`);
+      assert.ok(r.select[1] - r.select[0] >= 60, `${width}px: the list is too narrow to read: ${JSON.stringify(r)}`);
+      assert.ok(r.scroll <= r.width, `${width}px: the page scrolls sideways: ${JSON.stringify(r)}`);
+      await page.close();
+    }
+  });
+});
+
+test("requests: the tab says how to turn the API monitor on; on, it opens the monitor in a tab of its own, with the saved key", async ({ browser, mock }) => {
+  const page = await openPage(browser, mock);
+  assert.equal(await page.$eval("#tab-btn-requests", (e) => e.hidden), false, "the tab is always there");
+  await page.click("#tab-btn-requests");
+  assert.equal(await page.$eval("#requests-off", (e) => e.hidden), false, "off: how to turn it on");
+  assert.equal(await page.$eval("#requests-on", (e) => e.hidden), true);
+  await page.close();
+  await withMock({ apiMonitor: true }, async (m) => {
+    const page2 = await openPage(browser, m, { seed: { apikey: "saved-key" }, hash: "#requests" });
+    assert.equal(await page2.$eval("#requests-off", (e) => e.hidden), true);
+    assert.equal(await page2.$eval("#requests-on", (e) => e.hidden), false);
+    assert.equal(await page2.$eval("#requests-open", (e) => [e.getAttribute("href"), e.target].join(" ")), "api-monitor _blank");
+    assert.equal(await page2.$("iframe"), null, "no frame: the page's policy allows none");
+    await page2.click("#requests-open");
+    const monitor = await (await page2.browserContext().waitForTarget((t) => t.url().endsWith("/api-monitor"))).page();
+    await monitor.waitForFunction(() => document.getElementById("updated").textContent.startsWith("Live"));
+    assert.equal(m.state.monitorAuth, "Bearer saved-key", "the key saved on the chat page is not asked for again");
+    assert.equal(await monitor.$eval("#auth", (e) => e.hidden), true);
+    assert.deepEqual(pageErrors(page2), []);
+    await monitor.close();
+    await page2.close();
+  });
 });
 
 const mock = await startMock();

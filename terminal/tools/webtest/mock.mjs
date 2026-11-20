@@ -4,8 +4,11 @@
 //   import { startMock } from "./mock.mjs";
 //   const mock = await startMock();           // { url, state, stop() }
 //
-// What the page asks and what it gets: GET /health /metrics /mcp /settings /config, POST /load /unload,
-// POST /v1/chat/completions (streamed). The reply depends on a word in the last user message:
+// What the page asks and what it gets: GET /health /metrics /mcp /settings /config /api/models, POST /load /unload
+// /api/models/load, POST /v1/chat/completions (streamed), and the 404 the server gives GET /api/expert-heat for a model that does
+// not save its expert profile (the page's Experts probe). One model is installed, so the page's model list stays hidden; with
+// models: true there are three (the third cannot be loaded), and /health names the one loaded last. apiMonitor: true
+// turns on the API monitor (/api-monitor, /v1/status, /api/requests). The reply depends on a word in the last user message:
 //   #math   inline and display formulas, a price      #svg / #html  a fenced svg / html block     #think  reasoning first
 //   #long   a slow answer (about 6 s) to interrupt    #hold  never ends until the page stops it   #tool   an MCP tool call, then text
 //   #error  a 500                                      anything else: "Mock answer N."
@@ -19,8 +22,10 @@ export const WEB = path.resolve(here, "..", "..", "serve", "web");
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".json": "application/json; charset=utf-8", ".woff2": "font/woff2" };
 
-// the one header the real server puts on the page (serve/server.py, PAGE_CSP): read from the source so the two cannot drift
-const PAGE_CSP = (/^PAGE_CSP = "(.*)"$/m.exec(fs.readFileSync(path.join(here, "..", "..", "serve", "server.py"), "utf8")) || [])[1] || "";
+// the one header the real server puts on the page (PAGE_CSP in serve/server_parts/engines.py): read from the source so the two
+// cannot drift. Not finding it is an error: with no header the preview tests would check a page without its policy.
+const PAGE_CSP = (/^PAGE_CSP = "(.*)"$/m.exec(fs.readFileSync(path.join(here, "..", "..", "serve", "server_parts", "engines.py"), "utf8")) || [])[1];
+if (!PAGE_CSP) throw new Error("PAGE_CSP is not in serve/server_parts/engines.py");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lastUser = (messages) => {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -38,8 +43,13 @@ const SVG = "Here is a circle:\n\n```svg\n<svg xmlns=\"http://www.w3.org/2000/sv
 const HTML = "A small page:\n\n```html\n<!doctype html><html><body style=\"font-family:sans-serif\"><h2>Hello</h2>" +
   "<p id=\"p\">Static text.</p><script>document.getElementById('p').textContent='Script ran.'</script></body></html>\n```\n";
 
-export async function startMock({ port = 0, root = WEB, loaded = true, csp = true } = {}) {
-  const state = { requests: [], aborted: 0, completed: 0, loaded, calls: [], answers: 0 };
+export async function startMock({ port = 0, root = WEB, loaded = true, csp = true, models = false, apiMonitor = false } = {}) {
+  const installed = [{ id: "Mock-Model", display_name: "Mock-Model", status: "available" }];
+  if (models) installed.push({ id: "Other-Model", display_name: "Other Model", status: "available" },
+                             { id: "Gone-Model", display_name: "Gone Model", status: "unavailable", problem: "the model file is missing" });
+  // failLoad: the next POST /api/models/load is refused as the server refuses one while a request still runs; monitorAuth: the
+  // Authorization header the API monitor's last request carried
+  const state = { requests: [], aborted: 0, completed: 0, loaded, calls: [], answers: 0, current: "Mock-Model", failLoad: false, monitorAuth: null };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
     const p = url.pathname.replace(/\/+$/, "");
@@ -49,16 +59,34 @@ export async function startMock({ port = 0, root = WEB, loaded = true, csp = tru
       if (p === "") return file(res, path.join(root, "index.html"), undefined, csp && PAGE_CSP ? { "Content-Security-Policy": PAGE_CSP } : {});
       if (p.startsWith("/web/")) return file(res, path.join(root, p.slice(5)), root);
       if (p.startsWith("/fonts/")) return file(res, path.join(root, "fonts", p.slice(7)), root);
-      if (p === "/health") return json(200, { status: "ok", max_context: 32768, model: "Mock-Model", images: true, image_generation: false, loaded: state.loaded, service: "strata" });
+      if (p === "/health") return json(200, { status: "ok", max_context: 32768, model: state.current, images: true, image_generation: false, loaded: state.loaded, service: "strata", api_monitor: apiMonitor });
       if (p === "/metrics") return json(200, metrics(state));
       if (p === "/mcp") return json(200, { servers: [], tools: 0 });
       if (p === "/settings") return json(200, { shared: false, defaults: null });
+      if (p === "/api/expert-heat") return json(404, { error: { message: "this model does not save its expert profile (expert_profile_save in its config)" } });
+      if (p === "/api/models") return json(200, { models: installed.map((m) => ({ ...m, current: m.id === state.current })), current: state.current });
+      // the real server sends the page's CSP with the chat page only, not with the monitor
+      if (apiMonitor && p === "/api-monitor") return file(res, path.join(root, "monitor.html"));
+      if (apiMonitor && p === "/v1/status") return json(200, { model: state.current, activity: { in_flight: 0 } });
+      if (apiMonitor && p === "/api/requests") {
+        state.monitorAuth = req.headers.authorization || null;
+        return json(200, { requests: [], retention: 100, persistent: false, loaded: state.loaded, auto_load: true });
+      }
       return json(404, { error: { message: "not found" } });
     }
     let body = "";
     for await (const part of req) body += part;
     if (p === "/unload") { await sleep(150); state.loaded = false; return json(200, { status: "unloaded" }); }
     if (p === "/load") { await sleep(300); state.loaded = true; return json(200, { status: "loaded" }); }
+    if (p === "/api/models/load") {
+      const name = JSON.parse(body || "{}").model, m = installed.find((x) => x.id === name);
+      if (!m) return json(404, { error: { message: `no model named '${name}'` } });
+      if (m.status === "unavailable") return json(422, { error: { message: `${name} cannot be loaded: ${m.problem}` } });
+      if (state.failLoad) { state.failLoad = false; return json(409, { error: { type: "busy", message: "a request is still running; switch when it has finished" } }); }
+      await sleep(150);
+      state.current = name; state.loaded = true;
+      return json(200, { status: "loaded", model: { ...m, current: true, status: "loaded" } });
+    }
     if (p === "/settings") return json(200, { shared: false });
     if (p !== "/v1/chat/completions") return json(404, { error: { message: "not found" } });
     const b = JSON.parse(body || "{}");

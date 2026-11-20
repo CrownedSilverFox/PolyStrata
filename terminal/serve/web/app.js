@@ -75,17 +75,24 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
 let tab = "chat";
 const bootHash = location.hash;                       // the tab asked for in the address, kept for a tab that shows later (Experts)
 function showTab(name) {
-  tab = ["chat", "images", "monitor", "experts", "about"].includes(name) ? name : "chat";
+  tab = ["chat", "images", "monitor", "experts", "requests", "about"].includes(name) ? name : "chat";
   if (tab === "experts" && $("tab-btn-experts").hidden) tab = "chat";          // only when the model saves its expert profile (#5723)
   for (const b of document.querySelectorAll(".st-tab")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-  for (const v of ["chat", "images", "monitor", "experts", "about"]) $(`view-${v}`).hidden = v !== tab;
+  for (const v of ["chat", "images", "monitor", "experts", "requests", "about"]) $(`view-${v}`).hidden = v !== tab;
   if (tab === "experts") StrataExperts.start($("view-experts")); else StrataExperts.stop();
   if (tab === "images") $("img-prompt").focus();
   if (location.hash.slice(1) !== tab) history.replaceState(null, "", tab === "chat" ? location.pathname : `#${tab}`);
   if (tab === "chat") $("input").focus();
   if (tab === "monitor") loadMcp();
   if (tab === "about") loadConfig();
+  if (tab === "requests") showRequests();
   if (lastMetrics) render(lastMetrics);
+}
+// #142: the Requests tab opens the API monitor (/api-monitor) in a browser tab of its own, since this page's policy allows no
+// frames (PAGE_CSP), or says how to turn it on. Nothing shows until /health has answered.
+function showRequests() {
+  $("requests-on").hidden = health.api_monitor !== true;
+  $("requests-off").hidden = health.api_monitor !== false;
 }
 for (const b of document.querySelectorAll(".st-tab")) b.onclick = () => showTab(b.dataset.tab);
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
@@ -123,12 +130,56 @@ async function loadHealth() {
     renderEmptyChat();
     $("tab-btn-images").hidden = !health.image_generation;
     if (location.hash === "#images" && health.image_generation) showTab("images");
+    if (tab === "requests") showRequests();
     StrataExperts.init({headers, timeStr});
-    StrataExperts.probe().then((on) => { $("tab-btn-experts").hidden = !on; if (on && bootHash === "#experts" && tab === "chat") showTab("experts"); fitHeader(); });
+    StrataExperts.probe().then((on) => {
+      $("tab-btn-experts").hidden = !on;
+      if (on && bootHash === "#experts" && tab === "chat") showTab("experts");
+      if (!on && tab === "experts") showTab("chat");                   // the model list switched to a model without a profile
+      fitHeader();
+    });
   } catch (e) {
     setTimeout(loadHealth, 2000);
   }
 }
+
+// ------------------------------------------------------------------ the model list (GET api/models, POST api/models/load)
+// The installed models, shown once there is more than one to choose from. Choosing one stops the model in memory, loads that
+// one and starts a new chat (the answers on the screen came from the other model).
+async function loadModels() {
+  const sel = $("model-select");
+  let models = [];
+  try {
+    const r = await fetch("api/models", {headers: headers()});
+    if (r.ok) models = (await r.json()).models || [];
+  } catch (e) { return; }
+  const unavailable = tr("model.unavailable", "unavailable");
+  sel.innerHTML = models.map((m) =>
+    `<option value="${esc(m.id)}"${m.current ? " selected" : ""}${m.status === "unavailable" ? ` disabled title="${esc(m.problem || "")}"` : ""}>` +
+    `${esc(m.display_name && m.display_name !== m.id ? `${m.display_name} (${m.id})` : m.id)}` +
+    `${m.status === "unavailable" ? ` - ${esc(unavailable)}` : ""}</option>`).join("");
+  sel.hidden = models.length < 2;
+  sel.dataset.current = (models.find((m) => m.current) || {}).id || "";
+  fitHeader();
+}
+$("model-select").onchange = async () => {
+  const sel = $("model-select"), name = sel.value;
+  if (busy) { stillWriting(); sel.value = sel.dataset.current; return; }
+  sel.disabled = true;
+  toast("info", tr("model.switching", "Switching to {name}", {name}),
+        tr("model.switchingText", "The model in memory is stopped first, then this one is loaded."), 8000);
+  let message = "";
+  try {
+    const r = await fetch("api/models/load", {method: "POST", headers: headers(true), body: JSON.stringify({model: name})});
+    if (!r.ok) message = ((await r.json().catch(() => ({}))).error || {}).message || tr("toast.httpAnswer", "The server answered HTTP {code}.", {code: r.status});
+  } catch (e) { message = tr("model.noAnswer", "The server did not answer."); }
+  sel.disabled = false;
+  await loadHealth();
+  await loadModels();
+  if (message) { toast("error", tr("model.notSwitched", "The model was not switched"), message, 10000); return; }
+  toast("success", tr("model.switched", "{name} is loaded", {name}), "");
+  if (!busy) (listOn ? startChat : clearChat)();       // a question sent during the switch is answered by the new model: kept
+};
 
 // ------------------------------------------------------------------ Monitor
 const METRICS = [
@@ -1040,6 +1091,13 @@ function msgEl(m, i) {
     const meta = document.createElement("div");
     meta.className = "st-msg__meta";
     meta.textContent = `${tr("chat.you", "You")} · ${timeStr(m.time)}`;
+    const edit = node("button", "st-btn st-btn--icon");
+    edit.type = "button";
+    edit.dataset.msgEdit = "";
+    edit.innerHTML = icon("edit", "st-icon st-icon--sm");
+    edit.setAttribute("aria-label", tr("msg.edit", "Edit"));
+    edit.title = tr("msg.editTitle", "Edit this message. The messages after it are removed and a new answer is written.");
+    meta.appendChild(edit);
     el.appendChild(meta);
   } else {
     el.innerHTML = `<details class="st-collapse think" hidden><summary>${icon("thinking", "st-icon st-icon--sm")}<span class="think-title"></span>` +
@@ -1048,12 +1106,144 @@ function msgEl(m, i) {
       `<button class="st-btn st-btn--secondary msg-finish" type="button" data-msg-finish hidden ` +
       `title="${esc(tr("chat.finishFromThinkingTitle", "Write an answer from what the model worked out before you stopped it. It doesn't think any further."))}">` +
       `${esc(tr("chat.finishFromThinking", "Answer from this thinking"))}</button>` +
+      `<button class="st-btn st-btn--icon" type="button" data-msg-regen aria-label="${esc(tr("hist.regenerate", "Regenerate"))}" ` +
+      `title="${esc(tr("msg.regenerateTitle", "Write another answer to this question. The answer you have stays as a variant; the arrows go between them."))}">↻</button>` +
+      `<button class="st-btn st-btn--icon" type="button" data-msg-prev hidden aria-label="${esc(tr("msg.prev", "Previous answer"))}" title="${esc(tr("msg.prev", "Previous answer"))}">‹</button>` +
+      `<span class="swipe-count" data-swipe-count hidden></span>` +
+      `<button class="st-btn st-btn--icon" type="button" data-msg-next hidden aria-label="${esc(tr("msg.next", "Next answer"))}" title="${esc(tr("msg.next", "Next answer"))}">›</button>` +
       `<button class="st-btn st-btn--icon" data-msg-copy aria-label="${esc(tr("chat.copyAnswer", "Copy the answer"))}" title="${esc(tr("chat.copy", "Copy"))}">${icon("copy")}</button></div>`;
     updateAssistant(el, m, false);
   }
   const actions = msgActions(m, i);                 // edit / regenerate / rewind (chats-ui.js), when switched on
   if (actions) el.appendChild(actions);
   return el;
+}
+// ------------------------------------------------------------------ answers and their variants (#12, PR #74)
+// An answer keeps the answers it was regenerated from. m.text, m.reasoning, m.tools, m.meta and the rest hold the one on the
+// screen; m.swipes[m.swipeIndex] is its copy, so going to a neighbour is one save and one load. A regeneration drops the
+// variants after the one on the screen and adds the new one at the end. One that fails, or is stopped before it wrote anything,
+// puts the old answer back; one stopped later is kept as far as it got.
+const variantOf = (m) => ({text: m.text || "", reasoning: m.reasoning || "", tools: m.tools || null, meta: m.meta || null,
+                           thinkSecs: m.thinkSecs == null ? null : m.thinkSecs, stopped: !!m.stopped, error: m.error || null,
+                           limit: m.limit == null ? null : m.limit, interrupted: !!m.interrupted, fromThinking: !!m.fromThinking});
+function swipeSave(m) {
+  if (!Array.isArray(m.swipes) || !m.swipes.length) { m.swipes = []; m.swipeIndex = 0; }
+  m.swipes[m.swipeIndex] = variantOf(m);
+}
+// the answer a regeneration replaces, to put back if the new one fails; the message is emptied for the new one
+function startVariant(m) {
+  swipeSave(m);
+  const keep = variantOf(m);
+  Object.assign(m, {text: "", reasoning: "", tools: null, meta: null, thinkSecs: null, stopped: false, error: null,
+                    limit: null, interrupted: false, fromThinking: false});
+  return keep;
+}
+function finishVariant(m, keep) {
+  if (m.error || (m.stopped && !m.text && !m.reasoning && !(m.tools || []).length)) { Object.assign(m, keep); return; }
+  m.swipes = m.swipes.slice(0, m.swipeIndex + 1);
+  m.swipes.push(variantOf(m));
+  m.swipeIndex = m.swipes.length - 1;
+}
+// a question whose pictures or files came back from the browser's store by name only cannot be sent again as it was
+function lostAttachmentsToast(m) {
+  if (!StrataHistory.lostAttachments(m)) return false;
+  toast("warn", tr("hist.lostTitle", "Attachments need to be added again"), tr("hist.lostText", "This browser kept their names, not their contents. Start a new chat and attach them again."), 7000);
+  return true;
+}
+// the ↻ button: another answer to the question before messages[i]. The request ends with that question (apiMessages); the
+// messages after the answer stay in the chat, and the next question still sends them.
+function regenerateAnswer(i) {
+  const m = messages[i];
+  if (!m || m.role !== "assistant") return;
+  if (busy) { stillWriting(); return; }
+  if (panel || pending) return;
+  let u = i;
+  while (u >= 0 && messages[u].role !== "user") u--;
+  if (u < 0 || lostAttachmentsToast(messages[u])) return;
+  clearUndo();
+  const later = messages.length - i - 1;
+  if (later) {
+    toast("info", tr("msg.regenEarlier", "Another answer to an earlier question"),
+          tr("msg.regenEarlierText", {one: "The {n} message after it stays in the chat, and the next question still sends it.",
+                                      other: "The {n} messages after it stay in the chat, and the next question still sends them."}, {n: later}), 7000);
+  }
+  generateReply({variant: m});
+}
+// the ‹ and › buttons: the answer on the screen becomes its neighbour
+function swipeGo(i, delta) {
+  const m = messages[i];
+  if (busy || panel || pending || !m || m.role !== "assistant" || !Array.isArray(m.swipes) || m.swipes.length < 2) return;
+  swipeSave(m);
+  m.swipeIndex = (m.swipeIndex + delta + m.swipes.length) % m.swipes.length;
+  Object.assign(m, m.swipes[m.swipeIndex]);
+  const el = $("chat").querySelector(`.st-msg[data-i="${i}"]`);
+  if (el) el.replaceWith(msgEl(m, i));                // drawn anew: a variant without thinking has no thinking block
+  saveChat();
+}
+// ------------------------------------------------------------------ edit a question (PR #75)
+// The ✎ button: the question is edited in place. Saving removes the messages after it (they answered the old wording, tool calls
+// and results included) and writes a new answer to the new one. Undo, in the toast, brings them back while nothing else has been
+// sent. Upstream's "Rewind to here" (Chat settings > Edit) is the other way: the question goes back into the message box.
+function editUserMessage(i) {
+  const m = messages[i];
+  if (!m || m.role !== "user") return;
+  if (busy) { stillWriting(); return; }
+  if (panel || pending || lostAttachmentsToast(m)) return;
+  const el = $("chat").querySelector(`.st-msg[data-i="${i}"]`);
+  const bubble = el && el.querySelector(".st-bubble");
+  if (!bubble || el.querySelector(".edit-box")) return;
+  const original = m.text || "";
+  const box = node("textarea", "edit-box st-input");
+  box.value = original;
+  box.rows = Math.min(20, Math.max(2, original.split("\n").length));
+  box.setAttribute("aria-label", tr("msg.edit", "Edit"));
+  const actions = node("div", "edit-actions");
+  const save = node("button", "st-btn st-btn--primary", tr("hist.save", "Save"));
+  const cancel = node("button", "st-btn st-btn--secondary", tr("cancel", "Cancel"));
+  save.type = cancel.type = "button";
+  actions.append(save, cancel);
+  bubble.replaceWith(box);
+  box.after(actions);
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+  const close = () => { box.replaceWith(bubble); actions.remove(); };
+  cancel.onclick = close;
+  const imeKey = StrataIme.watch(box);                // Enter and Escape inside an IME conversion are the IME's (#5071)
+  box.onkeydown = (e) => {
+    if (imeKey(e)) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save.click(); }
+  };
+  save.onclick = () => {
+    const next = box.value.trim();
+    if (!next || next === original) { close(); return; }
+    if (busy) { stillWriting(); return; }
+    clearUndo();
+    const dropped = messages.slice(i + 1);
+    m.text = next;
+    setMessages(messages.slice(0, i + 1));
+    close();
+    saveChat();
+    generateReply();                                  // the new answer's place goes after the question, and it streams there
+    if (!dropped.length) { toast("success", tr("hist.edited", "Edited"), ""); return; }
+    toast("info", tr("hist.edited", "Edited"),
+          tr("msg.editedTail", {one: "{n} later message removed. A new answer is being written.", other: "{n} later messages removed. A new answer is being written."}, {n: dropped.length}),
+          8000, {label: tr("undo", "Undo"), run: () => {
+            // only while the chat is still the edit's own: the question and the answer to it
+            if (messages[i] !== m || messages.length > i + 2) return;
+            if (busy) busy.controller.abort();
+            m.text = original;
+            setMessages(messages.slice(0, i + 1).concat(dropped));
+            saveChat();
+            renderChat();
+          }});
+  };
+}
+// the buttons that change an answer or a question are off while one is written, while something is open above and while a
+// message waits
+function syncVariantButtons() {
+  const off = !!busy || !!panel || !!pending;
+  for (const b of $("chat").querySelectorAll("[data-msg-regen], [data-msg-prev], [data-msg-next], [data-msg-edit]")) b.disabled = off;
 }
 // One MCP tool call in the answer: a compact block (name, state, a one-line preview) that opens to the arguments and
 // the result as the model read it.  Its body is built only while open: a result can be 20,000 characters.
@@ -1171,12 +1361,19 @@ function updateAssistant(el, m, streaming) {
   el.querySelector("[data-msg-copy]").hidden = streaming || !m.text;
   const finish = el.querySelector("[data-msg-finish]");
   if (finish) finish.hidden = streaming || !canFinishFromThinking(m);
+  // the arrows show with more than one variant; the count says which one is on the screen
+  const n = Array.isArray(m.swipes) ? m.swipes.length : 1, one = streaming || n < 2;
+  el.querySelector("[data-msg-prev]").hidden = el.querySelector("[data-msg-next]").hidden = one;
+  const count = el.querySelector("[data-swipe-count]");
+  count.hidden = one;
+  count.textContent = one ? "" : `${(m.swipeIndex || 0) + 1}/${n}`;
 }
 function renderChat() {
   const chat = $("chat");
   chat.querySelectorAll(".st-msg").forEach((e) => e.remove());
   $("chat-empty").hidden = messages.length > 0;
   messages.forEach((m, i) => chat.appendChild(msgEl(m, i)));
+  syncVariantButtons();
   renderSidebar();
   renderParent();
   renderUndoBar();
@@ -1214,6 +1411,12 @@ function scrollDown(force) {
 })();
 
 $("chat").addEventListener("click", (e) => {
+  const me = e.target.closest("[data-msg-edit]");
+  if (me) { editUserMessage(+me.closest(".st-msg").dataset.i); return; }
+  const mr = e.target.closest("[data-msg-regen]");
+  if (mr) { regenerateAnswer(+mr.closest(".st-msg").dataset.i); return; }
+  const mp = e.target.closest("[data-msg-prev], [data-msg-next]");
+  if (mp) { swipeGo(+mp.closest(".st-msg").dataset.i, mp.hasAttribute("data-msg-prev") ? -1 : 1); return; }
   const cc = e.target.closest("[data-code-copy]");
   if (cc) { copyText(cc.closest(".st-code").querySelector("pre").textContent, cc); return; }
   // an svg/html block: flip between its code and its sandboxed preview. Closing the preview also turns scripts off.
@@ -1263,12 +1466,14 @@ $("chat").addEventListener("toggle", (e) => {
 function apiMessages() {
   const out = [];
   for (const m of messages) {
+    // the answer being asked for now is not history yet, and neither is what comes after it (the ↻ button on an earlier answer)
+    if (busy && busy.msg === m) break;
     if (m.role === "user") {
       const imgs = (m.images || []).filter((i) => i.url);
       const text = userText(m);
       out.push({role: "user", content: imgs.length ? [{type: "text", text},
         ...imgs.map((i) => ({type: "image_url", image_url: {url: i.url}}))] : text});
-    } else if (!(busy && busy.msg === m)) {            // the answer being asked for now is not history yet
+    } else {
       out.push(...assistantMessages(m));
     }
   }
@@ -1323,6 +1528,7 @@ function setBusy(on) {
   $("s-list").disabled = $("s-edit").disabled = !!busy || !!panel;      // they change the messages on the screen
   renderUndoBar();
   renderPending();
+  syncVariantButtons();
 }
 
 // A message sent while an answer is being written (#4004). "queue": it waits and goes when the answer is done. "interject": the
@@ -1423,18 +1629,27 @@ function finishFromThinking(m) {
   clearUndo();
   return generateReply({into: m});
 }
-// an answer for the messages as they are: the last one is a user turn (opts.into: the stopped reply to finish, see finishFromThinking)
+// an answer for the messages as they are: the last one is a user turn (opts.into: the stopped reply to finish, see finishFromThinking;
+// opts.variant: an answer written again in its place, the ↻ button, see regenerateAnswer)
 async function generateReply(opts = {}) {
-  const finishing = !!opts.into;
-  const m = opts.into || {role: "assistant", text: "", reasoning: "", time: Date.now()};
+  const finishing = !!opts.into, variant = opts.variant || null;
+  const m = opts.into || variant || {role: "assistant", text: "", reasoning: "", time: Date.now()};
+  let keep = null, el;
   if (finishing) { delete m.stopped; delete m.meta; m.fromThinking = true; }
+  else if (variant) keep = startVariant(m);
   else messages.push(m);
-  renderChat();
-  const el = $("chat").lastElementChild;
+  if (variant) {                                       // drawn anew where it is: the view stays on an earlier answer
+    el = msgEl(m, messages.indexOf(m));
+    $("chat").querySelector(`.st-msg[data-i="${messages.indexOf(m)}"]`).replaceWith(el);
+  } else {
+    renderChat();
+    el = $("chat").lastElementChild;
+  }
   const controller = new AbortController();
   busy = {controller, msg: m, cut: false, cutAfterTool: false};
   setBusy(true);
   paintLive();
+  if (variant) updateAssistant(el, m, true);           // the cursor at once: it may be far from the bottom of the chat
 
   const body = {model: health.model, messages: finishing ? finishMessages(m) : apiMessages(), stream: true,
                 reasoning_effort: finishing ? "none" : settings.thinking};
@@ -1523,14 +1738,20 @@ async function generateReply(opts = {}) {
   if (ran) m.meta = `${m.meta ? `${m.meta} · ` : ""}${tr("chat.toolCalls", {one: "{n} tool call", other: "{n} tool calls"}, {n: ran})}`;
   if (m.limit) m.meta = `${m.meta || ""} · ${tr("chat.toolLimit", "stopped at the limit of {n} tool rounds (mcp.max_rounds)", {n: m.limit})}`;
   if (m.fromThinking) m.meta = `${m.meta ? `${m.meta} · ` : ""}${tr("chat.fromStoppedThinking", "answer from the stopped thinking")}`;
+  const finished = !m.stopped && !m.error;                   // (before a failed variant puts the old answer back)
+  if (variant) finishVariant(m, keep);
   busy = null;
   setBusy(false);
   paintLive();
   if (frame) cancelAnimationFrame(frame);
-  updateAssistant(el, m, false);
+  if (variant) {                                             // the old answer may be back, with or without its thinking
+    const again = msgEl(m, messages.indexOf(m));
+    el.replaceWith(again);
+    syncVariantButtons();
+  } else updateAssistant(el, m, false);
   saveChat();
   scrollDown();
-  settlePending(cut, !m.stopped && !m.error);
+  settlePending(cut, finished);
 }
 
 $("composer").onsubmit = (e) => { e.preventDefault(); send(); };
@@ -1544,7 +1765,7 @@ function autosize() { const t = $("input"); t.style.height = "auto"; t.style.hei
 $("input").addEventListener("input", autosize);
 
 // one chat, as before: New chat clears it, with an Undo (with the saved-chats list on, its own New chat button does this job)
-$("new-btn").onclick = () => {
+function clearChat() {
   if (busy) { stillWriting(); return; }
   if (panel) { closePanel(); }
   clearUndo();
@@ -1559,7 +1780,8 @@ $("new-btn").onclick = () => {
     if (busy || messages.length) return;                         // a new question since: the cleared chat is not put back over it
     messages = backup; saveChat(); renderChat();
   }});
-};
+}
+$("new-btn").onclick = clearChat;
 $("export-btn").onclick = () => {
   if (!messages.length) { toast("info", tr("export.nothing", "Nothing to save yet")); return; }
   const tools = (m) => (m.tools || []).filter((t) => t.result != null).map((t) =>
@@ -1795,6 +2017,7 @@ function showLanguage() {
   renderChat();
   setBusy(!!busy);
   if (lastMetrics) render(lastMetrics);
+  loadModels();                                         // "unavailable" in the model list
 }
 $("lang").onchange = async () => {
   store.set("lang", $("lang").value);
@@ -1820,6 +2043,7 @@ async function start() {
     autosize();
   }
   loadHealth().then(loadMcp);
+  loadModels();
   showTab(location.hash.slice(1) || "chat");
   if (startQuestion && tab === "chat") $("input").focus();
   poll();

@@ -84,7 +84,6 @@ main { flex: 1; min-height: 0; display: flex; }
 
 /* ---------------------------------------------------------------- monitor */
 .view--monitor, .view--about, .view--experts, .view--requests { overflow-y: auto; }
-.requests-frame { flex: 1; width: 100%; border: 0; }
 /* #5723: the Experts view, a grid of the learned expert ranks (experts.js) */
 .experts { width: 100%; max-width: 1200px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
 .experts-card { display: flex; flex-direction: column; gap: 8px; }
@@ -267,8 +266,11 @@ a.st-header__brand:hover { color: var(--st-accent-text); text-decoration: none; 
   .st-bubble { padding: 10px 12px; }
 }
 
-/* the header's model list (more than one model installed) */
-.model-select{height:30px;max-width:280px;padding:0 var(--st-s-2);border-radius:var(--st-r-md);border:1px solid var(--st-line);background:var(--st-surface-2);color:var(--st-ink);font:inherit;font-size:var(--st-fs-sm)}
+/* the header's model list (more than one model installed). It narrows down to 4rem when the row runs out of room (the open list
+   still shows the whole names), and up to 560px it takes the name's place: with the name and the list both in it, the row
+   overflows a phone at 383-400px and 458-550px. */
+@media (max-width: 560px) { .st-header:has(#model-select:not([hidden])) .st-header__brand { display: none; } }
+.model-select{flex:0 1 auto;min-width:4rem;height:30px;max-width:280px;padding:0 var(--st-s-2);border-radius:var(--st-r-md);border:1px solid var(--st-line);background:var(--st-surface-2);color:var(--st-ink);font:inherit;font-size:var(--st-fs-sm)}
 .model-select:disabled{opacity:.6}
 /* Images tab (POST /v1/images/generations) */
 .img-form{display:flex;flex-direction:column;gap:12px}

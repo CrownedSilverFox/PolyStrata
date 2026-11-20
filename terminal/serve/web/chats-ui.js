@@ -281,7 +281,8 @@ function msgActions(m, i) {
     row.appendChild(b);
   };
   const last = i === messages.length - 1;
-  if (m.role === "assistant" || last) {
+  // an answer has its own ↻ (app.js), which keeps the answer it replaces as a variant; here only a question left without one
+  if (m.role === "user" && last) {
     add(tr("hist.regenerate", "Regenerate"), tr("hist.regenerateTitle", "Ask for a new answer to this question. Tools may run again."), () => regenerateAt(i));
   }
   if (m.role === "assistant") add(tr("hist.editAnswer", "Edit answer"), tr("hist.editAnswerTitle", "Correct the answer's text. No request is sent."), () => editAnswerAt(i));
