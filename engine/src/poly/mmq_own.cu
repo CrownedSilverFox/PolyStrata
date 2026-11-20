@@ -2,9 +2,9 @@
 // (src/kernels/cuda).  The weights stay in their GGUF blocks and are decoded into shared memory a tile at a time.
 // mmq.cu is the llama.cpp form of the same class (-DSTRATA_POLY_MMQ=ON); one of the two is built.
 //
-// On Ampere and newer, a type the int8 decoders have and rows of whole stages of 256 values go to the int8 tensor
-// cores (gemm_iq_i8_grouped, i8_mma.cuh): the activations are int8 with a scale per 32 values, MMQ's numbers, and a
-// matrix may have any number of rows.  quantize() and mul() choose by the type and the row length alone, so the rows
+// On Ampere and newer, a type the int8 decoders have and rows of whole stages of 256 values (of whole blocks, for a
+// type of 32-value blocks) go to the int8 tensor cores (gemm_iq_i8_grouped, i8_mma.cuh): the activations are int8 with
+// a scale per 32 values, MMQ's numbers, and a matrix may have any number of rows.  quantize() and mul() choose by the type and the row length alone, so the rows
 // one wrote are the rows the other reads.
 //
 // Everything else goes to the FP16 kernel (gemm_iq_f16_grouped): the activations FP16 rows, the sums FP32.  What

@@ -5,7 +5,8 @@
 // decoder here.  CUDA only, Ampere and newer: mma.sync m16n8k32 and m16n8k16 with s8 operands.
 //
 // A block: WR = 64 weight rows of one matrix x up to 16 NJ of its activation rows (blockIdx.y walks a matrix's rows
-// in such chunks).  K goes in stages of 256 values.  Per stage every thread decodes WR / 32 sub-blocks of one weight
+// in such chunks).  K goes in stages of 256 values; a type of 32-value blocks may end inside the last one
+// (gemm_iq_i8_takes()).  Per stage every thread decodes WR / 32 sub-blocks of one weight
 // row into shared memory, the stage's activations are copied beside them, and a warp multiplies its WR / 4 weight
 // rows with its tiles of 8 activation rows: one MMA per 32 values, or per 16 for a type with a scale per 16 values.
 // A tile takes most of the shared memory a multiprocessor has, so a block waits alone for what it reads from the
@@ -22,7 +23,7 @@
 constexpr int I8M_NT = 256;
 constexpr int I8M_LD = 68;   // words of a shared row of codes: 64 + 4, so the 8 rows a warp reads at once lie in 8 banks
 
-#define STRATA_I8M_TYPES(X) X(6) X(7) X(8) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42)
+#define STRATA_I8M_TYPES(X) X(2) X(6) X(7) X(8) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42)
 __host__ __device__ constexpr bool i8m_type(int t) { return t == 11 || i8_block_bytes(t) != 0; }
 __host__ __device__ constexpr bool i8m_two(int t) { return t == 11 || i8_two_scales(t); }   // a scale per 16 values
 
@@ -174,6 +175,8 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         const uint32_t* t = (const uint32_t*) kvalues_iq4nl;
 #pragma unroll
         for (int i = 0; i < 4; ++i) kv[i] = t[i];
+    } else if constexpr (T == 2) {   // Q4_0: a nibble less 8, IQ4_NL's blocks otherwise
+        kv[0] = 0xFBFAF9F8u; kv[1] = 0xFFFEFDFCu; kv[2] = 0x03020100u; kv[3] = 0x07060504u;
     }
     if (tid < MT) s_id[tid] = tid < ntok ? (ids ? ids[c0 + tid] : c0 + tid) : -1;
 
@@ -215,11 +218,15 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         const int i = tid + c * I8M_NT, tok = i >> 3;
         srow[c] = i < MT * 8 && tok < ntok ? (from ? from[c0 + tok] : c0 + tok) : 0;
     }
+    // A row of 32-value blocks may end inside its last stage (Gemma 4 26B's down: 704 values): the sub-blocks past
+    // its end are not read, and go in as zeros, codes and scales, so they add nothing.
+    const auto here = [&](int S, int ib) { return S * 256 + ib * 32 < K; };
     const auto fetch = [&](int S) {
         if (w_in) {
 #pragma unroll
             for (int part = 0; part < PER; ++part) {
                 const int ib = r0 + RT * part;
+                if (!here(S, ib)) continue;
                 if constexpr (T == 11) i8m_q3k_load(blob + row_off, S, ib, wraw[part]);
                 else i8_load<T>(blob, i8_offs<T>(row_off, ib & 3), 2 * S + (ib >> 2), wraw[part]);
             }
@@ -228,26 +235,27 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         for (int n = 0; n < NJ; ++n) {   // 16 bytes of activation row 16 n + tid / 16
             const int tok = 16 * n + (tid >> 4);
             xr[n] = make_uint4(0, 0, 0, 0);
-            if (tok < ntok) xr[n] = *(const uint4*) (X + (size_t) xrow[n] * K + (size_t) S * 256 + (tid & 15) * 16);
+            if (tok < ntok && S * 256 + (tid & 15) * 16 < K)
+                xr[n] = *(const uint4*) (X + (size_t) xrow[n] * K + (size_t) S * 256 + (tid & 15) * 16);
         }
 #pragma unroll
         for (int c = 0; c < NSC; ++c) {
             const int i = tid + c * I8M_NT, tok = i >> 3;
             const size_t at = (size_t) srow[c] * (K / 32) + (size_t) S * 8 + (i & 7);
             xdr[c] = xsr[c] = 0.0f;
-            if (i < MT * 8 && tok < ntok) {
+            if (i < MT * 8 && tok < ntok && here(S, i & 7)) {
                 xdr[c] = XD[at];
                 if constexpr (HAS_MIN) xsr[c] = XS[at];
             }
         }
     };
-    const auto put = [&]() {
+    const auto put = [&](int S) {
 #pragma unroll
         for (int part = 0; part < PER; ++part) {
             const int ib = r0 + RT * part;
             uint32_t q[8] = {0, 0, 0, 0, 0, 0, 0, 0};
             float f0 = 0.0f, f1 = 0.0f, mn = 0.0f;
-            if (w_in) {
+            if (w_in && here(S, ib)) {
                 if constexpr (T == 11) {
                     i8m_q3k_convert(wraw[part], ib, q, f0, f1);
                 } else {
@@ -283,11 +291,11 @@ __global__ void __launch_bounds__(I8M_NT) i8m_kernel(const uint8_t* __restrict__
         }
     };
 
-    const int stages = K / 256;
+    const int stages = (K + 255) / 256;
     fetch(0);
     for (int S = 0; S < stages; ++S) {
         __syncthreads();   // the stage before is multiplied (and the tables are written)
-        put();
+        put(S);
         __syncthreads();
         if (S + 1 < stages) fetch(S + 1);   // read while this stage is multiplied
 

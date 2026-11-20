@@ -48,11 +48,13 @@ constexpr int I8_NT = 256;
 // Second wave (same arithmetic, new decodes): gate/up IQ4_XS (23: the IQ4_NL table with a 6-bit scale per 32 values) and IQ1_M (29: the grid of +-1 / 0 times 8, with the
 // block's two delta signs folded into the int8 values: 8 (g - 1 +- 1/8) is an integer, so no activation-sum term is needed); down Q5_0 (6) and Q8_0 (8), the legacy
 // 32-value blocks with one scale (the 5th bit of Q5_0 comes from the 32-bit qh word; 16 is subtracted per byte).
+// (Q4_0, 2: the prompt products of i8_mma.cuh only, which read it as IQ4_NL's blocks through the table -8..7: Gemma 4
+// 26B-A4B's QAT size keeps every expert in it)
 __host__ __device__ constexpr int i8_block_bytes(int t) {
     return t == 16 ? 66 : t == 17 ? 74 : t == 22 ? 82 : t == 18 ? 98 : t == 21 ? 110 : t == 20 ? 18 : t == 42 ? 18 : t == 23 ? 136 : t == 29 ? 56 : t == 6 ? 22 : t == 8 ? 34 :
-           t == 12 ? 144 : t == 13 ? 176 : t == 14 ? 210 : t == 7 ? 24 : 0;
+           t == 12 ? 144 : t == 13 ? 176 : t == 14 ? 210 : t == 7 ? 24 : t == 2 ? 18 : 0;
 }
-__host__ __device__ constexpr int i8_block_vals(int t) { return t == 20 || t == 6 || t == 8 || t == 7 ? 32 : t == 42 ? 64 : 256; }
+__host__ __device__ constexpr int i8_block_vals(int t) { return t == 20 || t == 6 || t == 8 || t == 7 || t == 2 ? 32 : t == 42 ? 64 : 256; }
 __host__ __device__ constexpr int i8_grid_words(int t) { return t == 16 ? 512 : t == 17 ? 1024 : t == 22 ? 2048 : t == 18 ? 256 : t == 21 ? 512 : t == 29 ? 2048 : 4; }
 __host__ __device__ constexpr bool i8_two_scales(int t) { return t == 17 || t == 22 || t == 29 || t == 14; }
 __host__ __device__ constexpr bool i8_unit_scale(int t) { return t == 20 || t == 42 || t == 6 || t == 8 || t == 7; }
@@ -150,7 +152,7 @@ __device__ __forceinline__ I8Off i8_offs(uint32_t row_off, int wp) {
     o.o1 = row_off + wp;
     o.oh = row_off + (wp >> 1);
     o.o2 = row_off + 2 * wp;
-    if constexpr (T == 20) o.o4 = row_off + 18 * wp;                                   // IQ4_NL: the block of sub-block wp
+    if constexpr (T == 20 || T == 2) o.o4 = row_off + 18 * wp;                         // IQ4_NL, Q4_0: the block of sub-block wp
     if constexpr (T == 6) o.o4 = row_off + 22 * wp;                                    // Q5_0
     if constexpr (T == 8) o.o4 = row_off + 34 * wp;                                    // Q8_0
     if constexpr (T == 23) o.o4 = row_off + 16 * wp;                                   // IQ4_XS: the 16 code bytes of sub-block wp
@@ -223,7 +225,7 @@ __device__ __forceinline__ void i8_load(I8P blob, const I8Off& of, int st, uint3
         r[0] = i8_ld32(a8 + 2); r[1] = i8_ld32(a8 + 6); r[2] = i8_ld32(a4 + 74);
         r[3] = i8_ld16(blob + (bi * 110) + of.o0); r[4] = i8_ld8(blob + (bi * 110 + 4 * par) + of.o1 + 66);
         r[5] = i8_ld8(blob + (bi * 110 + 2 * par) + of.oh + 106);
-    } else {   // IQ4_NL
+    } else {   // IQ4_NL, Q4_0
         I8P a = blob + (72u * (uint32_t) st) + of.o4;
 #pragma unroll
         for (int k = 0; k < 4; ++k) r[k] = i8_ld32(a + 2 + 4 * k);
@@ -283,7 +285,7 @@ __device__ __forceinline__ void i8_pack(const uint32_t (&r)[I8NR<T>], int ib, ui
     } else if constexpr (T == 21) {
         w[0] = r[0]; w[1] = r[1]; w[2] = r[2];
         w[3] = r[3] | (r[4] << 16) | (((r[5] >> (4 * (ib & 1))) & 15) << 24);
-    } else {   // IQ4_NL
+    } else {   // IQ4_NL, Q4_0
         w[0] = r[0]; w[1] = r[1]; w[2] = r[2]; w[3] = r[3]; w[4] = r[4];
     }
 }
@@ -430,7 +432,7 @@ __device__ __forceinline__ void i8_convert(const uint32_t (&w)[I8NW<T>], const u
         }
         m0 = m1 = (int) (1 + 2 * (w[3] >> 24));
         base = i8_half(w[3]);
-    } else if constexpr (T == 20) {
+    } else if constexpr (T == 20 || T == 2) {   // (Q4_0: kv is -8..7)
 #pragma unroll
         for (int k = 0; k < 4; ++k) i8_table16(w[k], kv, q[k], q[4 + k]);
         m0 = m1 = 1;

@@ -85,20 +85,21 @@ struct Options {
                                   ///< below 0: as the two took the time between them; 0: none
     int expert_swaps = -1;        ///< experts on their way into the cache at a time while an answer is written, each
                                   ///< to the slot of one the answer uses less; 0: the cache stays as it was loaded;
-                                  ///< -1: 64, or on CUDA 0 under a RAM budget (ram_experts_mib), where they read
-                                  ///< from the pool and the disk what the CPU's experts need
+                                  ///< -1: 64
     int64_t ram_experts_mib = -2; ///< the memory this process holds for the experts outside VRAM, answer or not:
                                   ///< the ones used most lately are read into it from the files; the others are left
                                   ///< to the file cache, which gives them to whatever needs the memory, and come back
                                   ///< from it or the disk when a token routes to them.  -1: all of them; below
                                   ///< that, all of them when they fit in the RAM that is free, else a budget
-    bool lock_experts = false;    ///< the experts outside VRAM locked into RAM, so the system cannot drop them from
-                                  ///< the file cache when another program wants the memory (Linux: up to ulimit -l)
+    bool lock_experts = false;    ///< the experts outside VRAM kept in RAM, so the system cannot give it to another
+                                  ///< program: copied into the pinned mirror (Engine::build_mirror()), or where there
+                                  ///< is none, their pages in the file locked (Linux: up to ulimit -l)
     bool stay_near = true;       ///< with several NUMA nodes, keep the CPU threads on the one that holds the experts
     bool graphs = true;           ///< a token's fixed launches are recorded once, a CUDA graph a layer, and replayed
     bool kv_grow = true;          ///< the attention caches get VRAM as the sequence grows, where the card can map it
                                   ///< so; false: for the whole context at load, as the expert cache gets the rest
     int kv_resident = 0;          ///< attention-cache cells kept resident in VRAM (--kv-resident N); 0 = all of them (default)
+    bool freeze_experts = false;  ///< the experts' split held still for the whole run, as STRATA_FREEZE_EXPERTS=1
 #if defined(STRATA_GPU_METAL)
     KvFmt kv_format = KvFmt::kAuto;   ///< Q8 for compatible Qwen35MoE geometry, otherwise fp16
 #else
@@ -631,6 +632,14 @@ protected:
         return mirror_of_.empty() ? nullptr : mirror_of_[(size_t) il * (size_t) n_expert_ + (size_t) e];
     }
     uint8_t* mirror_take(int il);             ///< a spare slot of the layer's size, or null
+    void lock_queue(int il, int e);           ///< Options::lock_experts: for lock_loop() to copy into the mirror
+    void lock_loop();
+    void lock_settle();                       ///< the copies lock_loop() has made, the mirror's now
+    /// Options::lock_experts: an expert grow_cache() brings back keeps its copy in the mirror.  Those are mostly the
+    /// experts the next long read takes from the cache again (widen_stage(), take_prompt()), which then go with no copy
+    /// back from the card: given back, the copies held every 4,833-token read of Qwen3.6 UD-Q3_K_M on a 4090 2-3%
+    /// under the default's.
+    bool refills_mirror() const { return opt_.lock_experts; }
     void mirror_give(int il, int e);          ///< the expert is on the card: its slot is a spare again
     void mirror_keep(int il, int e, const uint8_t* vram);   ///< the expert leaves the card: its slot copied back
     GatherPiece* gather_slot();
@@ -754,6 +763,23 @@ protected:
     std::vector<MirrorPiece> mirror_blocks_;        ///< the mirror's pinned memory
     std::vector<uint8_t*> mirror_of_;               ///< per (layer, expert): its slot in the mirror, or null
     std::vector<std::vector<uint8_t*>> mirror_spare_;   ///< per trade class: free slots
+    std::vector<size_t> mirror_stride_;             ///< per trade class: a slot's bytes
+    bool mirror_registered_ = false;                ///< the pieces are cudaHostRegister()'s, not cudaMallocHost()'s
+    // Options::lock_experts: lock_loop()'s thread, the experts asked of it (layer * n_expert + expert) and the copies
+    // it has made, with their slots, under lock_m_; lock_done_n_ is lock_done_'s size, for lock_settle() to look at
+    // without the lock.  lock_blocks_ are the thread's pinned pieces, freed once it is joined.  lock_idle_: no request
+    // under way (trim() to the next read() or run()), when the thread copies.  lock_asked_, the main thread's: per
+    // (layer, expert), asked of the thread and not settled yet.
+    std::vector<uint8_t> lock_asked_;
+    std::thread lock_thread_;
+    std::mutex lock_m_;
+    std::condition_variable lock_cv_;
+    bool lock_quit_ = false;
+    std::atomic<bool> lock_idle_{false};
+    std::vector<int64_t> lock_want_;
+    std::vector<std::pair<int64_t, uint8_t*>> lock_done_;
+    std::atomic<int> lock_done_n_{0};
+    std::vector<MirrorPiece> lock_blocks_;
     GatherPiece* gather_ring_ = nullptr;            ///< pinned piece lists of the gathers, taking turns
     void* gather_ev_[8] = {};                       ///< per list: marks the card's read of it
     int gather_at_ = 0;
@@ -776,8 +802,8 @@ protected:
     int ahead_turn_ = 0, ahead_slots_ = 0;
     size_t ahead_stride_ = 0;
     std::atomic<bool> map_quit_{false};
-    /// Options::lock_experts: the experts whose pages are locked (layer * n_expert + expert), first by mapper_, then
-    /// by relock() between requests once mapper_ is done (locks_ready_)
+    /// Options::lock_experts without the mirror: the experts whose pages are locked (layer * n_expert + expert), first
+    /// by mapper_, then by relock() between requests once mapper_ is done (locks_ready_)
     std::vector<uint8_t> locked_;
     std::atomic<bool> locks_ready_{false};
     void lock_outside(const std::vector<std::pair<int, int>>& outside);

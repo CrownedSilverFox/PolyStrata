@@ -1624,8 +1624,9 @@ void usage() {
                  "                         used most lately; the rest stay in the file cache for other programs to take,\n"
                  "                         and are read back when a token needs them (default: all of them when they\n"
                  "                         fit in the RAM that is free, else what is free less 4 GiB; -1: all of them)\n"
-                 "  --lock-experts         lock the experts outside VRAM in RAM, so the system cannot drop them from the\n"
-                 "                         file cache when other programs want the memory (Linux: up to ulimit -l)\n"
+                 "  --lock-experts         keep the experts outside VRAM in RAM, so the system cannot give it to other\n"
+                 "                         programs: copied into pinned memory for the card where the RAM that is free\n"
+                 "                         holds them, else their pages in the model file locked (Linux: up to ulimit -l)\n"
                  "  --prompt-batch N       prompt tokens read at a time (default 1024); about 1.4 MiB of VRAM each\n"
                  "  --stage-mib N          VRAM the experts outside the cache pass through in a prompt batch (default\n"
                  "                         128 on an NVIDIA card where a longer read widens it, else 2048; never more\n"
@@ -1659,8 +1660,9 @@ void usage() {
                  "                         next token and the step checks it, a guess right gives two tokens\n"
                  "                         (Qwen3.6's family; STRATA_BATCH_MTP=1 does the same)\n"
                  "  --check-batch K        with --tokens and --batch K or more: K prompts answered on their own and\n"
-                 "                         then together, compared token by token (takes --kv-whole, so the expert\n"
-                 "                         cache stays as it is)\n"
+                 "                         then together, compared token by token (takes --kv-whole and\n"
+                 "                         --cpu-share 0 and freezes the experts' split, so the expert cache stays as\n"
+                 "                         it is)\n"
                  "  --eos-ids ID,ID,...    tokens that end a reply (default: the GGUF's eos, eot and eom)\n"
                  "  --temperature F --top-k N --top-p F --min-p F --seed N   sampling for --tokens (default greedy)\n"
                  "  --images FILE          with --tokens: the prompt's pictures, as strata-vision writes them\n"
@@ -1850,7 +1852,15 @@ int main(int argc, char** argv) {
     if (const char* v = std::getenv("STRATA_BATCH_MTP"); v && std::string(v) == "1") o.batch_mtp = true;
     // --check-batch: K sequences growing together would take VRAM from the expert cache that the single runs had,
     // and an expert moved to the CPU rounds differently (issue 55).  Their attention rows get VRAM at load instead.
-    if (check > 0) o.kv_grow = false;
+    // The cache moves between prompts too, --expert-swaps 0 or not: it takes a prompt's buffers between reads
+    // (Engine::lend_prompt()), and a long read takes them and a wider staging buffer back.  So the split is frozen
+    // for the run, and a prompt's experts go to the CPU by no share of the time it took (--cpu-share 0): with them,
+    // Qwen3.6 UD-Q3_K_M at 12 GiB wrote 1 to 47 of 64 tokens as alone, poly.10 64 of 64; frozen, 64 of 64.
+    if (check > 0) {
+        o.kv_grow = false;
+        o.freeze_experts = true;
+        o.cpu_share = 0;
+    }
     if (!o.kv_grow && o.kv_resident > 0) {
         std::fprintf(stderr, "strata-poly: --kv-whole takes precedence over --kv-resident (caches fully resident in VRAM)\n");
         o.kv_resident = 0;

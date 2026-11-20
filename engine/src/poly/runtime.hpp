@@ -44,14 +44,12 @@ constexpr size_t kTail = 256;
 // noisy, and an upload gets in the way of the work: a slot goes to an expert that will clearly be used more.
 constexpr float kSwapMin = 2.f;
 constexpr int kSwapHalf = 128;
+constexpr int kFarTrades = 4;   // card_far_: trades a window asks (Engine::follow())
 // Engine::pick_way(): each way of a window is timed this many times before the faster one is taken.  What a way
 // takes moves, most in an answer's first windows, while the cache comes to hold the answer's experts, so the way
 // behind is timed again after kWayAgain windows of that size, then after twice as many each time it is still
 // behind, up to kWayAgainMost.  A time counts kWayWeight against the ones before, and one of the way behind
 // kWayBehind, since it has fewer and older ones.
-// card_far_ (Engine::build_mirror()): the share of the profile's picks the cached experts must have
-constexpr double kCardFarShare = 0.9;
-constexpr int kFarTrades = 4;   // card_far_: trades a window asks (Engine::follow())
 constexpr int kWayFirst = 3;
 constexpr int kWayAgain = 4, kWayAgainMost = 64;
 constexpr double kWayWeight = 0.125, kWayBehind = 0.5;
