@@ -189,7 +189,7 @@
   "msg.prev": "Réponse précédente",
   "msg.regenEarlier": "Une autre réponse à une question précédente",
   "msg.regenEarlierText": {"one": "Le {n} message qui suit reste dans la conversation, et la prochaine question l’envoie toujours.", "other": "Les {n} messages qui suivent restent dans la conversation, et la prochaine question les envoie toujours."},
-  "msg.regenerateTitle": "Rédiger une autre réponse à cette question. La réponse actuelle reste en variante ; les flèches passent de l’une à l’autre.",
+  "msg.regenerateTitle": "Rédiger une autre réponse à cette question. La réponse actuelle reste en variante ; les flèches passent de l’une à l’autre.",
   "pending.afterTool": "Attente de la fin de l’outil, puis envoi : « {text} »",
   "pending.cutting": "Arrêt de la réponse, puis envoi : « {text} »",
   "pending.one": "Un message attend déjà",
