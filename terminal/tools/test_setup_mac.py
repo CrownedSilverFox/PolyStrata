@@ -766,6 +766,7 @@ class SmallerModelSetup(unittest.TestCase):
                 def patch(obj, name, **kw):
                     return stack.enter_context(mock.patch.object(obj, name, **kw))
                 patch(M, "ROOT", new=root)
+                patch(setup, "_CONTROL_HOME", new=root)         # setup.home(): where the run config goes
                 patch(setup, "feed_models_setup")               # (the signed feed's models: no network in these tests)
                 patch(M, "mac_configs", return_value=[])
                 patch(M, "mac_info", return_value={"chip":"M1 Pro", "ram_gb":32, "macos":"27.0", "arm64":True, "clt":"/tools", "perf_cores":8})
@@ -797,6 +798,12 @@ class SmallerModelSetup(unittest.TestCase):
                 saved.write_text(json.dumps(cfg))
                 choice = setup.choices_from_config(saved)
                 self.assertEqual((choice["family"], choice["model"]), (family, model))
+                # in setup.home() (terminal/), where the server, `polystrata.py --list-models` / --model and the next ./setup.sh
+                # find it: not beside setup_mac.py in engine/; its log beside it
+                from serve import models as registry
+                self.assertEqual(saved.parent, setup.home())
+                self.assertEqual(Path(cfg["log"]).parent, setup.home())
+                self.assertEqual(registry.find(registry.discover(setup.home()), cfg["model_name"])["config"], str(saved))
                 self.assertEqual(Path(cfg["exe"]).name, "strata-poly")
                 self.assertEqual(cfg["parallel"], 3)
                 self.assertIn("--conversation-cache-mib", cfg["args"])
@@ -871,7 +878,7 @@ class FullCatalog(unittest.TestCase):
                     (root/"metal").mkdir();(root/"metal"/f"{tag.lower()}-metal.gguf").write_bytes(b"fixture")
                     (root/"mtp").mkdir();(root/"mtp"/"mtp-q2_0.gguf").write_bytes(b"fixture")
                     def patch(obj,name,**kw): return stack.enter_context(mock.patch.object(obj,name,**kw))
-                    patch(M,"ROOT",new=root);patch(M,"mac_configs",return_value=[])
+                    patch(M,"ROOT",new=root);patch(setup,"_CONTROL_HOME",new=root);patch(M,"mac_configs",return_value=[])
                     patch(M,"mac_info",return_value={"chip":"M5 Max","ram_gb":128,"macos":"27.0","arm64":True,"clt":"/tools","perf_cores":12})
                     patch(setup,"data_folder",return_value=(root,[]));patch(setup,"free_gb",return_value=1000)
                     patch(setup,"llama_override",return_value=root/"llama");patch(setup,"find_in",return_value=None)
@@ -917,7 +924,7 @@ class FullCatalog(unittest.TestCase):
                     gguf_dir=tmp, vision="no", update=False, no_download_models=True, build=False,
                     vram_reserve_mib=None, parallel=2, host=None, api_key=None, browser=False, no_start=True, port=8090)
                 def patch(obj, name, **kw): return stack.enter_context(mock.patch.object(obj,name,**kw))
-                patch(M,"ROOT",new=root)
+                patch(M,"ROOT",new=root);patch(setup,"_CONTROL_HOME",new=root)
                 for name in ("pip_install", "run", "say", "ok", "warn"):
                     patch(setup,name)
                 patch(setup,"llama_override",return_value=root / "llama")
