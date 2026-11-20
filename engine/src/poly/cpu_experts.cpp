@@ -20,7 +20,9 @@ namespace {
 // Rows of gate and up, and of down, a task.  With fewer tasks than several a thread, the last round left threads
 // idle at the end of every layer: 64 rows gave Tiel's 512-row experts 8 tasks each, and its down products 32 tasks.
 constexpr int kRowsPerTask = 32;
+constexpr int kRowsStep = 4;   // a gate and up task's rows are a multiple of this, from it up to kRowsPerTask
 constexpr int kRowsPerDownTask = 16;
+constexpr int kRowsOnCaller = 4;   // up to this many rows' activations are quantized by the caller's thread
 constexpr int kSpinsBeforeSleep = 20000;   // about a millisecond of pause instructions
 
 namespace Q = strata::quant;
@@ -275,17 +277,19 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
     if (own_act) act_u.resize((size_t) rows * au_bytes);
     hq.resize((size_t) n * h_bytes);
     h.resize((size_t) n * n_ff);
-    // quantizing the activations takes microseconds a row, which on one thread kept the others waiting, here and
-    // before the down products
+    // Quantizing the activations takes about a microsecond a row.  A few rows are done here: sharing them out cost
+    // a round of the workers, more than the rows.  Many rows on one thread kept the others waiting.
     uint8_t* actp = act.data();
-    const ActFn act_from = tg.act;
-    workers.run(rows, [&](int t) { act_from(x + (size_t) t * n_embd, actp + (size_t) t * a_bytes, n_embd); });
-    uint8_t* actup = actp;
-    if (own_act) {
-        actup = act_u.data();
-        const ActFn au_from = tu.act;
-        workers.run(rows, [&](int t) { au_from(x + (size_t) t * n_embd, actup + (size_t) t * au_bytes, n_embd); });
-    }
+    uint8_t* actup = own_act ? act_u.data() : actp;
+    const ActFn act_from = tg.act, au_from = tu.act;
+    const auto quantize = [&](int t) {
+        act_from(x + (size_t) t * n_embd, actp + (size_t) t * a_bytes, n_embd);
+        if (own_act) au_from(x + (size_t) t * n_embd, actup + (size_t) t * au_bytes, n_embd);
+    };
+    if (rows <= kRowsOnCaller)
+        for (int t = 0; t < rows; ++t) quantize(t);
+    else
+        workers.run(rows, quantize);
     const size_t au_step = own_act ? au_bytes : a_bytes;
 
     // The uses of one expert next to each other (by), and where each expert's run of them starts (run).
@@ -308,7 +312,20 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
     const int* byp = by.data();
     const int* runp = run.data();
     const int* orderp = order.data();
-    const int gu_tasks = (n_ff + kRowsPerTask - 1) / kRowsPerTask;
+    // Rows a task: about four tasks a thread, so the last round leaves few threads idle.  At 6 GB a call has two or
+    // three experts on the CPU, which at 32 rows a task were two rounds of 32 threads, the second one mostly idle.
+    const int threads = std::max(workers.threads(), 1);
+    int per = (n_run * n_ff) / (4 * threads);
+    per = std::clamp(per - per % kRowsStep, kRowsStep, kRowsPerTask);
+    const int gu_tasks = (n_ff + per - 1) / per;
+    // The task that finishes an expert's run quantizes its uses' rows for the down products: a round of the workers
+    // less than doing it after all of them.
+    uint8_t* hqp = hq.data();
+    const ActFn hq_from = td.act;
+    static thread_local std::vector<std::atomic<int>> left_of;
+    if (left_of.size() < (size_t) n_run) left_of = std::vector<std::atomic<int>>((size_t) n_run);
+    for (int u = 0; u < n_run; ++u) left_of[(size_t) u].store(gu_tasks, std::memory_order_relaxed);
+    std::atomic<int>* leftp = left_of.data();
     const int first = meanwhile ? 1 : 0;   // task 0, so it is taken at once
     workers.run(first + n_run * gu_tasks, [&](int t) {
         if (t < first) return (*meanwhile)();
@@ -316,7 +333,7 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
         const int u = orderp[t / gu_tasks], i0 = runp[u], i1 = runp[u + 1];
         if (late && late[byp[i0]]) (*wait)(byp[i0]);
         const CpuExpert& e = experts[byp[i0]];
-        const int r0 = (t % gu_tasks) * kRowsPerTask, r1 = std::min(n_ff, r0 + kRowsPerTask);
+        const int r0 = (t % gu_tasks) * per, r1 = std::min(n_ff, r0 + per);
         for (int r = r0; r < r1; ++r) {
             const uint8_t* gate = e.gate + (size_t) r * gu_row;
             const uint8_t* up = e.up + (size_t) r * u_row;
@@ -339,10 +356,13 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
                 hp[(size_t) j * n_ff + r] = g / (1.f + std::exp(-g)) * u;
             }
         }
+        // the last of the run's tasks sees every other one's rows (release by each, acquire by the last)
+        if (leftp[u].fetch_sub(1, std::memory_order_acq_rel) == 1)
+            for (int i = i0; i < i1; ++i) {
+                const int j = byp[i];
+                hq_from(hp + (size_t) j * n_ff, hqp + (size_t) j * h_bytes, n_ff);
+            }
     });
-    uint8_t* hqp = hq.data();
-    const ActFn hq_from = td.act;
-    workers.run(n, [&](int j) { hq_from(hp + (size_t) j * n_ff, hqp + (size_t) j * h_bytes, n_ff); });
 
     const int d_tasks = (n_embd + kRowsPerDownTask - 1) / kRowsPerDownTask;
     workers.run(d_tasks, [&](int t) {
