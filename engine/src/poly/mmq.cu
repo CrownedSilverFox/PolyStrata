@@ -138,6 +138,8 @@ void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int type, int64
 
 bool Mmq::reads_by_index(int, int64_t) { return false; }
 
+bool Mmq::int8(int, int64_t) { return false; }
+
 // llama.cpp's tiles write dst's rows themselves; what a launch takes beside (the stream-k sums) comes from the
 // context's pool
 Mmq::Work Mmq::work(int, int64_t, int64_t, int64_t, bool, int64_t) { return {}; }

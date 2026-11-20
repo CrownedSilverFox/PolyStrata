@@ -281,6 +281,8 @@ bool Mmq::split_exact(int ggml_type, int64_t w_rows) {
 
 bool Mmq::reads_by_index(int ggml_type, int64_t w_cols) { return int8_rows(ggml_type, w_cols); }
 
+bool Mmq::int8(int ggml_type, int64_t w_cols) { return int8_rows(ggml_type, w_cols); }
+
 void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int ggml_type, int64_t cols, int64_t ld, int64_t rows,
                    void* stream) {
     if (rows <= 0) return;
