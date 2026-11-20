@@ -1783,6 +1783,11 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     // --kv-resident streams the attention caches from host RAM: Qwen35's (kv_stage_, the pinned rows)
     if (o.kv_resident > 0 && !qwen35)
         throw std::runtime_error("--kv-resident is supported for qwen35moe models in v1; this is a '" + name + "' model");
+#if defined(STRATA_GPU_METAL)
+    // their kernels (store_q4, dequant_q4_to_q8, merge_attn_piece) are CUDA and HIP only (metal/src/poly/unported.cpp)
+    if (o.kv_format == KvFmt::kQ4_0 || o.kv_resident > 0)
+        throw std::runtime_error("--kv q4_0 and --kv-resident have no Metal kernels yet");
+#endif
     // int8 and int8k are Gemma 4's: their readers are not the arithmetic q8_0's are, so a model takes one
     // family or the other rather than a choice between them.
     if (name != "gemma4" && (o.kv_format == KvFmt::kInt8 || o.kv_format == KvFmt::kInt8K))
