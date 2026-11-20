@@ -19,7 +19,6 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent / "engine" / "metal"))
 import setup  # noqa: E402
 import setup_mac as M  # noqa: E402
-from strata_control import drafting_fetch  # noqa: E402
 
 
 def no_feed(case):
