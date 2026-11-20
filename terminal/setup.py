@@ -11609,7 +11609,6 @@ def prepare_pack_only(a) -> int:
         fail(*problem)
     pack = Path(a.prepare_pack)
     step(1, "preparing the model for this graphics card")
-    llama = llama_override()
     ok("model file reader ready")
     env = dict(os.environ, **gguf_py_env())
     if not (pack / "native_experts.txt").exists() or not (pack / "tokenizer" / "vocab.json").exists():
@@ -11759,8 +11758,6 @@ def mac_control_setup(a) -> int:
 
     step(4, "the PolyStrata engine (Metal)")
     from strata_control import engine_component as EC
-    llama = llama_cpp_if_here()                        # gguf-py for the preparation tools only (fetched when one runs): no git, no compiler
-    ok(f"llama.cpp {LLAMA_CPP_COMMIT[:7]} (gguf-py for the preparation tools)")
     reader = None
     try:
         if SHAPE_ENGINE.get("shape"):
