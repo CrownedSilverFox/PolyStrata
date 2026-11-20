@@ -1833,10 +1833,20 @@ class StrataEngine:
             self.slot_claims.discard(slot)
             self.slot_cv.notify_all()
 
+    def _co_n(self) -> int:
+        """The prompts one read takes together (STRATA_COALESCE_PREFILL).  Unset: an engine that says co_read=1
+        (strata-poly) takes as many as it has batch slots: 16 chat requests of Qwen3.6 at 12 GB, each prompt read on
+        its own, waited 3.5-4.5 s for the last first token, and 1.1 s read together; others take one."""
+        if os.environ.get("STRATA_COALESCE_PREFILL") is not None:
+            return COALESCE_PREFILL
+        info = self.info or {}
+        return int(info.get("batch_slots") or 0) if info.get("co_read") == 1 else 0
+
     def _coalesce(self, cancel, lead_prompt):
         """STRATA_COALESCE_PREFILL (the caller holds the control lines and sends its BGEN right after): reserve free slots
         for requests still waiting for the control lines and send their prompts as BCO lines; the engine reads them in the
         same layer-major pass as the BGEN's prompt.  Each follower finds its slot in cancel._strata_preslot."""
+        co_n = self._co_n()
         picked = []
         total = len(lead_prompt)
         def seen() -> int:
@@ -1853,7 +1863,7 @@ class StrataEngine:
             time.sleep(COALESCE_WAIT_MS / 1000.0)    # the requests of a burst reach the server a few ms apart
         with self.slot_cv:
             for e in list(self.wait_lens):
-                if len(picked) >= COALESCE_PREFILL - 1:
+                if len(picked) >= co_n - 1:
                     break
                 prompt = e[3] if len(e) > 4 else None
                 rq = e[4] if len(e) > 4 else None
@@ -1979,7 +1989,7 @@ class StrataEngine:
         carry = {}          # #1869: the figures of the legs that ended in a hand-back to the solo path (the final DONE adds to them)
         yielded_legs = []    # prompt reads that gave way before producing output
         ok = yield from self._take_control(cancel, len(prompt), new=True,
-                                           prompt=prompt if (COALESCE_PREFILL > 1 and not embeddings) else None)
+                                           prompt=prompt if (self._co_n() > 1 and not embeddings) else None)
         if not ok:
             self._release_preslot(cancel)
             return
@@ -2151,7 +2161,7 @@ class StrataEngine:
                         raise QueueWaitExpired("the inference queue wait deadline expired; retry later")
                     self.slot_live[slot] = live
                     self._last_done = None                  # (#879: this admission's DONE decides below)
-                    if COALESCE_PREFILL > 1 and not embeddings:
+                    if self._co_n() > 1 and not embeddings:
                         self._coalesce(cancel, prompt)
                     self._send(f"{head} {','.join(str(int(t)) for t in prompt)}")
                     if deadline is not None:

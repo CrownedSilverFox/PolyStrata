@@ -271,7 +271,8 @@ PAR_COUNTERS = os.environ.get("STRATA_PAR_COUNTERS") == "1"   # research counter
 # STRATA_COALESCE_PREFILL=N (research, PAR-H; needs the engine's BCO / BCOK lines): a request that takes the control lines
 # for its admission also sends the prompts of up to N-1 requests still waiting for them (BCO <slot> <ids>, into free slots
 # it reserves for them); the engine reads all the prompts in ONE layer-major pass, so the experts a layer streams are
-# read once for all of them, and each waiting request then finds its prompt in its slot.  0 / unset: off.
+# read once for all of them, and each waiting request then finds its prompt in its slot.  0: off.  Unset: on for an
+# engine whose INFO says co_read=1 (strata-poly with --batch), up to its batch slots (_co_n() in server.py).
 COALESCE_PREFILL = max(0, int(os.environ.get("STRATA_COALESCE_PREFILL") or 0))
 
 
