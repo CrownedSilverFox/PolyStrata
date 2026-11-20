@@ -6255,7 +6255,7 @@ def build_engine_hip_win(gpu, llama, portable=False) -> Path:
         if meta.get("backend") == "hip" and (eng / EXE).exists()
         else f"  Compiling the PolyStrata engine for your AMD GPU ({', '.join(archs)}; 10-20 minutes, once) ...")
     bdir = ROOT / "build-hip-win"
-    cmake_build(ROOT, bdir, ["strata", "strata-device"],
+    cmake_build(engine_src(), bdir, ["strata", "strata-device"],
                 ["-DSTRATA_ENABLE_HIP=ON", "-DSTRATA_ENABLE_CUDA=OFF", "-DSTRATA_BUILD_TESTS=OFF",
                  "-DSTRATA_PREFILL_MMQ=ON", "-DSTRATA_NATIVE_EXPERTS=ON",
                  f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}",
@@ -10143,7 +10143,7 @@ def build_engine_poly(gpu, yes, llama, vision="none", toolkit=13, portable=False
                 f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}"]
         if min(archs) < CUDA13_MIN_ARCH:
             defs.append("-DSTRATA_EXPERIMENTAL_SM60=ON")
-        cmake_build(ROOT, bdir, "strata-poly", defs, vcvars, "build-strata-poly.bat")
+        cmake_build(engine_src(), bdir, "strata-poly", defs, vcvars, "build-strata-poly.bat")
         shutil.copy2(bdir / POLY_EXE, eng / POLY_EXE)
     if not vision_ok:
         say("  Compiling the image encoder" + (" with CUDA (10-20 minutes, once) ..." if vision == "gpu" else " ..."))
@@ -10201,7 +10201,7 @@ def build_engine_poly_hip(gpu, llama, portable=False) -> Path:
     say("  strata-poly's source changed: compiling it again (only what changed, a few minutes) ..."
         if meta.get("backend") == "hip" and (eng / POLY_EXE).exists()
         else f"  Compiling the strata-poly engine for your AMD GPU ({', '.join(archs)}; some minutes, once) ...")
-    cmake_build(ROOT, ROOT / "build-poly-hip", "strata-poly",
+    cmake_build(engine_src(), ROOT / "build-poly-hip", "strata-poly",
                 ["-DSTRATA_ENABLE_HIP=ON", "-DSTRATA_ENABLE_CUDA=OFF", "-DSTRATA_BUILD_TESTS=OFF",
                  f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}",
                  "-DCMAKE_HIP_ARCHITECTURES=" + ";".join(archs),
@@ -10250,7 +10250,7 @@ def build_engine_poly_hip_win(gpu, llama, portable=False) -> Path:
         if meta.get("backend") == "hip" and (eng / POLY_EXE).exists()
         else f"  Compiling the strata-poly engine for your AMD GPU ({', '.join(archs)}; 10-20 minutes, once) ...")
     bdir = ROOT / "build-poly-hip-win"
-    cmake_build(ROOT, bdir, "strata-poly",
+    cmake_build(engine_src(), bdir, "strata-poly",
                 ["-DSTRATA_ENABLE_HIP=ON", "-DSTRATA_ENABLE_CUDA=OFF", "-DSTRATA_BUILD_TESTS=OFF",
                  "-DSTRATA_PREFILL_MMQ=ON", f"-DSTRATA_PORTABLE={'ON' if portable else 'OFF'}",
                  "-DCMAKE_HIP_ARCHITECTURES=" + ";".join(archs),
