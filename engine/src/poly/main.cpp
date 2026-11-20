@@ -1644,8 +1644,9 @@ void usage() {
                  "                         next token and the step checks it, a guess right gives two tokens\n"
                  "                         (Qwen3.6's family; STRATA_BATCH_MTP=1 does the same)\n"
                  "  --check-batch K        with --tokens and --batch K or more: K prompts answered on their own and\n"
-                 "                         then together, compared token by token (takes --kv-whole, so the expert\n"
-                 "                         cache stays as it is)\n"
+                 "                         then together, compared token by token (takes --kv-whole and\n"
+                 "                         --cpu-share 0 and freezes the experts' split, so the expert cache stays as\n"
+                 "                         it is)\n"
                  "  --eos-ids ID,ID,...    tokens that end a reply (default: the GGUF's eos, eot and eom)\n"
                  "  --temperature F --top-k N --top-p F --min-p F --seed N   sampling for --tokens (default greedy)\n"
                  "  --images FILE          with --tokens: the prompt's pictures, as strata-vision writes them\n"
@@ -1813,7 +1814,15 @@ int main(int argc, char** argv) {
     if (const char* v = std::getenv("STRATA_BATCH_MTP"); v && std::string(v) == "1") o.batch_mtp = true;
     // --check-batch: K sequences growing together would take VRAM from the expert cache that the single runs had,
     // and an expert moved to the CPU rounds differently (issue 55).  Their attention rows get VRAM at load instead.
-    if (check > 0) o.kv_grow = false;
+    // The cache moves between prompts too, --expert-swaps 0 or not: it takes a prompt's buffers between reads
+    // (Engine::lend_prompt()), and a long read takes them and a wider staging buffer back.  So the split is frozen
+    // for the run, and a prompt's experts go to the CPU by no share of the time it took (--cpu-share 0): with them,
+    // Qwen3.6 UD-Q3_K_M at 12 GiB wrote 1 to 47 of 64 tokens as alone, poly.10 64 of 64; frozen, 64 of 64.
+    if (check > 0) {
+        o.kv_grow = false;
+        o.freeze_experts = true;
+        o.cpu_share = 0;
+    }
     // over --tail-skip, as Strata's engine reads it: =0 turns a model's default off
     if (const char* v = std::getenv("STRATA_ROUTE_TAIL_SKIP")) o.tail_skip = std::atoi(v);
     const long long most = 1LL << 24;   // MiB: 16 TiB

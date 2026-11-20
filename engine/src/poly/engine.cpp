@@ -2963,7 +2963,7 @@ void Engine::load(const Options& o) {
     // What it costs: an expert the answer keeps using but that arrived after its first token is computed on the
     // CPU instead (the cache holds it, but the split is the first token's).  What it buys: greedy answers that
     // repeat bit for bit, which is what a test, a benchmark of quality or a comparison with another engine needs.
-    freeze_experts_ = freeze_experts_asked_ = std::getenv("STRATA_FREEZE_EXPERTS") != nullptr;
+    freeze_experts_ = freeze_experts_asked_ = opt_.freeze_experts || std::getenv("STRATA_FREEZE_EXPERTS") != nullptr;
     if (freeze_experts_)
         std::fprintf(stderr, "strata-poly: the experts' split is frozen for the engine's whole run "
                              "(STRATA_FREEZE_EXPERTS): greedy answers are a function of the request alone, "
