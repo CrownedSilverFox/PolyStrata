@@ -70,43 +70,43 @@ To add yours, open an issue at [simplexai-labs/PolyStrata](https://github.com/si
 [What to record](#what-to-record) lists. `python polystrata.py benchmark --model <name> --prompt-tokens 24000`
 gives the two speeds the README uses ([what it sends and prints](BACKENDS.md#benchmark)).
 
-An upstream-suite report from an [RX 6700 XT 12 GB, Ryzen 5 3600 and 32 GB RAM](../bench/results/2026-10-19-community-rx6700xt-polystrata/README.md)
+An upstream-suite report from an [RX 6700 XT 12 GB, Ryzen 5 3600 and 32 GB RAM](bench-results/2026-10-19-community-rx6700xt-polystrata/README.md)
 includes Qwen3.6, Ornith, Tiel Coder, Gemma 4, MiniCPM-V and LFM2.5 at 32K and 64K,
 with per-request data, exact settings and a separate Qwen UD-Q4_K_M speed control. A second one from an
-[RX 6700 XT 12 GB, Ryzen 5 5600X and 32 GB RAM](../bench/results/2026-10-22-community-rx6700xt-5600x-polystrata/README.md)
+[RX 6700 XT 12 GB, Ryzen 5 5600X and 32 GB RAM](bench-results/2026-10-22-community-rx6700xt-5600x-polystrata/README.md)
 has Qwen3.6, LFM2.5, Tiel Coder and Gemma 4 QAT at 32K and 64K, a rerun of Qwen on a newer commit and a Gemma
 draft A/B; its Qwen3.6 and LFM2.5 rows land within a few percent of the first.
 
-An official-suite report from an [RTX 3060 12 GB, Xeon W-2145 and 32 GB RAM](../bench/results/2026-10-24-community-rtx3060-polystrata-poly2-poly3/README.md)
+An official-suite report from an [RTX 3060 12 GB, Xeon W-2145 and 32 GB RAM](bench-results/2026-10-24-community-rtx3060-polystrata-poly2-poly3/README.md)
 compares **v0.1.45-poly.2 and v0.1.45-poly.3** on Windows: five model configurations at 32K, a Qwen MMA pair,
 and Qwen 64K/128K allocations with about 32K actual input. It includes thirteen suites with per-request data,
 exact release commits and binary hashes, two retained LFM request failures, and an older-driver appendix.
 These October 22/24 results do not test v0.1.45-poly.4 or later releases.
 
-A [follow-up on the RX 6700 XT / Ryzen 5 3600, now with 64 GB RAM](../bench/results/2026-10-26-community-rx6700xt-poly2-poly4-memory/README.md)
+A [follow-up on the RX 6700 XT / Ryzen 5 3600, now with 64 GB RAM](bench-results/2026-10-26-community-rx6700xt-poly2-poly4-memory/README.md)
 compares **v0.1.45-poly.2 and v0.1.45-poly.4** at 28 and 52 GiB container memory limits, all at 64K configured context.
 It includes 28 official suites, frozen expert-profile seeds, exact native HIP build hashes and four retained LFM
 agent-request failures. The earlier report stays intact; the new limits compare available capacity on the upgraded
 machine rather than recreating its old physical RAM.
 
-The same RX 6700 XT on [v0.1.45-poly.9](../bench/results/2026-11-10-community-rx6700xt-poly9/README.md), the HIP engine
+The same RX 6700 XT on [v0.1.45-poly.9](bench-results/2026-11-10-community-rx6700xt-poly9/README.md), the HIP engine
 built for gfx1031: Qwen3.6 UD-Q3_K_M, UD-Q4_K_M and UD-Q4_K_XL, Gemma 4 UD-Q4_K_M and Tiel Coder UD-Q3_K_XL at 64K
 configured context, the official suite with 36 requests each and no failures. Chats wrote 72 to 90 tokens/s, and
 prompts near 32K read at 819 to 859.
 
-The official suite on a [GTX 1650 4 GB with Clover APEX-I-NanoPlus](../bench/results/2026-10-30-community-gtx-1650-clover-35b-a3b-preview-apex-i-nanoplus/README.md)
-and [with MiniCPM-V mix_q3gud_im](../bench/results/2026-10-30-community-gtx-1650-minicpm-v-4-7-35b-a3b-mix-q3gud-im/README.md),
-and on an [RTX 3080 10 GB with Tiel Coder UD-Q4_K_XL](../bench/results/2026-10-30-community-rtx-3080-tiel-coder-35b-a3b-ud-q4-k-xl/README.md),
+The official suite on a [GTX 1650 4 GB with Clover APEX-I-NanoPlus](bench-results/2026-10-30-community-gtx-1650-clover-35b-a3b-preview-apex-i-nanoplus/README.md)
+and [with MiniCPM-V mix_q3gud_im](bench-results/2026-10-30-community-gtx-1650-minicpm-v-4-7-35b-a3b-mix-q3gud-im/README.md),
+and on an [RTX 3080 10 GB with Tiel Coder UD-Q4_K_XL](bench-results/2026-10-30-community-rtx-3080-tiel-coder-35b-a3b-ud-q4-k-xl/README.md),
 all three with v0.1.45-poly.6 and per-request data; their rows are in the table above.
 
-The official suite on an [RX 7900 XTX with Flint UD-Q3_K_XL](../bench/results/2026-11-10-community-unknown-flint-40b-a2-5b-ud-q3-k-xl/README.md)
+The official suite on an [RX 7900 XTX with Flint UD-Q3_K_XL](bench-results/2026-11-10-community-unknown-flint-40b-a2-5b-ud-q3-k-xl/README.md)
 adds an 8-task agent harness run through Hermes Agent: every task made the right file, and one of them took two
 minutes because the model kept re-reading its input.
 
 ### Comparing with llama.cpp
 
 `bench/bench_vs_llama.py` is the script Strata used for
-[its own comparison](../bench/results/2026-10-06-llamacpp-0.6.0/README.md). It starts PolyStrata and llama.cpp's
+[its own comparison](bench-results/2026-10-06-llamacpp-0.6.0/README.md). It starts PolyStrata and llama.cpp's
 `llama-server` in turns on the same GGUF, one engine on the card at a time, sends both the same prompts and prints
 the medians. With a size that setup has installed:
 
@@ -114,7 +114,7 @@ the medians. With a size that setup has installed:
 2. Download `llama-server` from llama.cpp's [releases](https://github.com/ggml-org/llama.cpp/releases), the CUDA
    build for an NVIDIA card. Qwen3.6's draft block needs `--spec-type draft-mtp`, which b11540 has.
 3. Make a folder for the run and copy `prompt-4k.txt` and `prompt-32k.txt` into it from
-   `bench/results/2026-10-06-llamacpp-0.6.0/`: the first 4,000 and 32,000 tokens of Strata's docs.
+   `docs/bench-results/2026-10-06-llamacpp-0.6.0/`: the first 4,000 and 32,000 tokens of Strata's docs.
 4. Save a file like this one as `machine.json` in the PolyStrata folder, with your paths: the size's GGUF,
    `llama-server`, the run config setup wrote for the size (`strata-<size>.json` in the PolyStrata folder), the
    PolyStrata folder's `serve` folder and the PolyStrata folder.
@@ -155,8 +155,8 @@ context of 36,864 on both sides leaves room for the 32K prompt and its answer, a
 how Strata's comparison ran llama.cpp. The example is for Qwen3.6 UD-Q3_K_M.
 
 The README's laptop ran it on 2026-10-11 with the engine of 2ba29a383baf and llama.cpp b11540, for
-[Qwen3.6 UD-Q3_K_M](../bench/results/2026-10-11-laptop-qwen36-llamacpp-b11540/README.md) and
-[Tiel Coder UD-Q3_K_XL](../bench/results/2026-10-11-laptop-tiel-llamacpp-b11540/README.md). Against llama.cpp's
+[Qwen3.6 UD-Q3_K_M](bench-results/2026-10-11-laptop-qwen36-llamacpp-b11540/README.md) and
+[Tiel Coder UD-Q3_K_XL](bench-results/2026-10-11-laptop-tiel-llamacpp-b11540/README.md). Against llama.cpp's
 fastest setting in each cell, PolyStrata read the prompts 2.7 to 3.5 times as fast and wrote 1.5 to 1.8 times as
 fast.
 
@@ -219,17 +219,17 @@ fast.
   PolyStrata 0.1.45 in Docker on a CUDA 12.9 image built for sm_70, Qwen3.8-Flash-Next UD-IQ4_XS (Unsloth), 262,144-token context, `--kv int8`,
   split over both cards; `tools/strata_bench.py --long`: chat 53.9 tok/s (27 to 89 as the expert cache warms), prompt
   1,242 / 1,885 / 2,244 tok/s at 4K / 16K / 32K, agent turns 62.7 tok/s at a 69% cache hit.
-- [2026-11-02: RTX 5070 Ti 16 GB, Ryzen 7 5700X3D, 64 GB RAM](../bench/results/2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq2-xs/README.md):
+- [2026-11-02: RTX 5070 Ti 16 GB, Ryzen 7 5700X3D, 64 GB RAM](bench-results/2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq2-xs/README.md):
   PolyStrata 0.1.45 on Windows 10, Qwen3.8-Flash-Next IQ2_XS and
-  [IQ3_S](../bench/results/2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq3-s/README.md), 32K context,
+  [IQ3_S](bench-results/2026-11-02-community-rtx-5070-ti-qwen3-8-flash-next-iq3-s/README.md), 32K context,
   `tools/strata_bench.py`: chat 93.1 / 66.3 tok/s, prompt 1,492 / 916 tok/s at 4K and 2,213 / 1,496 at 16K.
-- [2026-11-03: RTX 5090 32 GB held to 450 W, Ryzen 7 9800X3D, 183 GiB RAM](../bench/results/2026-11-03-community-rtx-5090-qwen38-flash-next-ud-q5-k-xl/README.md):
+- [2026-11-03: RTX 5090 32 GB held to 450 W, Ryzen 7 9800X3D, 183 GiB RAM](bench-results/2026-11-03-community-rtx-5090-qwen38-flash-next-ud-q5-k-xl/README.md):
   Qwen3.8-Flash-Next UD-Q5_K_XL (158.3 GB), 1M context with `--kv int8 --kv-resident 32768`, headless Linux,
   v0.1.45-poly.6 and poly.7 built from source on the same host, one run a point: decode 70.0 -> 77.8 tok/s at 256K
   and 62.6 -> 66.8 at 1M, prompt 4,128 -> 4,217 tok/s at 256K and 3,230 -> 3,046 at 1M; RAM peak 5.3 GiB lower.
-- [2026-11-17: RX 7600 XT 16 GB, Ryzen 7 5700X, 63.9 GiB RAM](../bench/results/2026-11-17-community-rx-7600-xt-five-models/README.md):
-  PolyStrata 0.1.45 on Windows 10 with the HIP backend, Qwen3.8-Flash-Next [IQ3_S](../bench/results/2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-iq3-s/README.md) and
-  [Q2_0](../bench/results/2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-q2-0/README.md), `--kv int8 --kv-resident 32768`, `tools/strata_bench.py`: chat 22.1 / 11.3 tok/s
+- [2026-11-17: RX 7600 XT 16 GB, Ryzen 7 5700X, 63.9 GiB RAM](bench-results/2026-11-17-community-rx-7600-xt-five-models/README.md):
+  PolyStrata 0.1.45 on Windows 10 with the HIP backend, Qwen3.8-Flash-Next [IQ3_S](bench-results/2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-iq3-s/README.md) and
+  [Q2_0](bench-results/2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-q2-0/README.md), `--kv int8 --kv-resident 32768`, `tools/strata_bench.py`: chat 22.1 / 11.3 tok/s
   (8.3 to 30.9 and 4.6 to 42.9 over the runs), prompt 169 / 114 tok/s at 4K and 187 / 111 at 16K. The same PC's strata-poly models are in the table above.
 
 ## Run the standard benchmark

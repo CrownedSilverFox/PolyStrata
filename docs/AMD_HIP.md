@@ -661,7 +661,7 @@ On Windows, setup's ready-made engine runs an RX 6800 beside a 780M iGPU (HIP nu
   under Windows 11, the engine compiled for gfx1010 from AMD's TheRock 10.2.0a20260930 Windows packages with no
   patch: the official suite at 32K for Qwen3.6, Ornith, Tiel Coder and Gemma 4, 132 requests with no errors, short
   chats written at 28.6 to 31.4 tok/s ([PR 102](https://github.com/simplexai-labs/PolyStrata/pull/102),
-  `bench/results/2026-10-27-community-rx5700xt-windows-qwen36-q3`). On Linux it takes the `gfx101X-dgpu` wheels and
+  `docs/bench-results/2026-10-27-community-rx5700xt-windows-qwen36-q3`). On Linux it takes the `gfx101X-dgpu` wheels and
   has not been tried.
 
 ## gfx906 (Instinct MI50 / MI60, Radeon VII): wave64, built from source
