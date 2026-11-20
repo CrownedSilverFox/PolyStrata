@@ -16,7 +16,7 @@ ACCEPTED = {"temperature", "top_p", "top_k", "min_p", "penalty_repeat", "penalty
             "pcie_frac", "spec_min_p", "pipe", "aux_cpus", "cvec", "img_keys"}
 # keys the server does not send to a split engine: pen_from is dropped (StrataEngine.pen_from_key), logprobs / allowed / logit_bias are refused with a 400 first
 # (refuse_for_split, logit_bias.validate_request)
-DROPPED = {"pen_from"}
+DROPPED = {"pen_from", "image_pad"}       # (PolyStrata) image_pad, strata-poly's image token, is not put in a split engine's keys (Service._run)
 REFUSED = {"logprobs", "allowed", "logit_bias"}
 # keys only other engines are sent: the prefill-only request of serve/split.py,
 # and hold (the thinking budget's GEN hold=N:ID): the server sends it only to an engine whose READY line says "hold" (a --batch engine: "holdb" too), which is the

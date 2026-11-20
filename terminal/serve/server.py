@@ -6106,7 +6106,8 @@ class Service:
         raw_ids = []                                    # every generated id (STRATA_DEBUG: dump raw model text)
         admission_rejected = False                      # #3040: the engine's batch slots refused it before it read anything
         emb, self.embeddings.path = getattr(self.embeddings, "path", None), None   # this run's to delete now
-        if emb:                                         # strata-poly finds the images' rows by their token
+        # strata-poly finds the images' rows by their token; the split engine knows its own (its parser refuses the key: tests/split/test_split_gen_keys.py)
+        if emb and getattr(self.engine, "split_engine", False) is not True:
             sampling = {**(sampling or {}), "image_pad": self.embeddings.pad}
         self.warm_stop.set()                            # a warm read (start_warm()) gives way
         if self.warm_start and tools and not emb:
