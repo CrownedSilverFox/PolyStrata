@@ -276,7 +276,7 @@ if(STRATA_METAL_POLY)
     ${S}/spec/suffix_drafter.cpp)
   # the CPU experts' rows and the tensor types read on the host are the Strata quant layer's: no ggml
   target_link_libraries(strata-poly PRIVATE strata_poly_metal_kernels strata_quant)
-  target_compile_definitions(strata-poly PRIVATE STRATA_VERSION="0.1.45-metal-poly")
+  target_compile_definitions(strata-poly PRIVATE STRATA_VERSION="0.1.63-metal-poly")
   set_source_files_properties(${S}/poly/norm_q8_test.cu PROPERTIES LANGUAGE CXX)
   add_executable(poly_norm_q8_metal_test ${S}/poly/norm_q8_test.cu)
   target_link_libraries(poly_norm_q8_metal_test PRIVATE strata_poly_metal_kernels)
