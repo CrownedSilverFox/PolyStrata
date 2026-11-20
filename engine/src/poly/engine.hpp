@@ -1120,6 +1120,7 @@ protected:
     std::vector<PoolSize> pool_sizes_;
     std::vector<uint8_t> pool_size_of_;   ///< per layer: its experts' place in pool_sizes_
     size_t pool_bytes_ = 0;               ///< of Options::ram_experts_mib, what the slots take; kept_ has the rest
+    bool pool_uncached_ = false;          ///< a cgroup's limit is the tightest: read_file() goes past the file cache
     uint8_t* pool_at(size_t v) const;
     size_t pool_slot_of(int il, const uint8_t* p) const;
     std::vector<uint8_t> pool_pin_;     ///< per slot: an upload to the card copies it (follow_loop())
