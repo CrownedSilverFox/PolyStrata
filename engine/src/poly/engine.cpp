@@ -4608,15 +4608,22 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                                    L.gu2() + L.d_bytes, cudaMemcpyHostToDevice, cs(up_)),
                    "upload ahead");
                 ck(cudaEventRecord((cudaEvent_t) g.up, cs(up_)), "upload ahead");
-                ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) g.up, 0), "upload ahead");
             }
+            // The upload's uses come last in cached: the experts before them go at once, and only the launches with
+            // its uses wait for it.  When every launch waited for it, the card was still busy after the CPU's experts
+            // in three calls of four at 6 GB, 43 us on average.  The sums are added in the same order either way.
+            int own_at = n_cached;
+            while (own >= 0 && own_at > 0 && cached[own_at - 1].e == own) --own_at;
             const size_t ff = (size_t) n_ff_exp_, q8_row = kernels::native_q8_1_bytes(n_ff_exp_);
             // the scratch holds rows_ experts' values, and a launch's down rows stay inside one add_scaled's kSumRows
             const int most = kernels::native_mmvq_slots_wide() ? kSlots : 8;
             const int per = rows_ >= most ? most : rows_ >= 8 ? 8 : 1;
             ScaledRows sum{};
-            for (int i0 = 0; i0 < n_cached; i0 += per) {
-                const int m = std::min(per, n_cached - i0);
+            for (int i0 = 0, m; i0 < n_cached; i0 += m) {
+                // nor past the end of add_scaled()'s rows: d_'s rows from the start are the ones not added yet
+                m = std::min({per, (i0 < own_at ? own_at : n_cached) - i0, kSumRows - i0 % kSumRows});
+                if (i0 == own_at)
+                    ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) ahead_[kAheadGroups].up, 0), "upload ahead");
                 kernels::MmvqSlots gate_up{}, up{}, down{};
                 for (int j = 0; j < m; ++j) {
                     const Cached& c = cached[i0 + j];
