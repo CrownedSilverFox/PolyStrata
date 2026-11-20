@@ -8,7 +8,8 @@ in setup with `--family qwen36-strata`; `--family qwen36` runs the same model on
 
 The Strata project's engine runs [Unsloth's GGUFs with the MTP layer](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF)
 (UD-Q4_K_XL, UD-Q6_K_XL, Q8_0) on a path of its own (`engine/src/qwen35`; `strata` switches to it from the file's
-architecture). It runs on NVIDIA and AMD cards. The Intel Arc and Mac engines do not run it.
+architecture). It runs on NVIDIA and AMD cards. On a Mac it runs as an experiment, much slower than `--family qwen36`
+there ([MAC.md](MAC.md#additional-qwen-and-ready-pack-choices)); the Intel Arc engine does not run it.
 
 ## Quick start
 
@@ -139,7 +140,7 @@ More numbers are in [History](#history--older-measurements).
 - A slot that stopped being alone goes back to the solo path only through the server's own hand-over. The MTP block's
   cache has holes for the tokens a slot decoded in batch windows, so the drafts of a later solo stretch are a little
   worse. The text is not affected.
-- Intel Arc (SYCL) and Mac do not run this family.
+- Intel Arc (SYCL) does not run this family; on a Mac it is experimental and slow ([MAC.md](MAC.md#additional-qwen-and-ready-pack-choices)).
 
 ## Testing
 
