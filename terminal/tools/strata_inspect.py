@@ -102,13 +102,18 @@ def load_fingerprints(path: Path = FINGERPRINTS) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def header_rows(table: dict) -> dict:
+    """The rows read from the files' headers: not "_roles", nor the strata-poly sizes (poly_rows()), which carry names only."""
+    return {k: v for k, v in table.items() if not k.startswith("_") and v.get("engine") != "strata-poly"}
+
+
 def verdict(fp: dict, table: dict) -> tuple[str, str]:
     """(kind, sentence): kind is "known" (a file setup installs, under any name), "family" (another family PolyStrata
     runs on its own engine path - Qwen3.6 on its CUDA/HIP path, or a strata-poly model such as Gemma 4, GLM,
     DeepSeek, LFM, Flint), "layout" (the same routed-expert
     layout as one: a fine-tune made with the same recipe, untested), "no" (PolyStrata cannot run it) or "untested"
     (naming the tensors whose quantization no file PolyStrata runs has for them)."""
-    known = {k: v for k, v in table.items() if not k.startswith("_")}
+    known = header_rows(table)
     if fp["arch"] in PREVIEW_ARCHS:
         return "family", (f"{PREVIEW_ARCHS[fp['arch']]} (architecture {fp['arch']!r}): PolyStrata runs it on its own "
                           "engine path in the NVIDIA (CUDA) and AMD (HIP) builds, not yet on Intel Arc (SYCL); setup "
@@ -159,7 +164,36 @@ def make_fingerprints(out: Path) -> None:
         for r, ts in v.pop("roles").items():
             union[r] |= set(ts)
     table["_roles"] = {r: sorted(ts) for r, ts in sorted(union.items())}   # every quantization each tensor has
-    out.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
+    out.write_text(json.dumps({**table, **poly_rows()}, indent=1) + "\n", encoding="utf-8")
+
+
+def poly_rows() -> dict:
+    """(PolyStrata) every size of the strata-poly families as setup installs it, from setup.py's tables alone: the files, the bytes and SHA-256
+    setup pins for each, the repository and the architectures setup accepts for the family (POLY_GGUF_ARCHS, else qwen35moe).  No header
+    is read, so a row has no tensor count and no expert types: the Terminal knows these sets by their file names."""
+    sys.path.insert(0, str(ROOT))
+    import setup
+    rows = {}
+    for family, fam in setup.FAMILIES.items():
+        if fam.get("engine") != "poly":
+            continue
+        for model, d in setup.family_models(family).items():
+            files = [setup.model_file(fam, model, i) for i in range(1, setup.model_shards(fam, model) + 1)]
+            pins = {**fam.get("sha256", {}), **d.get("sha256", {})}
+            repo = re.match(r"https://huggingface\.co/([^/]+/[^/]+)/", d.get("hf", fam["hf"])).group(1)
+            rows[f"{family}/{model}"] = {"engine": "strata-poly", "archs": list(setup.POLY_GGUF_ARCHS.get(family, ("qwen35moe",))),
+                                         "files": files, "repo": repo,
+                                         "pins": {Path(f).name: list(pins[Path(f).name]) for f in files}}
+    return rows
+
+
+def write_poly_rows(out: Path) -> None:
+    """The table at `out` with its strata-poly rows made again from setup.py (the other rows as they are)."""
+    raw = out.read_bytes()
+    table = json.loads(raw.decode("utf-8"))
+    table = {k: v for k, v in table.items() if not (isinstance(v, dict) and v.get("engine") == "strata-poly")}
+    out.write_text(json.dumps({**table, **poly_rows()}, indent=1) + "\n", encoding="utf-8",
+                   newline="\r\n" if b"\r\n" in raw else "\n")       # the line ends the file has (the repository keeps this one with CRLF)
 
 
 def main() -> None:
@@ -167,9 +201,13 @@ def main() -> None:
     ap.add_argument("source", nargs="?", help="ms:owner/repo, hf:owner/repo, a URL, a .gguf file or a folder")
     ap.add_argument("variant", nargs="?", help="a variant name or glob (e.g. IQ3_S, UD-Q2_K_XL)")
     ap.add_argument("--fingerprints", metavar="OUT", help="read the files setup installs and write the table")
+    ap.add_argument("--poly-rows", metavar="TABLE", help="make the table's strata-poly rows again from setup.py (no download)")
     a = ap.parse_args()
     if a.fingerprints:
         make_fingerprints(Path(a.fingerprints))
+        return
+    if a.poly_rows:
+        write_poly_rows(Path(a.poly_rows))
         return
     if not a.source:
         ap.error("a source is needed")

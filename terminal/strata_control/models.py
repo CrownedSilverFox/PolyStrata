@@ -44,6 +44,18 @@ SUPPORTED_SELECTIONS = frozenset({"qwen/Q2_0", "qwen/IQ2_XS", "qwen/IQ3_XXS", "q
                                    "unsloth/Q8_0", "gyro/Gyro-S", "gyro/Gyro-M"})
 
 
+def _poly_table_selections() -> frozenset:
+    """(PolyStrata) the strata-poly sizes of data/gguf_fingerprints.json: tools/strata_inspect.py --poly-rows writes them from setup.py's tables."""
+    try:
+        table = json.loads((ROOT / "data" / "gguf_fingerprints.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return frozenset()
+    return frozenset(k for k, v in table.items() if isinstance(v, dict) and v.get("engine") == "strata-poly")
+
+
+SUPPORTED_SELECTIONS |= _poly_table_selections()
+
+
 def settings_path() -> Path:
     """The user's PolyStrata settings file: the same place setup.py writes it (%APPDATA%/PolyStrata/settings.json, or
     $XDG_CONFIG_HOME/polystrata/settings.json). The desktop app sets STRATA_SETTINGS_FILE to a file of its own (in its data folder), so it
@@ -274,7 +286,7 @@ def _candidate_selection(shards: list[Path]) -> dict | None:
     names = {item.name for item in shards}
     for selection in sorted(SUPPORTED_SELECTIONS):
         row = catalog.get(selection) if isinstance(catalog, dict) else None
-        expected = row.get("files") if isinstance(row, dict) else None
+        expected = row.get("files") if isinstance(row, dict) and row.get("engine") != "strata-poly" else None   # (those: _poly_selection)
         if isinstance(expected, list) and expected and names == {Path(name).name for name in expected}:
             family, model = selection.split("/", 1)
             expected_experts = row.get("expert_bytes")
@@ -283,6 +295,23 @@ def _candidate_selection(shards: list[Path]) -> dict | None:
                     "expected_tensor_count": row.get("tensors") if type(row.get("tensors")) is int else None,
                     "setup_args_hint": ["--family", family, "--model", model,
                                         "--gguf-dir", str(shards[0].parent)]}
+    return None
+
+
+def _poly_selection(shards: list[Path]) -> dict | None:
+    """(PolyStrata) a set whose file names are those of a strata-poly size setup installs: its rows in data/gguf_fingerprints.json are made
+    from setup.py's tables (tools/strata_inspect.py --poly-rows) and name the architectures of the family's files, not their expert types."""
+    try:
+        catalog = json.loads((ROOT / "data" / "gguf_fingerprints.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    names = {item.name for item in shards}
+    for selection, row in sorted(catalog.items() if isinstance(catalog, dict) else ()):
+        if isinstance(row, dict) and row.get("engine") == "strata-poly" and names == {Path(n).name for n in row.get("files") or []}:
+            family, model = selection.split("/", 1)
+            return {"family": family, "model": model, "basis": "known_shard_names_only", "engine": "strata-poly",
+                    "archs": list(row.get("archs") or []), "expected_expert_types": [], "expected_tensor_count": None,
+                    "setup_args_hint": ["--family", family, "--model", model, "--gguf-dir", str(shards[0].parent)]}
     return None
 
 
@@ -620,7 +649,8 @@ def _split_groups(shards: list[Path]) -> dict:
 
 def _known(members: list[Path]) -> dict | None:
     try:
-        return _candidate_selection(sorted(members, key=lambda item: item.name))
+        ordered = sorted(members, key=lambda item: item.name)
+        return _candidate_selection(ordered) or _poly_selection(ordered)
     except ProfileError:
         return None
 
@@ -778,6 +808,8 @@ def plan_import(raw_path: str) -> dict:
     observed_experts: set[str] = set()
     observed_tensor_count = 0
     observed_payload = 0
+    poly = _poly_selection(shards) if files and not issues else None           # (PolyStrata) a strata-poly size, known by its file names
+    architectures = ("qwen4exp", "qwen35moe", *(poly["archs"] if poly else ()))
     if files and not issues:
         for item in shards:
             try:
@@ -790,10 +822,12 @@ def plan_import(raw_path: str) -> dict:
             observed_experts.update(inspected["expert_tensor_types"])
             observed_tensor_count += inspected["tensor_count_scanned"]
             observed_payload += int(inspected.get("payload_bytes_required") or 0)
-            if inspected["architecture"] is not None and inspected["architecture"] not in ("qwen4exp", "qwen35moe"):
+            if inspected["architecture"] is not None and inspected["architecture"] not in architectures:
                 issues.append(f"{item.name}: unsupported_architecture")
     q36_candidate = None
-    if metadata is not None:
+    # strata-poly runs the family's own architecture and reads its tokenizer itself (tools/strata_tokenizer.py)
+    poly = poly if poly is not None and metadata is not None and metadata["architecture"] in poly["archs"] else None
+    if metadata is not None and poly is None:
         if metadata["architecture"] == "qwen35moe" and not issues:
             q36_candidate = _qwen36_candidate(shards, issues, notes)       # #5869: Qwen3.6-35B-A3B, the files its engine loads
         elif metadata["architecture"] != "qwen4exp":
@@ -814,7 +848,7 @@ def plan_import(raw_path: str) -> dict:
         messages.append(UNSUPPORTED_MODEL_TYPE)
     elif projectors:
         messages.extend(p["plain"] for p in projectors)
-    candidate = q36_candidate or (_candidate_selection(shards) if not (metadata and metadata["architecture"] == "qwen35moe") else None)
+    candidate = poly or q36_candidate or (_candidate_selection(shards) if not (metadata and metadata["architecture"] == "qwen35moe") else None)
     if candidate is None and metadata is not None and not issues and metadata["architecture"] == "qwen4exp":
         candidate = _candidate_by_header(shards, observed_tensor_count, observed_payload, observed_experts)
         if candidate is None:
@@ -826,7 +860,7 @@ def plan_import(raw_path: str) -> dict:
         candidate = None                                  # nothing is chosen for the person
     if candidate is None and not {"multiple_model_groups", "incomplete_or_invalid_shard_set"} & set(issues):
         issues.append("unrecognized_or_unsupported_model_variant")
-    elif candidate is not None and metadata is not None:
+    elif candidate is not None and metadata is not None and candidate.get("engine") != "strata-poly":   # (its row names no expert types)
         expected = set(candidate["expected_expert_types"])
         if not observed_experts or observed_experts - expected:
             issues.append("missing_or_unexpected_expert_quantization")

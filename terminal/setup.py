@@ -11508,8 +11508,8 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
 
     if kind in ("known", "layout"):
         # parse family/model from the matching key(s) in the table
-        table = load_fingerprints()
-        known = {k: v for k, v in table.items() if not k.startswith("_")}
+        # the strata-poly sizes (strata_inspect.header_rows()) carry names only, no header to match
+        known = {k: v for k, v in load_fingerprints().items() if not k.startswith("_") and v.get("engine") != "strata-poly"}
         if kind == "known":
             matches = [k for k, v in known.items()
                        if v["expert_bytes"] == fp["expert_bytes"] and v["bytes"] == fp["bytes"]
