@@ -497,8 +497,8 @@ def _say(line: str = "") -> None:
 def _interrupted_move_notice() -> None:
     """One line when a move of the models folder was left unfinished (never blocks the launch)."""
     try:
-        from strata_control import discovery, models_move
-        st = models_move.interrupted(discovery.data_dir(Path.home() / "Strata")[0])
+        from strata_control import discovery, models_move, paths
+        st = models_move.interrupted(discovery.data_dir(Path.home() / paths.APP_NAME)[0])
     except Exception:
         return
     if st:
