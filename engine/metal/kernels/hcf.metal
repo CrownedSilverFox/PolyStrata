@@ -9,7 +9,8 @@
 // reduction is gr_norm's: thread (tid mod 256) sums its 10 elements d = tid + 256 j with fma in j order, simd_sum over
 // the 32 lanes, the 8 simdgroup partials added in order.  A producer threadgroup of 128 threads runs two of gr_norm's
 // virtual simdgroups a real one.  All values are bitwise gr_norm's after the producer's own dispatch; one dispatch (a
-// barrier, ~7 us in the decode chain) is gone per read.  n_embd 2560, hc 4.
+// barrier, ~7 us in the decode chain) is gone per read.  n_embd 2560, hc 4.  R is coherent(device): the last threadgroup
+// reads what the others wrote in the same dispatch, which the device-scope fences order only for coherent buffers.
 
 struct HcfArgs {
     uint n_embd;
@@ -18,28 +19,29 @@ struct HcfArgs {
     uint pad;
 };
 
-static inline void hcf_apply(device float* R, device const float* inj, constant HcfArgs& h, int t, int row, float v) {
+static inline void hcf_apply(coherent(device) device float* R, device const float* inj, constant HcfArgs& h, int t, int row,
+                             float v) {
 #ifdef HCF_NO_APPLY
     return;
 #endif
     const int n = int(h.n_embd), hc = int(h.hc);
     for (int c = 0; c < hc; ++c) {
         const float g = 2.0f / (1.0f + exp(-inj[t * hc + c] / float(hc)));
-        device float* r = R + (t * hc + c) * n + row;
+        coherent(device) device float* r = R + (t * hc + c) * n + row;
         *r = fma(v, g, *r);
     }
 }
 
 // R' (every stream, token) -> xn.  NTH threads (128 or 256); part: 4 * 8 floats of threadgroup memory
 template <int NTH>
-static inline void hcf_norm(device const float* R, device const float* w_norm, device float* xn, constant HcfArgs& h, int ntok,
-                            ushort tid, ushort sg, ushort lane, threadgroup float* part) {
+static inline void hcf_norm(coherent(device) device const float* R, device const float* w_norm, device float* xn,
+                            constant HcfArgs& h, int ntok, ushort tid, ushort sg, ushort lane, threadgroup float* part) {
     constexpr int NV = 256 / NTH, NJ = 10;
     const int n = int(h.n_embd);
     for (int t = 0; t < ntok; ++t) {
         float v[4][NV][NJ];
         for (int c = 0; c < 4; ++c) {
-            device const float* r = R + (t * 4 + c) * n;
+            coherent(device) device const float* r = R + (t * 4 + c) * n;
             for (int m = 0; m < NV; ++m) {
                 const int vt = int(tid) + NTH * m;
                 float ss = 0.0f;
@@ -94,7 +96,7 @@ static inline bool hcf_last(device atomic_uint* counter, uint ngx, ushort tid, t
 template <int F, int LPR, int NR, int SG, int KS>
 kernel void gemv_hcf(device const uchar* W [[buffer(0)]], device const float* xp [[buffer(1)]],
                      device const float* s16 [[buffer(2)]], device float* y [[buffer(3)]], constant GemvArgs& a [[buffer(4)]],
-                     device float* R [[buffer(5)]], device const float* inj [[buffer(6)]],
+                     coherent(device) device float* R [[buffer(5)]], device const float* inj [[buffer(6)]],
                      device const float* w_norm [[buffer(7)]], device float* xn [[buffer(8)]],
                      device atomic_uint* counter [[buffer(9)]], constant HcfArgs& h [[buffer(10)]],
                      uint3 tg [[threadgroup_position_in_grid]], uint3 ngv [[threadgroups_per_grid]],
@@ -169,7 +171,7 @@ kernel void gemv_hcf(device const uchar* W [[buffer(0)]], device const float* xp
 kernel void moe_combine_hcf(device const float* ye [[buffer(0)]], device const int* plan [[buffer(1)]],
                             device const float* ysh [[buffer(2)]], device const float* sg [[buffer(3)]],
                             device float* bo [[buffer(4)]], constant GlueArgs& a [[buffer(5)]],
-                            device float* R [[buffer(6)]], device const float* inj [[buffer(7)]],
+                            coherent(device) device float* R [[buffer(6)]], device const float* inj [[buffer(7)]],
                             device const float* w_norm [[buffer(8)]], device float* xn [[buffer(9)]],
                             device atomic_uint* counter [[buffer(10)]], constant HcfArgs& h [[buffer(11)]],
                             uint3 tg [[threadgroup_position_in_grid]], uint3 ngv [[threadgroups_per_grid]],
