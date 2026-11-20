@@ -7451,7 +7451,11 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
 }
 
 // ---- the int8 tensor-core products (i8_mma.cuh)
-bool gemm_iq_i8_takes(int ty, int K) { return i8m_type(ty) && K > 0 && K % 256 == 0 && i8m_card().on; }
+// K whole stages of 256, or for a type of 32-value blocks whole blocks: the kernel leaves out what lies past K in its
+// last stage (Gemma 4 26B's down, K = 704: Q8_0, Q5_1, IQ4_NL)
+bool gemm_iq_i8_takes(int ty, int K) {
+    return i8m_type(ty) && K > 0 && K % (i8_block_vals(ty) == 32 ? 32 : 256) == 0 && i8m_card().on;
+}
 
 void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream) {
     if (rows <= 0) return;

@@ -282,6 +282,16 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_link_libraries(poly_mmq_tiles_test PRIVATE strata_poly_mmq ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
   add_test(NAME poly_mmq_tiles_test COMMAND poly_mmq_tiles_test)
   set_tests_properties(poly_mmq_tiles_test PROPERTIES SKIP_RETURN_CODE 77)
+  # the int8 product of a matrix whose rows end inside a stage (32-value blocks) against the same rows padded with
+  # zero blocks, bit for bit; needs a card
+  if(NOT STRATA_POLY_MMQ)
+    add_executable(poly_mmq_k32_test src/poly/mmq_k32_test.cu)
+    target_include_directories(poly_mmq_k32_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/poly
+                                                        ${_strata_gpu_include_directories})
+    target_link_libraries(poly_mmq_k32_test PRIVATE strata_poly_mmq ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+    add_test(NAME poly_mmq_k32_test COMMAND poly_mmq_k32_test)
+    set_tests_properties(poly_mmq_k32_test PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
   # a prompt product of each path (the card's, and the BLAS path with STRATA_POLY_PROMPT_BLAS=1) against a double-precision
   # product of ggml's dequantized weights; needs a card
   if(TARGET ggml-base)
