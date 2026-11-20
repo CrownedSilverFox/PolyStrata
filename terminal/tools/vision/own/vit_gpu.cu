@@ -811,7 +811,9 @@ struct VitGpuImpl {
     uint16_t *d_q16 = nullptr, *d_k16 = nullptr, *d_v16 = nullptr;   // q (scaled by 1/sqrt(head size)), k, v [N][D], F16
     uint16_t* d_S = nullptr;       // the scores of a chunk of queries for every head, F16; the softmax turns them into the probabilities in place
     size_t sp_elems = 0;
-    int kRows = 512;      // rows per chunk of the matrix products (STRATA_VIT_ROWS overrides: a diagnostic)
+    // rows per chunk of the matrix products (STRATA_VIT_ROWS overrides: a diagnostic).  4,096: with 512 a 1,377-patch Gemma 4 picture spent 100 ms in its
+    // products on an RTX PRO 6000, with 8,192 51 ms (mtmd's whole encode: 45 ms); 4,096 rows are about 100 MB (Qwen) to 190 MB (Gemma 4) of work buffers
+    int kRows = 4096;
     size_t kScoreElems = (size_t) 8 << 20;     // scores per attention chunk, 8M: 16 MB of F16 (STRATA_VIT_SCORES, in M elements, overrides)
     size_t kScoreElemsLarge = (size_t) 512 << 20;   // the chunk above 16,384 patches: 512M scores, 1 GB of F16 (see size_buffers)
     bool scores_env = false;                   // STRATA_VIT_SCORES was given: one size for every picture
@@ -1339,9 +1341,6 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
 #endif
     if (m.gemma()) {
         if (!m.load_gemma4(gg, err)) return false;
-        // products of 4,096 rows: with 512 a 1,377-patch picture spent 100 ms in them on an RTX PRO 6000, with 8,192 51 ms (mtmd's whole encode: 45 ms);
-        // 4,096 rows are 190 MB of work buffers
-        m.kRows = 4096;
     } else {
         // the patch embedding: the two temporal taps summed, kept in float32 (a small matrix)
         {
@@ -1469,6 +1468,10 @@ bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx,
         int QC = (int) std::max<size_t>(1, std::min<size_t>((size_t) N, m.sp_elems / ((size_t) H * Np)));
         const int qa = m.align_for((size_t) N);
         if (qa > 1 && QC < N && QC >= qa) QC -= QC % qa;
+        bool fused = false;      // the fused attention on the tensor cores where the card has it (CUDA): no score matrix
+#if !defined(STRATA_VIT_HIP)
+        fused = m.attend_fa_wmma(N, D, H, HD);
+#endif
 #if defined(STRATA_VIT_HIP)
         if (m.fa) {      // the fused attention, in launches of at most fa_units query x key x head triples (multiples of 64 queries)
             long long qf = std::max<long long>(kFaQ, m.fa_units / ((long long) N * H));
@@ -1494,7 +1497,7 @@ bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx,
             if (!sync_err("the fused attention")) return false;
         } else
 #endif
-        for (int q0 = 0; q0 < N; q0 += QC) {
+        for (int q0 = 0; !fused && q0 < N; q0 += QC) {
             const int qc = std::min(QC, N - q0);
             if (!m.bgemm(true, false, N, qc, HD, m.d_k16, CUDA_R_16F, D, HD, m.d_q16 + (size_t) q0 * D, CUDA_R_16F, D, HD, m.d_S, CUDA_R_16F, Np,
                          (long long) qc * Np, H, err))
