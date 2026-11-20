@@ -206,16 +206,22 @@ struct VitGpuImpl {
     }
     // vectors one after the other in one buffer (MiniCPM-V's q, k, v biases: one bias of the joined product)
     bool upload_f32(__strong id<MTLBuffer>& dst, const Gguf& gg, const std::vector<std::string>& names, std::string& err) {
-        std::vector<float> h;
+        std::vector<const GgufTensorInfo*> ts;
+        size_t n = 0;
         for (const std::string& name : names) {
             const GgufTensorInfo* t = gg.tensor(name);
             if (!t) { err = "the mmproj file lacks the tensor " + name; return false; }
-            const size_t at = h.size();
-            h.resize(at + (size_t) t->nelem());
-            if (!gg.read_f32(*t, h.data() + at, err)) return false;
+            ts.push_back(t);
+            n += (size_t) t->nelem();
         }
-        dst = buf_from(h.data(), h.size() * 4, err);
-        return dst != nil;
+        dst = buf(n * 4, true, err);     // read in the buffer itself (as upload_matrix)
+        if (!dst) return false;
+        float* h = (float*) [dst contents];
+        for (const GgufTensorInfo* t : ts) {
+            if (!gg.read_f32(*t, h, err)) return false;
+            h += t->nelem();
+        }
+        return true;
     }
     bool upload_f32(__strong id<MTLBuffer>& dst, const Gguf& gg, const std::string& name, std::string& err) {
         return upload_f32(dst, gg, std::vector<std::string>{name}, err);
@@ -243,15 +249,18 @@ struct VitGpuImpl {
             w.off = (size_t) (file_data + t->offset);
             return true;
         }
-        std::vector<uint16_t> raw(n);
+        // written in the buffer itself: a staging copy kept a large matrix's size twice in the footprint (MiniCPM-V's 151 MB merger matrix)
+        w.b = buf(n * 2, true, err);
+        if (!w.b) return false;
+        uint16_t* raw = (uint16_t*) [w.b contents];
         if (t->type == GT_F16 || t->type == GT_BF16) {        // as stored; a BF16 matrix as F16 (K_HF) unless a weight is beyond F16's range
             size_t at = 0;
             for (const GgufTensorInfo* ti : ts) {
-                if (!gg.read_raw(*ti, raw.data() + at, err)) return false;
+                if (!gg.read_raw(*ti, raw + at, err)) return false;
                 at += (size_t) ti->nelem();
             }
             w.kind = t->type == GT_F16 ? K_F16 : K_BF16;
-            if (w.kind == K_BF16 && bf16_mode == BF16_TO_F16 && bf16_matrix_fits_f16(bf16_count_beyond_f16(raw.data(), (long long) n))) {
+            if (w.kind == K_BF16 && bf16_mode == BF16_TO_F16 && bf16_matrix_fits_f16(bf16_count_beyond_f16(raw, (long long) n))) {
                 w.kind = K_HF;
                 for (size_t i = 0; i < n; ++i) {           // BF16 -> float32 (exact) -> F16, round to nearest even
                     const uint32_t u = (uint32_t) raw[i] << 16;
@@ -271,8 +280,7 @@ struct VitGpuImpl {
             w.kind = bf ? K_BF16 : K_F16;
             for (size_t i = 0; i < n; ++i) raw[i] = bf ? host_f32_to_bf16(f[i]) : host_f32_to_f16(f[i]);
         }
-        w.b = buf_from(raw.data(), n * 2, err);
-        return w.b != nil;
+        return true;
     }
 
     // ---- dispatching ----
