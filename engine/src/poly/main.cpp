@@ -80,6 +80,11 @@ constexpr int kCopyMatch = 8;
 // and this many calls while none does, as Strata's engine reads its chunks.
 constexpr int kPiece = 8;
 
+// After a BCOK the BGENs of the prompts it names come one after the other, each as soon as the server has the last
+// one's BADM: the slots wait this long for the next one before they write a step.  16 clients of Qwen3.6 at 12 GB
+// had a step of 35-50 ms between each two of them.
+constexpr double kCoWaitMs = 20.0;
+
 // A session file (SAVE, RESTORE) starts with this, moves its rows this many bytes at a time, each followed by a
 // SESSION line, and a SAVE leaves this much of its disk free, the default of the other engine's.
 constexpr char kSessionMagic[8] = {'P', 'O', 'L', 'Y', 'S', 'E', 'S', '1'};
@@ -292,6 +297,15 @@ public:
         q_.pop_front();
         return true;
     }
+    /// The next line when one comes within `ms`.
+    bool pop_for(std::string& s, double ms) {
+        std::unique_lock<std::mutex> l(m_);
+        if (!cv_.wait_for(l, std::chrono::duration<double, std::milli>(ms), [this] { return !q_.empty(); }))
+            return false;
+        s = std::move(q_.front());
+        q_.pop_front();
+        return true;
+    }
     /// The lines waiting that start with `head`, out of the queue, the others left in their order.
     std::vector<std::string> take(const char* head) {
         std::lock_guard<std::mutex> l(m_);
@@ -358,6 +372,8 @@ struct Session {
     Guesses guesses;                      // whether the block is asked in a round, and for how many (guesses.hpp)
     int piece_calls = kPiece;             // generate()'s pieces when it is given `between`
     std::string pinned;                   // --pinned-session: the file serve() pins before its first request
+    std::vector<Engine::CoRead> co_read;  // BCO: prompts for generate()'s first read() to take along
+    bool co_done = false;                 // and that read took them
 
     Session(Engine& e, std::vector<int32_t> eos_ids, const CacheFlags& f, int lookup)
         : engine(e), eos(std::move(eos_ids)), flags(f), kept(e, with_floor(f)),
@@ -454,11 +470,17 @@ struct Session {
                     }
                     return true;
                 };
-                if (!engine.read(ids.data() + i, (int) m, marks.data(), (int) marks.size(), &turn)) {
+                // the prompts co_read holds go in the same pass as this request's first read (Strata's BCO)
+                const bool with_co = !co_read.empty();
+                if (!engine.read(ids.data() + i, (int) m, marks.data(), (int) marks.size(), &turn,
+                                 with_co ? co_read.data() : nullptr, (int) co_read.size())) {
+                    co_read.clear();
                     kept.rewind();
                     r.finish = "cancel";
                     break;
                 }
+                co_done = with_co;
+                co_read.clear();
             } else {
                 if (last) engine.end_read();   // the last token, as the answer's, with the whole expert cache
                 engine.eval(ids.data() + i, (int) m, last);
@@ -621,6 +643,7 @@ struct Slot {
     Sampling s;
     std::mt19937_64 rng{std::random_device{}()};
     std::vector<int32_t> held;      // what its sequence has read: the prompt and the tokens fed since
+    std::vector<float> first;       // a prompt read ahead (BCO), all of it: the logits its first token is picked from
     Clock::time_point t0;
 };
 
@@ -857,10 +880,11 @@ int serve(Session& ss) {
     engine.trim();
     std::printf("INFO context=%d expert_slots=%d expert_cache_mib=%lld pool_workers=%d conversation_cache_mib=%lld "
                 "conversation_cache_slots=%d conversation_cache_min_free_mib=%lld vram_free_mib=%lld vram_elastic=1 "
-                "batch_slots=%d sessions=1 pinned_tokens=%lld engine=" STRATA_VERSION "\n",
+                "batch_slots=%d co_read=%d sessions=1 pinned_tokens=%lld engine=" STRATA_VERSION "\n",
                 engine.max_context(), engine.cached_experts(), (long long) (engine.cached_gib() * 1024.0),
                 engine.threads(), (long long) ss.flags.o.park_mib, ss.flags.o.park_slots, ss.flags.min_free_mib,
-                (long long) engine.vram_free_mib(), (int) slots.size(), (long long) ss.kept.pinned_tokens());
+                (long long) engine.vram_free_mib(), (int) slots.size(), !slots.empty() && engine.co_reads() ? 1 : 0,
+                (long long) ss.kept.pinned_tokens());
     std::printf("READY %d stop\n", engine.max_context());
     std::fflush(stdout);
 
@@ -999,6 +1023,15 @@ int serve(Session& ss) {
     // time the piece took.  A read gives way only to a slot that does not write, with text alone, and with more than
     // a piece left: the rest is read the same way after it.
     int admit = -1, gives_to = -1;
+    // BCO <slot> <id,id,...> (Strata's protocol; STRATA_COALESCE_PREFILL on the server): a waiting request's prompt,
+    // read into that idle slot's sequence in the same pass as the next BGEN's.  All but its last token: its own BGEN
+    // finds the rest in the slot (from_slot()) and reads that one.  BCOK <slot> <tokens> says the slot holds them.
+    struct CoReq {
+        int slot;
+        std::vector<int32_t> ids;
+    };
+    std::vector<CoReq> co_pending;
+    size_t co_due = 0;   // the BGENs still to come of the slots the last BCOK named (kCoWaitMs)
     long long ids_n = 0;
     bool text = true, failed = false;
     Clock::time_point piece_t0;
@@ -1029,7 +1062,8 @@ int serve(Session& ss) {
         std::string line;
         if (!writing()) {
             line = lines.pop();
-        } else if (!lines.try_pop(line)) {
+        } else if (!lines.try_pop(line) && !(co_due > 0 && lines.pop_for(line, kCoWaitMs))) {
+            co_due = 0;   // (they stopped coming: the slots go on)
             if (!step()) return 1;
             continue;
         }
@@ -1043,13 +1077,35 @@ int serve(Session& ss) {
             continue;
         }
         if (line.rfind("BYIELD", 0) == 0) continue;
+        if (line.rfind("BCO ", 0) == 0) {   // kept for the next BGEN; one it cannot take says nothing
+            CoReq cr;
+            char* e1 = nullptr;
+            cr.slot = (int) std::strtol(line.c_str() + 4, &e1, 10);
+            for (const char* q = e1; q != nullptr && *q != '\0';) {
+                while (*q == ' ' || *q == ',') ++q;
+                if (*q == '\0') break;
+                char* e2 = nullptr;
+                const long long t = std::strtoll(q, &e2, 10);
+                if (e2 == q || t < 0 || t >= engine.n_vocab()) {
+                    cr.ids.clear();
+                    break;
+                }
+                cr.ids.push_back((int32_t) t);
+                q = e2;
+            }
+            if (cr.slot >= 0 && cr.slot < (int) slots.size() && cr.ids.size() >= 3) co_pending.push_back(std::move(cr));
+            continue;
+        }
         lines.stop.store(false);   // a STOP that came between requests is stale
         // BGEN <slot> <max_new> ... reads the prompt and picks its first token as GEN 1 does, then the request goes
         // on in that slot (BADM <slot> 1), or ends there (BADM <slot> 0)
         admit = -1;
         gives_to = -1;
         long long admit_max = 0;
+        std::vector<CoReq> co_set = std::move(co_pending);   // the BCOs before this line are this line's alone
+        co_pending.clear();
         if (line.rfind("BGEN ", 0) == 0 || line.rfind("BGENI ", 0) == 0) {
+            co_due -= co_due > 0;
             const bool img = line[4] == 'I';
             char* e1 = nullptr;
             const long b = std::strtol(line.c_str() + (img ? 6 : 5), &e1, 10);
@@ -1170,36 +1226,76 @@ int serve(Session& ss) {
         int64_t resume = 0;
         Session::Result r;
         int32_t first = -1;   // the token BGEN's read picks
+        std::vector<const CoReq*> co_used;
+        bool co_ok = false;   // and the BCO prompts went with it: their last tokens go in a step after its BADM
+        // A BGEN whose slot holds its whole prompt, read with another's and its last token in the step after that
+        // (Slot::first), reads nothing: its first token is picked from what that step left
+        const bool ahead = admit >= 0 && !slots[(size_t) admit].first.empty() && slots[(size_t) admit].held == ids &&
+                           pictures.at.empty();
         try {
-            engine.bind(0);
-            from_slot(ids);
-            ids_n = n;
-            text = pictures.at.empty();
-            ss.piece_calls = writing() ? 1 : kPiece;
-            piece_t0 = Clock::now();
-            const int had = engine.cached_experts();
-            if (engine.mind_vram())
-                std::fprintf(stderr, "strata-poly: the expert cache %d -> %d experts (%.2f GiB) for the VRAM free "
-                                     "now, %lld MiB left\n",
-                             had, engine.cached_experts(), engine.cached_gib(), (long long) engine.vram_free_mib());
-            r = ss.generate(
-                ids, pictures, pad, turn_at, max_new, s, lines.stop,
-                [&](int32_t t) {
-                    first = t;
-                    std::printf("T %d\n", (int) t);
-                    std::fflush(stdout);
-                },
-                [&](int64_t at, int64_t total, double ms, bool first) {
-                    if (first) {
-                        resume = at;
-                        std::printf("RESUME %lld\n", (long long) at);
-                    } else {
-                        std::printf("PP %lld %lld %.0f %.1f\n", (long long) at, (long long) total, ms,
-                                    ms > 0.0 ? 1000.0 * (double) (at - resume) / ms : 0.0);
-                    }
-                    std::fflush(stdout);
-                },
-                slots.empty() ? nullptr : &between);
+            if (ahead) {
+                r.resume = n;
+                std::printf("RESUME %lld\n", n);
+                if (s.seed != 0) ss.rng.seed(s.seed);
+                first = (int32_t) ss.sampler.pick(slots[(size_t) admit].first.data(), engine.n_vocab(), s, ids, ss.rng);
+                std::printf("T %d\n", (int) first);
+                std::fflush(stdout);
+                r.produced = 1;
+                r.finish = ss.is_eos(first) ? "stop" : lines.stop.load() ? "cancel" : "length";
+            } else {
+                engine.bind(0);
+                from_slot(ids);
+                // The BCO prompts of idle slots go with this read when it is text and they all fit in the read with
+                // it.  A slot's sequence starts again for its prompt: what it held is gone (the server gave the slot
+                // to them).
+                ss.co_read.clear();
+                ss.co_done = false;
+                int64_t co_rows = n;
+                for (const CoReq& c : co_set) {
+                    if (admit < 0 || !pictures.at.empty() || !engine.co_reads() || c.slot == admit ||
+                        slots[(size_t) c.slot].active || co_rows + (int64_t) c.ids.size() - 1 > engine.max_read() ||
+                        (int64_t) c.ids.size() + 1 > engine.max_context() ||
+                        std::any_of(co_used.begin(), co_used.end(), [&](const CoReq* u) { return u->slot == c.slot; }))
+                        continue;
+                    engine.bind(c.slot + 1);
+                    engine.images(nullptr, 0);
+                    engine.reset();
+                    slots[(size_t) c.slot] = Slot{};
+                    co_used.push_back(&c);
+                    co_rows += (int64_t) c.ids.size() - 1;
+                    ss.co_read.push_back({c.slot + 1, c.ids.data(), (int) c.ids.size() - 1});
+                }
+                engine.bind(0);
+                ids_n = n;
+                text = pictures.at.empty();
+                ss.piece_calls = writing() ? 1 : kPiece;
+                piece_t0 = Clock::now();
+                const int had = engine.cached_experts();
+                if (engine.mind_vram())
+                    std::fprintf(stderr, "strata-poly: the expert cache %d -> %d experts (%.2f GiB) for the VRAM free "
+                                         "now, %lld MiB left\n",
+                                 had, engine.cached_experts(), engine.cached_gib(), (long long) engine.vram_free_mib());
+                r = ss.generate(
+                    ids, pictures, pad, turn_at, max_new, s, lines.stop,
+                    [&](int32_t t) {
+                        first = t;
+                        std::printf("T %d\n", (int) t);
+                        std::fflush(stdout);
+                    },
+                    [&](int64_t at, int64_t total, double ms, bool first) {
+                        if (first) {
+                            resume = at;
+                            std::printf("RESUME %lld\n", (long long) at);
+                        } else {
+                            std::printf("PP %lld %lld %.0f %.1f\n", (long long) at, (long long) total, ms,
+                                        ms > 0.0 ? 1000.0 * (double) (at - resume) / ms : 0.0);
+                        }
+                        std::fflush(stdout);
+                    },
+                    slots.empty() ? nullptr : &between);
+                co_ok = ss.co_done;
+                ss.co_read.clear();
+            }
             if (r.gave_way >= 0) {
                 engine.copy_seq(0, gives_to + 1);
                 slots[(size_t) gives_to] = Slot{};
@@ -1244,8 +1340,8 @@ int serve(Session& ss) {
                                  n + 2 <= engine.max_context();
             sl = Slot{};
             try {
-                engine.copy_seq(0, admit + 1);
-                sl.held = ss.kept.seq();
+                if (!ahead) engine.copy_seq(0, admit + 1);   // (one read ahead is in its slot's sequence already)
+                sl.held = ahead ? ids : ss.kept.seq();
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "strata-poly: batch: %s\n", e.what());
                 std::printf("ERR %s\n", e.what());
@@ -1263,6 +1359,34 @@ int serve(Session& ss) {
             }
             std::printf("BADM %d %d\n", admit, goes_on ? 1 : 0);
             std::fflush(stdout);
+        }
+        // The BCO prompts read with this one: their last tokens in one step, so that each slot holds its whole prompt
+        // and the logits of its first token (Slot::first).  Each on its own in its BGEN took 14 ms of Qwen3.6 at
+        // 12 GB, and the slots waited for all of them.
+        if (co_ok && !co_used.empty()) {
+            std::vector<int> seqs;
+            std::vector<int32_t> last;
+            for (const CoReq* c : co_used) {
+                seqs.push_back(c->slot + 1);
+                last.push_back(c->ids.back());
+            }
+            try {
+                engine.step(seqs.data(), last.data(), (int) seqs.size());
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "strata-poly: batch: %s\n", e.what());
+                std::printf("ERR %s\n", e.what());
+                std::fflush(stdout);
+                return 1;
+            }
+            for (size_t i = 0; i < co_used.size(); ++i) {
+                Slot& sl = slots[(size_t) co_used[i]->slot];
+                const float* lg = engine.logits_of((int) i);
+                sl.held = co_used[i]->ids;
+                sl.first.assign(lg, lg + engine.n_vocab());
+                std::printf("BCOK %d %zu\n", co_used[i]->slot, sl.held.size());
+            }
+            std::fflush(stdout);
+            co_due = co_used.size();
         }
         if (ms_since(saved) >= kProfileSaveMs) {
             try {
