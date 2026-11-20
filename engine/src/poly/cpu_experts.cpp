@@ -98,8 +98,8 @@ thread_local bool in_task = false;   // this thread is running a task of a batch
 
 }  // namespace
 
-Workers::Workers(int threads) {
-    for (int i = 1; i < threads; ++i) th_.emplace_back([this] { loop(); });
+Workers::Workers(int threads) : busy_((size_t) std::max(threads - 1, 0)) {
+    for (int i = 1; i < threads; ++i) th_.emplace_back([this, i] { loop(i - 1); });
 }
 
 Workers::~Workers() {
@@ -110,31 +110,34 @@ Workers::~Workers() {
 }
 
 // Whether it ran a task.  next is read before it is counted up, so it stops near n however often a worker comes
-// back to a batch whose tasks are taken.
+// back to a batch whose tasks are taken.  The tasks it ran come off left together, once it finds no more.
 bool Workers::drain(Batch& b) {
-    bool ran = false;
+    int ran = 0;
     while (b.next.load(std::memory_order_relaxed) < b.n) {
         const int i = b.next.fetch_add(1, std::memory_order_relaxed);
         if (i >= b.n) break;
         in_task = true;
         (*b.fn)(i);
         in_task = false;
-        b.left.fetch_sub(1, std::memory_order_release);
-        ran = true;
+        ++ran;
     }
-    return ran;
+    if (ran) b.left.fetch_sub(ran, std::memory_order_release);
+    return ran > 0;
 }
 
 // A worker with nothing to do only reads posted_: a write by each of them, every turn of the loop, kept run() from
-// ever seeing users_ at zero for long.  When a batch has been posted since the worker last looked, it counts itself
-// in users_ and reads cur_ again before it uses it, so run() can tell when nobody holds its Batch any more.
+// ever seeing its Batch free for long.  When a batch has been posted since the worker last looked, it raises its
+// Busy mark and reads cur_ again before it uses it, so run() can tell when nobody holds its Batch any more: the mark
+// is stored and cur_ loaded in that order, and run() stores cur_ and loads the marks in that order (all seq_cst), so
+// either the worker finds cur_ empty or run() finds the mark up.
 //
 // A batch stays posted after its last task is taken, until run() takes it down, and run() cannot while it has no
 // CPU.  That happens with more threads than the system runs: a laptop that parks cores under load makes that of
 // any count.  So a worker that found no task in what is posted leaves it alone: it pauses, then sleeps, until
 // posted_ moves.  Going round the finished batch instead, the workers kept run() off the CPU for the rest of
 // their time slices, every batch.
-void Workers::loop() {
+void Workers::loop(int i) {
+    std::atomic<int>& busy = busy_[(size_t) i].on;
     int idle = 0;
     uint32_t seen = posted_.load() - 1;   // the count at which this worker last found nothing to do
     while (!quit_.load(std::memory_order_relaxed)) {
@@ -143,10 +146,10 @@ void Workers::loop() {
             // cur_ is set before posted_ counts: the batch of `now` is there, or a later one, or it is done
             bool ran = false;
             if (cur_.load(std::memory_order_acquire)) {
-                users_.fetch_add(1);
+                busy.store(1);
                 Batch* b = cur_.load();
                 if (b) ran = drain(*b);
-                users_.fetch_sub(1);
+                busy.store(0, std::memory_order_release);
             }
             if (ran) {
                 idle = 0;
@@ -185,7 +188,8 @@ void Workers::run(int n, const std::function<void(int)>& fn) {
     drain(b);
     cur_.store(nullptr);   // every task is taken: a worker that comes now has nothing to find
     while (b.left.load(std::memory_order_acquire) != 0) _mm_pause();
-    while (users_.load() != 0) _mm_pause();
+    for (Busy& w : busy_)
+        while (w.on.load() != 0) _mm_pause();
 }
 
 Aside::Aside() : th_([this] { loop(); }) {}

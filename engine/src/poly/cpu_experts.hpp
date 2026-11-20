@@ -30,21 +30,28 @@ public:
     int threads() const { return (int) th_.size() + 1; }
 
 private:
+    // Every thread takes tasks from next and counts what it ran down from left once, when it finds no more: with a
+    // count down a task, and both counts in one cache line, an empty batch of 32 tasks took 11 us of 32 threads.
     struct Batch {
         const std::function<void(int)>* fn;
         int n;
-        std::atomic<int> next{0}, left{0};
+        alignas(64) std::atomic<int> next{0};
+        alignas(64) std::atomic<int> left{0};
     };
-    void loop();
+    // A worker's mark that it may hold a Batch pointer, on a line of its own: run() waits for every one of them to
+    // be down before its Batch goes.  One count of them all was two writes a worker to the same line, every batch.
+    struct alignas(64) Busy {
+        std::atomic<int> on{0};
+    };
+    void loop(int i);
     static bool drain(Batch& b);
 
     std::vector<std::thread> th_;
-    // every idle worker reads cur_ in a loop; users_ is written, so it has a cache line of its own
-    alignas(64) std::atomic<Batch*> cur_{nullptr};
-    alignas(64) std::atomic<int> users_{0};      ///< workers that may hold a Batch pointer
-    std::atomic<int> sleepers_{0};
+    std::vector<Busy> busy_;                     ///< a worker's Busy
+    alignas(64) std::atomic<Batch*> cur_{nullptr};   ///< every idle worker reads it in a loop
+    alignas(64) std::atomic<int> sleepers_{0};
     std::mutex one_;                             ///< one batch at a time: on several cards, each card's thread posts
-    std::atomic<uint32_t> posted_{0};            ///< counts the batches: what a sleeping worker waits on
+    alignas(64) std::atomic<uint32_t> posted_{0};   ///< counts the batches: what a sleeping worker waits on
     std::atomic<bool> quit_{false};
 };
 
