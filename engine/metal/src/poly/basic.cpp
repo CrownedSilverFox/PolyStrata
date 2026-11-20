@@ -186,4 +186,8 @@ void likeliest(const float* logits,int n,Likeliest* out,void* s) {
     BasicArgs a{{logits,out}}; a.n=n;
     launch("poly_likeliest",a,s,{1,1,1},uint32_t(std::clamp((n+31)/32*32,32,1024)));
 }
+// a batch step's few rows, one poly_likeliest each
+void likeliest_rows(const float* logits,int n,int rows,Likeliest* out,void* s) {
+    for(int r=0;r<rows;++r) likeliest(logits+size_t(r)*n,n,out+r,s);
+}
 } // namespace strata::poly

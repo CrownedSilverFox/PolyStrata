@@ -155,6 +155,7 @@ void Mmq::quantize(const float* x,const int32_t* ids,void* q,int,int64_t cols,in
     qrun("poly_quantize",a,s,{uint32_t(cols/32),uint32_t(rows),1});
 }
 bool Mmq::reads_by_index(int,int64_t) { return false; }
+bool Mmq::int8(int,int64_t) { return false; }   // rows in q8_1 or fp16 here, never gemm_iq_i8_quantize's
 void Mmq::mul(const void* w,int type,int64_t nr,int64_t nc,size_t stride,int n,const void* x,
               const int32_t* bounds,const int32_t* ids,int64_t total,int64_t max_rows,float* y,int64_t ld,void* s,
               const int32_t* from) {
