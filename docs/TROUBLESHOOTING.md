@@ -57,7 +57,7 @@ replaced (one generation, about 210 MiB). Source-checkout engines use a separate
 (#670). It is described in [source setup](SOURCE_INSTALL.md).
 
 **On a Mac: "PolyStrata is damaged and can't be opened", "cannot be opened", or "unidentified developer".**
-Check first that the download is for Apple Silicon and that macOS is 15 or newer ([Mac installation](MAC.md#the-desktop-app-and-strata-launch-on-a-mac)).
+Check first that the download is for Apple Silicon and that macOS is 15 or newer ([Mac installation](MAC.md#install)).
 Nothing is wrong with the file if the message is only about the developer: macOS marks everything a browser downloads, and
 only lets a marked program run if Apple has checked it. PolyStrata's release builds are checked by Apple ("notarised"): drag
 PolyStrata onto Applications and open it; the first time, macOS asks "Are you sure you want to open it?" and you press Open. A
