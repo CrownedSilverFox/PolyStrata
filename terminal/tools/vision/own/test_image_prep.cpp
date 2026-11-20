@@ -39,6 +39,33 @@ int main(int argc, char** argv) {
         CHECK(smart_resize(64, 48, 32, 8192, 4194304).w * smart_resize(64, 48, 32, 8192, 4194304).h >= 8192);
         CHECK(smart_resize(0, 5, 32, 8192, 4194304) == (Size2{0, 0}));
     }
+    // --- MiniCPM-V 4.7's tiles: the shapes poly.10's reader (mtmd, llama.cpp 69f201a2) cut the test pictures into (overview, slice, grid) ---
+    {
+        VitGeometry g;
+        g.projector = "minicpmv4_7";
+        g.patch = 14;
+        g.merge = 4;
+        g.slice_size = 448;
+        g.max_slices = 9;
+        struct Want {
+            int w, h;
+            Size2 ov, cell;
+            int gx, gy;
+        };
+        const Want want[] = {
+            {64, 48, {504, 392}, {0, 0}, 0, 0},           // tiny_64x48: one tile, stretched up to a tile's area
+            {333, 333, {448, 448}, {0, 0}, 0, 0},         // odd_333x333
+            {90, 1000, {112, 1512}, {0, 0}, 0, 0},        // tall_90x1000
+            {1024, 1024, {448, 448}, {560, 392}, 2, 3},   // big1024: 2 x 3 slices
+            {1600, 1200, {504, 392}, {504, 392}, 3, 3},   // photo_1600x1200: 3 x 3 slices
+        };
+        for (const Want& c : want) {
+            Size2 ov, cell;
+            int gx = -1, gy = -1;
+            tile_sizes(c.w, c.h, g, ov, cell, gx, gy);
+            CHECK(ov == c.ov && cell == c.cell && gx == c.gx && gy == c.gy);
+        }
+    }
     if (argc < 6) {
         std::printf(g_fail ? "own_prep_check: %d FAILED\n" : "own_prep_check: self-checks ok\n", g_fail);
         return g_fail ? 1 : 0;
