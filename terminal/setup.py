@@ -9008,7 +9008,7 @@ def update_pull(argv: list) -> int | None:
     if repo is None:
         if source_download():
             say("  This copy of PolyStrata was not made with git, so it cannot fetch new files itself. Download the newest one:")
-            say("    https://github.com/Niko1221/Strata/archive/refs/heads/main.zip")
+            say("    https://github.com/simplexai-labs/PolyStrata/archive/refs/heads/main.zip")
             say(f"  unzip it anywhere and run {'START-HERE.bat' if WIN else './setup.sh'} in it: it finds the model files in PolyStrata-data")
             say("  and sets itself up the same way - nothing big is downloaded again.")
             say("  Checking this copy's engine and settings meanwhile ...")
