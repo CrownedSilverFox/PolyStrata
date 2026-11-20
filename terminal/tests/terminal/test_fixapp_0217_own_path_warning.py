@@ -15,7 +15,7 @@ import setup  # noqa: E402
 
 
 class ContextWarning(unittest.TestCase):
-    fam = setup.OWN_PATH_FAMILIES["qwen36"]
+    fam = setup.OWN_PATH_FAMILIES["qwen36-strata"]     # PolyStrata's name for this family (strata-poly's "qwen36" is another)
 
     def test_256k_on_a_12_gb_card_is_said_for_both_files(self):
         for model in ("UD-Q4_K_XL", "UD-Q6_K_XL"):
