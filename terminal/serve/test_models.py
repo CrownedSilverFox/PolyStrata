@@ -592,10 +592,15 @@ class Start(unittest.TestCase):
             real_sleep(s)
         served = []
         real_serve = S.serve
+        self.started = []                   # the run configs start_model() got
 
         def serve_it(svc, host="127.0.0.1", port=0):
             served.append(svc)
             return real_serve(svc, host=host, port=port)
+
+        def start_model(cfg, tok, lazy=False):
+            self.started.append(cfg)
+            return Stopped(tok), None, S.sampling_defaults_from_config(cfg), None, None
         with tempfile.TemporaryDirectory() as d:
             cfg = install(Path(d), "alpha", "qwen35moe", "a.gguf")
             cfg.write_text(json.dumps({**json.loads(cfg.read_text()), **(keys or {})}))
@@ -604,8 +609,7 @@ class Start(unittest.TestCase):
             with mock.patch.object(sys, "argv", ["server.py", "--engine", "strata", "--config", str(cfg), "--port", "0",
                                                  *argv]), \
                     mock.patch.object(S, "load_tokenizer", lambda p: tok), \
-                    mock.patch.object(S, "start_model", lambda cfg, tok, lazy=False:
-                                      (Stopped(tok), None, S.sampling_defaults_from_config(cfg), None, None)), \
+                    mock.patch.object(S, "start_model", start_model), \
                     mock.patch.object(S, "serve", serve_it), \
                     mock.patch.object(S.time, "sleep", sleep), mock.patch.object(S.signal, "signal"), \
                     contextlib.redirect_stdout(out):
@@ -655,6 +659,15 @@ class Start(unittest.TestCase):
         self.assertEqual(svc.overrides, {"fit_max_tokens": True, "idle_unload_s": 5.0, "min_free_vram_mib": 77,
                                          "before_load": "echo hi"})
         self.assertEqual(svc.cfg_overrides, {"gpu": 1})
+
+    def test_parallel_reaches_the_engine_and_a_switch(self):
+        """--parallel N is in the run config the engine starts from, and kept for a switch.  main() read the file again
+        after setting it, and a server started with --parallel 16 answered one request at a time."""
+        out, svc = self.start(argv=["--parallel", "4"])
+        self.assertEqual(self.started[0].get("parallel"), 4)
+        self.assertEqual(svc.cfg_overrides, {"parallel": 4})
+        args = S.engine_args(self.started[0], announce=False)
+        self.assertEqual(args[args.index("--batch") + 1], "4")
 
     def test_switch_on_request_from_the_config_or_the_command_line(self):
         """#38: off by default; the config's key or --switch-on-request turns it on, and the start says so."""

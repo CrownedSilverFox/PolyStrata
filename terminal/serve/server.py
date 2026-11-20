@@ -4366,10 +4366,10 @@ class Service:
         return next((e for e in self.models() if e["current"]), {**target, "status": "loaded", "current": True})
 
     def model_config(self, target: dict) -> tuple[dict, dict, object, ChatTemplate]:
-        """A registry model's run config as main() reads it (with the command line's --gpu / --replicas), its settings
-        (model_settings()), tokenizer and chat template.  ValueError: it cannot be used."""
+        """A registry model's run config as main() reads it (with the command line's --gpu / --replicas / --parallel and
+        its saved tuning), its settings (model_settings()), tokenizer and chat template.  ValueError: it cannot be used."""
         try:
-            cfg = run_config(target["config"], self.cfg_overrides)
+            cfg = apply_saved_tuning(run_config(target["config"], self.cfg_overrides))
         except SystemExit as e:                           # read_config()'s word for a JSON mistake, with its place
             raise ValueError(f"{target['id']} cannot be loaded: {str(e).removeprefix('[strata] ')}") from None
         try:
@@ -8886,7 +8886,7 @@ def main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> in
 def run_config(path, overrides: dict | None = None) -> dict:
     """A run config as the server uses it, at the start and at every switch to it (#37): read_config(), an option
     written as one entry of "args" split (#2267), "--reasoning-effort" lifted out of them (#1641), and the command
-    line's --gpu / --replicas (`overrides`) written in.  SystemExit for JSON that cannot be read."""
+    line's --gpu / --replicas / --parallel (`overrides`) written in.  SystemExit for JSON that cannot be read."""
     cfg = read_config(path)
     split_joined_args(cfg)
     lift_reasoning_effort_arg(cfg)
@@ -9280,7 +9280,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
             ap.error("--parallel must be in 1..1024; the engine may reduce it to the supported count")
         if parallel_flag_conflicts(cfg):
             ap.error("--parallel conflicts with an explicit --batch/--slots in the saved engine args")
-        cfg["parallel"] = a.parallel
+        cfg["parallel"] = cfg_overrides["parallel"] = a.parallel
     if a.batch_groups is not None:
         if a.batch_groups != "auto" and (not a.batch_groups.isdecimal() or int(a.batch_groups) < 1):
             ap.error("--batch-groups must be auto or a positive integer")
@@ -9300,7 +9300,9 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
                               "prefill_gpu": int(pair[0]), "decode_gpu": int(pair[1])}
     if a.gpu is not None:
         cfg_overrides["gpu"] = int(a.gpu) if a.gpu.strip().isdigit() else a.gpu
-    cfg = run_config(a.config, cfg_overrides) if a.config else dict(cfg_overrides)
+    # (the file was read above, its saved tuning, --parallel, --batch-groups and --split-serve put on it: read again,
+    # it lost them, and a server started with --parallel 16 answered one request at a time)
+    cfg = {**cfg, **cfg_overrides} if a.config else dict(cfg_overrides)
     a.host = a.host or cfg.get("host") or "127.0.0.1"   # issue #26: the run scripts pass no --host, the config can
     supplied_args = argv if argv is not None else sys.argv[1:]
     if ("STRATA_API_KEY" in os.environ and not os.environ["STRATA_API_KEY"].strip()) or \
