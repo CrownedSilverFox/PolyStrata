@@ -17,8 +17,9 @@ class HipFlagsNameTheRootFirst(unittest.TestCase):
         return re.findall(r'CMAKE_HIP_FLAGS=([^"\n]*)"', text)
 
     def test_setup_py_has_the_engine_and_the_picture_reader_builds(self):
-        found = self.flags("setup.py")
-        self.assertEqual(len(found), 2, found)
+        # (PolyStrata) and strata-poly's Linux build; the Windows builds ({rocm}: TheRock's wheels) have no system HIP headers to avoid
+        found = [f for f in self.flags("setup.py") if "{root}" in f]
+        self.assertEqual(len(found), 3, found)
         for flags in found:
             self.assertTrue(flags.startswith("-isystem {root}/include --rocm-path={root}"), flags)
 
