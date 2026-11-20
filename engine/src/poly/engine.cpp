@@ -721,6 +721,7 @@ Engine::~Engine() {
     }
     vmm_free(arena_);
     vmm_free(stage_map_);
+    vmm_free(prompt_map_);
     for (unsigned long long h : vpool_) cuMemRelease(h);   // the pool goes back to the card with the engine
     vpool_.clear();
     for (void* p : host_allocs_) cudaFreeHost(p);
@@ -2274,6 +2275,33 @@ bool Engine::mind_card_vram() {
 // three rounds a call.  For the read the buffer grows to stage_wide_, which holds the layer, with VRAM the
 // expert cache gives up (its least used experts) when the card has not that much free; narrow_stage() gives it
 // back.  VRAM the card does not give leaves the buffer as it was.
+// A call of kStageRows rows or more needs the buffers lend_prompt() gave the expert cache: it takes the VRAM back,
+// the cache's least used experts first, and maps them again.
+void Engine::take_prompt() {
+    if (!prompt_lent_) return;
+    if (up_) ck(cudaStreamSynchronize(cs(up_)), "a prompt's buffers");
+    ck(cudaStreamSynchronize(cs(st_)), "a prompt's buffers");
+    const size_t want = up_to(prompt_bytes_, pool_on_ ? pg_ : grain_);
+    size_t free_b = 0, total_b = 0;
+    ck(cudaMemGetInfo(&free_b, &total_b), "cudaMemGetInfo");
+    if (pool_on_) free_b = vpool_bytes();
+    const size_t quarter = pool_on_ ? 0 : (size_t(std::max(reserve_mib_, 0)) << 20) / 4;
+    if (exp_ && free_b < want + quarter) shrink_cache(want + quarter - free_b);
+    if (!pool_on_) budget_ -= std::min(budget_, want);
+    vmm_map(prompt_map_, prompt_bytes_, SIZE_MAX, "a prompt's buffers");
+    prompt_lent_ = false;
+}
+
+// Between prompts, the expert cache has the VRAM of the buffers only a prompt's calls use (alloc()).
+void Engine::lend_prompt() {
+    if (prompt_lent_ || !prompt_lends_ || freeze_experts_ || !exp_ || all_cached()) return;
+    ck(cudaStreamSynchronize(cs(st_)), "a prompt's buffers");
+    vmm_unmap(prompt_map_, 0);
+    prompt_lent_ = true;
+    if (!pool_on_) budget_ += up_to(prompt_bytes_, grain_);
+    grow_cache(prompt_bytes_, true);
+}
+
 void Engine::widen_stage() {
     if (stage_lent_ || stage_wide_ <= stage_narrow_) return;
     if (up_) ck(cudaStreamSynchronize(cs(up_)), "the expert staging buffer");
@@ -3202,13 +3230,6 @@ void Engine::shared_scratch() {
     rl_ = fbuf(n * n_expert_);
     logits_ = fbuf((size_t) n_vocab_);
     if (rows_ >= kStageRows && bf16_max_ > 0) wf_ = fbuf(bf16_max_);   // a BF16 matrix as floats, for lin()
-    if (mmq_) {
-        const size_t rr = n * n_used_;
-        gu_ = fbuf(rr * 2 * n_ff_exp_);
-        hx_ = fbuf(rr * n_ff_exp_);
-        dx_ = fbuf(rr * n_embd_);
-        hf_ = fbuf(rr);
-    }
 }
 
 // The sequence's state, the caches and every buffer, once the weights are known.
@@ -3304,10 +3325,37 @@ void Engine::alloc() {
         const size_t rr = n * n_used_,
                      tab = (3 * rr + 3 * (size_t) n_expert_ + 3 + kClasses * ((size_t) n_expert_ + 1) +
                             2 * kMaxStagedTiles * (2 * (size_t) n_expert_ + 2)) * sizeof(int32_t);
-        mq_ = dmalloc(Mmq::q8_bytes((int64_t) rr, n_embd_), "scratch");
-        mq2_ = dmalloc(Mmq::q8_bytes((int64_t) rr, n_ff_exp_), "scratch");
-        if (mixed_tiles) mqu_ = dmalloc(Mmq::q8_bytes((int64_t) rr, n_embd_), "scratch");
-        mqx_ = dmalloc(Mmq::q8_bytes(rows_, q_max), "scratch");
+        // The buffers only a call of kStageRows rows or more uses (moe_rows(), lin_raw()'s products), side by side:
+        // where they can be mapped apart (VMM) and the answer's calls never have that many rows, the expert cache
+        // has their VRAM between prompts (lend_prompt()), 300 MB of Qwen3.6's at a prompt batch of 2,048.
+        const size_t sizes[] = {rr * 2 * n_ff_exp_ * sizeof(float), rr * n_ff_exp_ * sizeof(float),
+                                rr * n_embd_ * sizeof(float), rr * sizeof(float),
+                                Mmq::q8_bytes((int64_t) rr, n_embd_), Mmq::q8_bytes((int64_t) rr, n_ff_exp_),
+                                mixed_tiles ? Mmq::q8_bytes((int64_t) rr, n_embd_) : 0, Mmq::q8_bytes(rows_, q_max)};
+        size_t at[8], total = 0;
+        for (int i = 0; i < 8; ++i) {
+            at[i] = total;
+            total += (sizes[i] + 255) / 256 * 256;
+        }
+        const int most_step = (opt_.batch + 1) * (opt_.batch_mtp ? 2 : 1);
+        prompt_lends_ = vmm_ && !split_ && std::max(opt_.window, most_step) < kStageRows;
+        uint8_t* base = nullptr;
+        if (prompt_lends_) {
+            vmm_reserve(prompt_map_, total);
+            vmm_map(prompt_map_, total, SIZE_MAX, "a prompt's buffers");
+            base = (uint8_t*) prompt_map_.base;
+            prompt_bytes_ = total;
+        } else {
+            base = (uint8_t*) dmalloc(total, "scratch");
+        }
+        gu_ = (float*) (base + at[0]);
+        hx_ = (float*) (base + at[1]);
+        dx_ = (float*) (base + at[2]);
+        hf_ = (float*) (base + at[3]);
+        mq_ = base + at[4];
+        mq2_ = base + at[5];
+        if (mixed_tiles) mqu_ = base + at[6];
+        mqx_ = base + at[7];
         d_ids_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         d_wts_ = (float*) dmalloc(rr * sizeof(float), "scratch");
         h_ids_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");
@@ -3828,6 +3876,7 @@ void Engine::lin_raw(const Dev& w, const float* x, float* y, int n, const void* 
     }
     // a prompt batch: llama.cpp's matrix-matrix kernels read the weights once for all the tokens
     if (mmq_ && n >= kStageRows && Mmq::fits((int) w.type, w.n_out, w.n_in)) {
+        if (prompt_lent_) throw std::logic_error("a prompt's product with its buffers lent to the expert cache");
         // A row too large for the halves its blocks keep their sums in goes in divided by a power of two, and x is
         // left as it was for whatever reads it next (both exact): its product comes out divided by the same.
         const bool guard = half_sum_guard_ && Mmq::half_sums((int) w.type);
@@ -5126,6 +5175,7 @@ void Engine::mirror_keep(int il, int e, const uint8_t* vram) {
 // A call that copies only the experts it routes to leaves a share of them to the CPU, which computes them while
 // the others are copied: the share that had the two take about as long (Options::cpu_share).
 void Engine::moe_rows(Layer& L, int il, int n) {
+    if (prompt_lent_) throw std::logic_error("a prompt's experts with their buffers lent to the expert cache");
     const int rr = n * n_used_;
     const size_t cap = (size_t) rows_ * n_used_;
     const bool ahead = opt_.stage_ahead > 0 && (n >= opt_.stage_ahead || shared_ahead_);
@@ -5566,6 +5616,7 @@ void* Engine::record(F&& work) {
 // n tokens from pos() through every layer.  The sequence is not longer for it: the caller says by how much.
 void Engine::run(const int32_t* tokens, int n) {
     if (n < 1 || n > rows_) throw std::logic_error("eval takes 1 to max_rows() tokens");
+    if (n >= kStageRows) take_prompt();
     if (pos_ + n > opt_.max_context)
         throw std::runtime_error("the context is full (" + std::to_string(opt_.max_context) + " tokens)");
     cover(pos_ + n);
@@ -6314,6 +6365,7 @@ void Engine::layer(int il, int n) {
 bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
                   const std::function<bool(int, int)>* turn) {
     if (n < 1 || n > read_rows_) throw std::logic_error("read takes 1 to max_read() tokens");
+    if (n >= kStageRows) take_prompt();
     for (const Image& im : images_)
         if (im.at < pos_ + n && im.at + im.n > pos_)
             throw std::logic_error("read takes no rows of a picture: eval() does, a picture a call");

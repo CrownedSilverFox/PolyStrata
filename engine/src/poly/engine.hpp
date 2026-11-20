@@ -292,6 +292,7 @@ public:
     /// buffer.  window() and step() do it too, if the caller has not.
     void end_read() {
         if (stage_lent_) narrow_stage();
+        if (prompt_lends_) lend_prompt();
     }
 
     /// Whether the architecture reads pictures.
@@ -662,6 +663,12 @@ protected:
     size_t kv_step_bytes() const;
     void shrink_cache(size_t bytes);
     int grow_cache(size_t bytes, bool later = false);
+    /// The buffers only a prompt's calls use (alloc()): mapped apart, and the expert cache's between prompts.
+    Mapped prompt_map_;
+    size_t prompt_bytes_ = 0;
+    bool prompt_lends_ = false, prompt_lent_ = false;
+    void take_prompt();
+    void lend_prompt();
     void fill_now();
     void widen_stage();
     void narrow_stage();
