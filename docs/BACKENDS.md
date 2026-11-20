@@ -30,8 +30,9 @@ a second machine, a Windows laptop whose card has 8 GB.
 GGUF in place, and it now has eight architectures. It was called `strata-glm`, after its first model; an install
 from then keeps its engine and moves to the new name the next time setup updates it.
 
-The optional CUDA [GDN prefill adapter](DETAILS.md#strata-poly-chunked-gdn-prefill) uses
-`STRATA_GDN_MMA=1` for eligible Qwen35 reads. It is off by default; that section lists its shape and device limits.
+The CUDA [GDN prefill adapter](DETAILS.md#strata-poly-chunked-gdn-prefill) reads eligible Qwen35 prompts on the
+tensor cores. It is on by default where the card and the shape allow it, and `STRATA_GDN_MMA=0` turns it off;
+that section lists its shape and device limits.
 
 ## Install
 

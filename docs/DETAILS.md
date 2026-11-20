@@ -2018,10 +2018,11 @@ Also from PR #3779, measured by its author on the same CMP 170HX; none of the fi
 
 ## strata-poly: chunked GDN prefill
 
-`STRATA_GDN_MMA=1` requests the shared CUDA tensor-core GDN kernel for eligible reads in the Qwen35 backend.
-Unset or `0` keeps the stock recurrence. The request is captured at engine initialization; restart to change
-it. The server's existing model `env` map accepts the same setting, and an explicit `"0"` overrides an
-inherited `1`. There is no new API parameter or installer default.
+The Qwen35 backend reads eligible prompts with the shared CUDA tensor-core GDN kernel. It is on by default where
+the card and the shape allow it (`engine/src/poly/gdn_mma_control.hpp`); `STRATA_GDN_MMA=0` keeps the stock
+recurrence. The setting is read once when the engine starts; restart to change it. The model's `env` in its run
+config takes the same setting, and an explicit `"0"` there overrides a `1` in the server's environment. Setup
+writes no value and there is no API parameter.
 
 The capability decision is logged once per engine, including fallback on unsupported shapes, devices or
 backends. Eligible calls have 128 values per head, 16 key heads, 16/32/48/64 value heads and at least 64
@@ -2032,11 +2033,16 @@ The shared `strata_gdn_mma` library exposes prepared inputs through `include/str
 in `strata::kernels`. Qwen35 (`qwen35moe`) is currently the only integrated caller; other compatible models
 can add thin adapters using the same kernel and capability checks. The original `strata` engine is unchanged.
 
-Supported CUDA targets are SM 86/89/120/121, subject to sufficient shared memory; SM100 is not enabled.
-Runtime measurements used SM89. CUDA 13.3 compilation was checked for the SM120/121 kernel and SM120
-adapter, but Blackwell runtime testing is still needed. HIP and SYCL were not built here; the CUDA library
-is excluded on those backends. This experimental opt-in changes floating-point accumulation and can change
-outputs. Prefill gains do not guarantee faster generation; some measured long-response TG runs regressed.
+Every CUDA build of strata-poly has the kernel. It runs on compute capability 8.6, 8.9, 12.0 and 12.1, subject to
+sufficient shared memory (`gdn_mma_policy.hpp`); SM80, SM90 and SM100 are not enabled. An engine built with
+`-DSTRATA_EXPERIMENTAL_SM60=ON`, which setup does for a card older than sm_75, also has a Volta (7.0) arm with
+m8n8k4 products, so a V100 takes this path too; `STRATA_GDN_MMA=0` turns it off there as well. HIP and SYCL
+builds leave the kernel out. The first runtime measurements used SM89; `poly_gdn_mma_test` passes on an RTX PRO
+6000 (12.0). It changes floating-point accumulation and can change outputs: with Qwen3.6 UD-Q3_K_M on 20 prompts
+of 256 to 4,096 tokens, the next-token KL against the stock recurrence was median 0.00014 and mean 0.0019, with
+the top token different on 1 of 20. A 4,833-token prompt with every expert in VRAM
+read at 7,353 and 6,753 tokens/s with it and 6,038 and 6,617 without (two runs each, on a card shared with other
+jobs). Prefill gains do not guarantee faster generation; some measured long-response TG runs regressed.
 
 ## strata-poly: streaming CPU copies for expert staging
 
