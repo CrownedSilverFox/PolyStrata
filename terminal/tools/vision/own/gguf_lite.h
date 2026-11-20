@@ -48,6 +48,7 @@ public:
 
     const std::string& path() const { return path_; }
     uint64_t file_size() const { return file_size_; }
+    uint64_t data_start() const { return data_start_; }   // the file offset of the tensor data (GgufTensorInfo::offset counts from here)
 
     bool has(const std::string& key) const { return kv_.count(key) != 0; }
     bool get_u32(const std::string& key, uint32_t& v) const;       // any integer type holding a value in 0 .. 2^32-1 (bool counts)

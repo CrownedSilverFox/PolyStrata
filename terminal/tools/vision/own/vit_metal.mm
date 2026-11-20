@@ -24,8 +24,11 @@
 #include <map>
 #include <set>
 
+#include <fcntl.h>
 #include <mach/mach.h>
 #include <malloc/malloc.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 namespace strata_vit {
 
@@ -38,6 +41,7 @@ enum Kind { K_F32 = 0, K_F16 = 1, K_BF16 = 2, K_HF = 3 };
 
 struct DevW {            // a weight matrix [rows = out][cols = in] on the device
     id<MTLBuffer> b = nil;
+    size_t off = 0;      // where it starts in b (the mapped mmproj file's buffer: its offset in the file)
     Kind kind = K_BF16;
     int rows = 0, cols = 0;
 };
@@ -162,7 +166,31 @@ struct VitGpuImpl {
     // CUDA / HIP tower has no Metal kernel: 1 reads as 0 here.
     int bf16_mode = BF16_TO_F16;
 
-    ~VitGpuImpl() { finish(); }
+    // the mmproj file mapped read-only and wrapped as one no-copy buffer: an F16 matrix is read where it lies in the file.  Its pages are the
+    // file's, which macOS can drop and read again, not memory of the process (a copy was the file's size more of the footprint)
+    void* map_base = nullptr;
+    size_t map_len = 0;
+    id<MTLBuffer> d_file = nil;
+    uint64_t file_data = 0;      // the file offset of its tensor data
+    void map_file(const Gguf& gg) {
+        const int fd = ::open(gg.path().c_str(), O_RDONLY);
+        if (fd < 0) return;
+        const size_t page = (size_t) getpagesize();
+        const size_t len = ((size_t) gg.file_size() + page - 1) / page * page;
+        void* p = mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd, 0);
+        ::close(fd);
+        if (p == MAP_FAILED) return;
+        d_file = [dev newBufferWithBytesNoCopy:p length:len options:MTLResourceStorageModeShared deallocator:nil];
+        if (!d_file) { munmap(p, len); return; }   // copies then, as before
+        map_base = p;
+        map_len = len;
+        file_data = gg.data_start();
+    }
+    ~VitGpuImpl() {
+        finish();
+        d_file = nil;
+        if (map_base) munmap(map_base, map_len);
+    }
 
     id<MTLBuffer> buf(size_t n_bytes, bool weight, std::string& err) {
         id<MTLBuffer> b = [dev newBufferWithLength:std::max<size_t>(n_bytes, 16) options:MTLResourceStorageModeShared];
@@ -209,6 +237,12 @@ struct VitGpuImpl {
         w.rows = 0;
         size_t n = 0;
         for (const GgufTensorInfo* ti : ts) { w.rows += (int) ti->ne[1]; n += (size_t) ti->nelem(); }
+        if (d_file && ts.size() == 1 && t->type == GT_F16) {     // read in place, in the mapped file
+            w.kind = K_F16;
+            w.b = d_file;
+            w.off = (size_t) (file_data + t->offset);
+            return true;
+        }
         std::vector<uint16_t> raw(n);
         if (t->type == GT_F16 || t->type == GT_BF16) {        // as stored; a BF16 matrix as F16 (K_HF) unless a weight is beyond F16's range
             size_t at = 0;
@@ -318,7 +352,7 @@ struct VitGpuImpl {
         const char* mpp = nullptr;
         if (f16 && mpp_f16) mpp = M >= 128 ? "vm_gemm_f16_128" : "vm_gemm_f16_64";
         if (w.kind == K_BF16 && mpp_bf16) mpp = M >= 128 ? "vm_gemm_bf16_128" : "vm_gemm_bf16_64";
-        gemm(plain, mpp, A, BO(w.b), y, M, w.cols, w.rows, w.cols, w.cols, w.rows, 0, 0, 0, 1, M >= 128 ? 128 : 64);
+        gemm(plain, mpp, A, BO(w.b, w.off), y, M, w.cols, w.rows, w.cols, w.cols, w.rows, 0, 0, 0, 1, M >= 128 ? 128 : 64);
         if (round_out) {
             const EltArgs e{(uint64_t) M * w.rows, (int32_t) w.kind, 0};     // (K_HF rounds to BF16 here, as vit_gpu.cu's k_round does)
             go("vk_round", {y}, &e, sizeof e, MTLSizeMake(blocks_for(e.n), 1, 1), 256);
@@ -855,6 +889,7 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
         if (const char* e = std::getenv("STRATA_VIT_SCORES_LARGE")) { const long v = std::atol(e); if (v >= 1) m.kScoreElemsLarge = (size_t) v << 20; }
         if (const char* e = std::getenv("STRATA_VIT_NPAD")) { const int v = std::atoi(e); if (v >= 8 && v % 8 == 0) m.n_pad = v; }
         if (const char* e = std::getenv("STRATA_VIT_QALIGN")) { const int v = std::atoi(e); if (v >= 1) m.q_align = v; }
+        m.map_file(gg);
         if (m.gemma() || g.minicpmv()) {
             if (!(m.gemma() ? m.load_gemma(gg, err) : m.load_minicpm(gg, err))) return false;
             footprint_note("weights uploaded");
