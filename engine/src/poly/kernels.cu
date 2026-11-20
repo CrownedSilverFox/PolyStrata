@@ -1957,12 +1957,13 @@ attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcach
 // attend()'s three launches for a step's sequences, blockIdx.z the sequence: each runs the one-sequence code on
 // its own queries, cache, position, room and scores.  A block past what the sequence's own launch had returns: the
 // score kernel's own test sends it back (its rows lie past the span), the others' below.
-template <int N, int STEPS>
+template <int N, int STEPS, bool Q8>
 __global__ void __launch_bounds__(SCORE_WARPS * WARP)
 attn_score_seqs_kernel(const AttnSeqs a, int n_head, int kv_heads, float scale) {
     const int k = blockIdx.z;
-    attn_score_reg_body<N, STEPS, true>(a.q[k], nullptr, a.score[k], a.keys[k], n_head, kv_heads, 0, 0, a.tokens[k],
-                                        scale, 0, 0, -1, a.at[k], a.kc[k], a.ks[k], a.rs);
+    attn_score_reg_body<N, STEPS, Q8>(a.q[k], Q8 ? nullptr : (const half*) a.kc[k], a.score[k], a.keys[k], n_head,
+                                      kv_heads, 0, 0, a.tokens[k], scale, 0, 0, -1, a.at[k], Q8 ? a.kc[k] : nullptr,
+                                      a.ks[k], a.rs);
 }
 
 __global__ void attn_softmax_seqs_kernel(const AttnSeqs a, int per) {
@@ -1971,14 +1972,15 @@ __global__ void attn_softmax_seqs_kernel(const AttnSeqs a, int per) {
     attn_softmax_body(a.score[k], a.keys[k], 0, 0, a.tokens[k], 0, -1, a.at[k], a.wt[k], per, nullptr, nullptr);
 }
 
-template <int TILES>
+template <int TILES, bool Q8>
 __global__ void __launch_bounds__(VALUE_DIMS * VALUE_SHARES)
 attn_value_seqs_kernel(const AttnSeqs a, int dim, int n_head, int kv_heads) {
     const int k = blockIdx.z, per = n_head / kv_heads;
     const int blocks = (a.tokens[k] * per + VALUE_QUERIES - 1) / VALUE_QUERIES;
     if (int(blockIdx.y) * TILES >= blocks) return;
-    attn_value_t_body<TILES, true>(a.wt[k], nullptr, a.out[k], a.keys[k], dim, n_head, kv_heads, 0, 0, a.tokens[k],
-                                   0, 0, -1, a.at[k], a.vc[k], a.vs[k], a.rs);
+    attn_value_t_body<TILES, Q8>(a.wt[k], Q8 ? nullptr : (const half*) a.vc[k], a.out[k], a.keys[k], dim, n_head,
+                                 kv_heads, 0, 0, a.tokens[k], 0, 0, -1, a.at[k], Q8 ? a.vc[k] : nullptr, a.vs[k],
+                                 a.rs);
 }
 
 // A chunk's queries and its results lie in two orders: the engine's (token, head) and the one a product per
@@ -3433,6 +3435,20 @@ void store_q8_rows(const float* x, const RowCaches& caches, int n, const long lo
     store_q8_rows_kernel<<<grid((size_t) nb * rows, 256), 256, 0, cs(stream)>>>(x, caches, n, rows, nb, at);
 }
 
+// store_f16_at_kernel for rows of different sequences: row trow's values on its own cache's row.
+__global__ void store_f16_rows_kernel(const float* __restrict__ x, const RowHalves caches, int n, int rows,
+                                      const long long* __restrict__ at) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n * rows) return;
+    const int trow = i / n;
+    ((half*) caches.rows[trow])[size_t(at[2 * size_t(trow)]) * n + i % n] = __float2half(x[i]);
+}
+
+void store_f16_rows(const float* x, const RowHalves& caches, int n, const long long* at, int rows, void* stream) {
+    if (rows < 1 || rows > RowHalves::kMax) throw std::invalid_argument("store_f16_rows: 1 to 32 rows");
+    store_f16_rows_kernel<<<grid(size_t(n) * rows, 256), 256, 0, cs(stream)>>>(x, caches, n, rows, at);
+}
+
 void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const long long* at, int rows, int ring,
                  void* stream, size_t rs) {
     if ((n & 31) != 0 || (rs & 31) != 0) throw std::invalid_argument("store_q8_at: n or rs is not a multiple of 32");
@@ -3868,6 +3884,8 @@ int attend_value_tiles(int c, int chunk, int dim, int n_head, int kv_heads) {
 bool attend_seqs_plan(AttnSeqs& a, float* score, size_t score_floats, int chunk, int dim, int n_head, int kv_heads) {
     const int per = n_head / kv_heads;
     if (a.n < 1 || a.n > AttnSeqs::kMax || attend_score_kind(dim, per) == 0) return false;
+    // attend() reads an fp16 cache of these shapes through its split kernels, which have no launch here
+    if (a.f16 && ((dim == 64 && per == 4) || (dim == 128 && per == 8))) return false;
     if (dim % SCORE_VALUES || uintptr_t(score) % 16) return false;
     int tiles = -1;
     size_t at = 0;
@@ -3897,22 +3915,29 @@ void attend_seqs(const AttnSeqs& a, int dim, int n_head, int kv_heads, float sca
         most_blocks = std::max(most_blocks, (int) grid(a.tokens[k] * per, VALUE_QUERIES));
     }
     const dim3 sg(grid(most_units, SCORE_WARPS), 1, a.n);
-    switch (attend_score_kind(dim, per)) {
-    case 1: attn_score_seqs_kernel<4, 1><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale); break;
-    case 2: attn_score_seqs_kernel<8, 2><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale); break;
-    case 3: attn_score_seqs_kernel<4, 2><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale); break;
-    default: attn_score_seqs_kernel<4, 4><<<sg, SCORE_WARPS * WARP, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+    const unsigned st = SCORE_WARPS * WARP;
+    const int kind = attend_score_kind(dim, per);
+    if (a.f16) {
+        if (kind == 1) attn_score_seqs_kernel<4, 1, false><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+        else if (kind == 2) attn_score_seqs_kernel<8, 2, false><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+        else if (kind == 3) attn_score_seqs_kernel<4, 2, false><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+        else attn_score_seqs_kernel<4, 4, false><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+    } else {
+        if (kind == 1) attn_score_seqs_kernel<4, 1, true><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+        else if (kind == 2) attn_score_seqs_kernel<8, 2, true><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+        else if (kind == 3) attn_score_seqs_kernel<4, 2, true><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
+        else attn_score_seqs_kernel<4, 4, true><<<sg, st, 0, cs(stream)>>>(a, n_head, kv_heads, scale);
     }
     attn_softmax_seqs_kernel<<<dim3(n_head, most_rows, a.n), 256, 0, cs(stream)>>>(a, per);
     // the tiles every sequence's attend() would take (attend_seqs_plan() made sure they are one)
     const int c0 = a.tokens[0], blocks0 = grid(c0 * per, VALUE_QUERIES);
     const bool two = blocks0 > 1 && kv_heads * dims * grid(blocks0, 2) >= 32;
-    if (two)
-        attn_value_seqs_kernel<2><<<dim3(kv_heads * dims, grid(most_blocks, 2), a.n), VALUE_DIMS * VALUE_SHARES, 0,
-                                    cs(stream)>>>(a, dim, n_head, kv_heads);
-    else
-        attn_value_seqs_kernel<1><<<dim3(kv_heads * dims, most_blocks, a.n), VALUE_DIMS * VALUE_SHARES, 0,
-                                    cs(stream)>>>(a, dim, n_head, kv_heads);
+    const dim3 vg(kv_heads * dims, two ? grid(most_blocks, 2) : most_blocks, a.n);
+    const unsigned vt = VALUE_DIMS * VALUE_SHARES;
+    if (two && a.f16) attn_value_seqs_kernel<2, false><<<vg, vt, 0, cs(stream)>>>(a, dim, n_head, kv_heads);
+    else if (two) attn_value_seqs_kernel<2, true><<<vg, vt, 0, cs(stream)>>>(a, dim, n_head, kv_heads);
+    else if (a.f16) attn_value_seqs_kernel<1, false><<<vg, vt, 0, cs(stream)>>>(a, dim, n_head, kv_heads);
+    else attn_value_seqs_kernel<1, true><<<vg, vt, 0, cs(stream)>>>(a, dim, n_head, kv_heads);
 }
 
 void merge_attn_piece(float* acc_out, float* acc_ml, const float* piece_out, const float* piece_ml, int rows,
