@@ -315,6 +315,7 @@ from serve.server_parts.openai_api import (  # noqa: F401  (moved unchanged, fil
     openai_collect,
 )
 from serve.frontend import (CALL_END, CALL_START, FUNC_END, FUNC_START, THINK_END, ChatTemplate, Event, OutputParser,  # noqa: E402
+                            InklingOutputParser, INK_TEXT_OPEN, inkling_forced_call,
                             parser_for_template, anthropic_to_messages, anthropic_tools,
                             forced_call, gemma_model_turn, images_of, literal_tags, mark_think_literals, openai_to_messages, require_messages,
                             tool_choice_of, unmark_think_literals)
@@ -423,7 +424,8 @@ QUEUE_BEAT_S = 10.0         # a request waiting for the single turn sends a keep
 # ends the first turn: the system prompt with the tools, which "warm_start" keeps.
 TURN_OPENERS = {"function": ("<|im_start|>",), "gemma": ("<|turn>",),
                 "glm": ("<|system|>", "<|developer|>", "<|user|>", "<|assistant|>", "<|observation|>"),
-                "dsml": ("<｜User｜>", "<｜Assistant｜>"), "lfm2": ("<|im_start|>",)}
+                "dsml": ("<｜User｜>", "<｜Assistant｜>"), "lfm2": ("<|im_start|>",),
+                "inkling": ("<|message_system|>", "<|message_user|>", "<|message_tool|>", "<|message_model|>")}
 # A model whose turns are not its call format's: Laguna writes GLM's calls, and of its turn tags only <assistant> is
 # one token (<system>, <user> and <tool_response> are text)
 TURN_OPENERS_OF_PRE = {"laguna": ("<assistant>",)}
@@ -4235,7 +4237,13 @@ class Service:
         # how the model writes a tool call (serve/frontend.py's OutputParser)
         pre = getattr(tokenizer, "pre", "")
         self.call_format = "glm" if pre in ("glm4", "glm5", "flint", "laguna") else "gemma" if pre == "gemma4" else \
-            "dsml" if pre in ("joyai-llm", "deepseek-v3") else "lfm2" if pre == "lfm2" else "function"
+            "dsml" if pre in ("joyai-llm", "deepseek-v3") else "lfm2" if pre == "lfm2" else \
+            "inkling" if pre == "inkling2" else "function"
+        self.text_open_ids = []
+        if self.call_format == "inkling":       # its replies are typed blocks, whatever its template says of tools
+            self.parser_cls = InklingOutputParser
+            self.text_open_ids = tokenizer.encode(INK_TEXT_OPEN, parse_special=True)
+            self._force_text = inkling_forced_call
         openers = TURN_OPENERS_OF_PRE.get(pre) or TURN_OPENERS[self.call_format]
         # templates that read a tool as OpenAI sends it, {"type": "function", "function": {...}}: Gemma's and DeepSeek's
         # look inside it, and Laguna's prints it whole (vLLM and llama.cpp give it the request's tools as they are)
@@ -5601,6 +5609,16 @@ class Service:
                   "enable_thinking": not off}
         if self.openai_tools and tools:   # their templates read a tool as OpenAI sends it (_read_tokenizer())
             tools = [{"type": "function", "function": t} for t in tools]
+        if self.call_format == "inkling":
+            # Inkling 2's template has one switch, reasoning_effort (a name or a number from 0 to 0.99), written in
+            # a system message ahead of the conversation; an effort it does not know would stop the render
+            known = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+            level = "none" if off else effort if effort in known or isinstance(effort, (int, float)) else "high"
+            rest = {k: v for k, v in kwargs.items() if k not in ("reasoning_effort", "enable_thinking")}
+            prompt = self.template.render(messages, tools=tools, reasoning_effort=level, **rest)
+            # at effort 0 the model still opens a thinking block now and then: a reply that must not think starts
+            # in its text block (the parser is told: _read_tokenizer()'s text_open_ids)
+            return prompt + INK_TEXT_OPEN if off else prompt
         if not self.effort_end or (not off and effort in (None, "", "xhigh", "high")):
             prompt = self.template.render(messages, tools=tools, **kwargs)
             if self.call_format == "gemma":
@@ -5763,6 +5781,9 @@ class Service:
             messages, ids = self.drop_oldest_turns(messages, tools, kwargs, ids, max_new)
             encoded_ids = ids
         if force and kwargs.get("enable_thinking", True) is False:
+            # (Inkling 2: the forced call is the reply's block, in place of the text block render_prompt() opened)
+            if self.text_open_ids and ids[-len(self.text_open_ids):] == self.text_open_ids:
+                ids = ids[:-len(self.text_open_ids)]
             ids = ids + self.tok.encode(force, parse_special=True)
         images = images_of(messages)
         if self.truncate_middle and not images:
@@ -6087,6 +6108,9 @@ class Service:
                       f"the answer (budget {budget})", flush=True)
                 budget = max(1, max_new - reserve)
         opened = bool(self.think_open_ids) and ids[-len(self.think_open_ids):] == self.think_open_ids
+        if self.text_open_ids:                          # Inkling 2: the prompt opened the reply's text block
+            opened = ids[-len(self.text_open_ids):] == self.text_open_ids
+            budget = None                               # its thinking is a block of its own: no </think> to close it with
         parser = self.parser_cls(thinking=thinking, tools=with_history_tools(tools, sampling), stream_tools=True,
                                  recover=self.tool_call_recovery, declared_only=declared_only,
                                  deferred=deferred or self.undeclared_tool_calls == "call",   # #4622: opt-in, as for a deferred tool
