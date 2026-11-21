@@ -2,8 +2,8 @@
 
 Back to [README.md](../../README.md)
 
-**Inkling 2 Mini** by Thinking Machines: a file of 14 or 18 GB. It is experimental here. It has run on Linux with one
-RTX 5090, text only, one request at a time. Its 24 layers of weights run as 48: the twelve in the middle run three
+**Inkling 2 Mini** by Thinking Machines: a file of 14 or 18 GB. It is experimental here. It has run on Linux with an
+RTX 5090 and on Windows with an 8 GB laptop card, text only, one request at a time. Its 24 layers of weights run as 48: the twelve in the middle run three
 times for every token. Forty of the 48 look back 1,024 tokens only, so a long conversation takes little VRAM:
 32,768 bytes a token.
 
@@ -30,16 +30,27 @@ The two start with the same tokens. For UD-Q4_K_XL the first 13 after the short 
 long one are the same, and they part at a step whose two leading candidates are nearly as likely (0.35 against 0.34,
 and 0.028 against 0.028). For UD-Q3_K_XL the first 13 and the first 40 are the same.
 
+On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,075 of
+its 3,072 experts on the card and the rest are computed on the CPU. Three runs of the README's benchmark:
+
+| Size | Writes in a short chat | Reads a 30,954-token prompt | Writes after it |
+| --- | ---: | ---: | ---: |
+| **UD-Q3_K_XL** | 36 tokens/s | 408-412 tokens/s | 27-29 tokens/s |
+
+Reading is the slow part on a small card. The model's looped layers make every batch of the prompt upload the
+experts that are not on the card again. With `--prompt-batch 2048` the same prompt was read at 539 tokens/s (one
+run).
+
 ## What you need
 
 | | |
 | --- | --- |
-| **Graphics card** | One **NVIDIA** card. It has run on an RTX 5090 (32 GB) only. About 3.7 GB are taken before any expert at a 32K context. |
+| **Graphics card** | One **NVIDIA** card with **8 GB of VRAM or more**. It has run on an RTX 5090 (32 GB) and on an RTX 4070 Laptop (8 GB). About 3.7 GB are taken before any expert at a 32K context. |
 | **RAM** | About **21 or 17 GB** beside an 8 GB card for UD-Q4_K_XL and UD-Q3_K_XL, the installer's estimate. A 32 GB card holds either size whole. |
 | **Disk** | 17.6 or 13.6 GB for the model file. |
-| **System** | Linux and a current NVIDIA driver. |
+| **System** | Linux or Windows 10 / 11, and a current NVIDIA driver. |
 
-Not run yet: Windows, an AMD card, a Mac, several cards, and a card smaller than 32 GB. The model also reads
+Not run yet: an AMD card, a Mac, several cards, and UD-Q4_K_XL on the 8 GB card. The model also reads
 pictures and has a draft file for faster answers; neither is used here yet. The engine takes one request at a time
 for this model, and the installer writes `"parallel": 1`. Its license is Apache 2.0.
 

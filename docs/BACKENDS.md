@@ -61,8 +61,9 @@ text, a tool call), which the server turns into the same reasoning, content and 
 A request that asks for no thinking has its prompt end inside the text block.
 
 It has run on Linux with an RTX 5090: chat, streaming, separate reasoning, a tool call and its answer, and a
-conversation continued from the cache. Not run yet: its image tower, its draft file, Windows, AMD cards, a Mac,
-several cards and several requests at once, which the engine refuses for it (setup writes `"parallel": 1`).
+conversation continued from the cache. On Windows UD-Q3_K_XL was installed by setup and ran the README's benchmark
+on an RTX 4070 Laptop (8 GB). Not run yet: its image tower, its draft file, AMD cards, a Mac, several cards and
+several requests at once, which the engine refuses for it (setup writes `"parallel": 1`).
 UD-Q2_K_XL is not offered: six of its layers have 1-bit (IQ1_S) experts, which the card's expert cache does not
 hold, and with them on the CPU the RTX 5090 wrote 46 tokens/s where llama.cpp wrote 86. Speeds and the
 comparison with llama.cpp are in [inkling.md](models/inkling.md).

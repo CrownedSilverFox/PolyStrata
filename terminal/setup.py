@@ -930,12 +930,12 @@ FAMILIES = {
     # request at a time ("one_request": setup writes "parallel": 1).  "vram_beside_gb" is the peak VRAM measured on an RTX 5090 with no expert on the card, a 10,081-token
     # prompt read 1,024 tokens at a time at a 32K context (2,916 MiB), plus the rows of the context's other tokens.
     "inkling": {"title": "Inkling 2 Mini", "by": "Thinking Machines; quantized by Unsloth",
-                "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux, text only so far; "
-                         "a 17.6 GB file, or 13.6 GB",
+                "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux or Windows, text only so "
+                         "far; a 17.6 GB file, or 13.6 GB",
                 "hf": hf("unsloth/Inkling-2-Mini-GGUF") + "Mainline_Support/", "file": "Inkling-2-Mini-{q}.gguf",
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": False, "experimental": True,
-                "row_bytes": 32768, "one_request": True,
+                "windows": True, "ran_on_gb": 8, "row_bytes": 32768, "one_request": True,
                 "models": {"UD-Q4_K_XL": {"about": "4-bit experts (NVFP4, Unsloth Dynamic), 8-bit where they write",
                                           "download_gb": 17.6, "ram_gb": 21, "arena_gb": 15.797846016,
                                           "vram_beside_gb": 3.7},
