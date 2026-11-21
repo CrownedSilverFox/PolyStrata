@@ -3197,6 +3197,10 @@ void Engine::load(const Options& o) {
         ram_available(&own);
         pool_uncached_ = own;   // read_file()
     }
+    if (const char* dump = std::getenv("STRATA_COVER_DUMP"); dump && dump[0] == '1')   // measuring only
+        for (int pct : {70, 75, 80, 85, 90, 93, 95, 96, 97, 98, 99})
+            std::fprintf(stderr, "strata-poly: STRATA_COVER_DUMP: %d%% of the use outside VRAM in %zu MiB, of %zu MiB "
+                                 "outside\n", pct, covering(pct) >> 20, outside_bytes_ >> 20);
     if (opt_.ram_experts_mib < -1) {
         constexpr size_t kRamHeadroom = size_t(4) << 30;
         size_t avail = ram_available();
