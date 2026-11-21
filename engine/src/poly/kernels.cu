@@ -137,6 +137,23 @@ __global__ void gemv_set_kernel(GemvSet s, int n_in) {
     if (threadIdx.x == 0) s.y[m][tok * n_out + o] = acc;
 }
 
+// gemv_set_kernel where it runs 32 threads (n_in under 128): a warp an output, 8 a block.  A warp's sum is the
+// block's there, 0 plus its warp_sum.
+__global__ void gemv_set_warp_kernel(GemvSet s, int n_in, int n_all) {
+    const int o_all = int(blockIdx.x) * 8 + int(threadIdx.x >> 5), lane = threadIdx.x & 31;
+    if (o_all >= n_all) return;
+    int m = 0;
+    while (o_all >= s.first[m + 1]) ++m;
+    const int o = o_all - s.first[m], n_out = s.first[m + 1] - s.first[m];
+    const size_t tok = blockIdx.y;
+    const float* wr = s.w[m] + size_t(o) * n_in;
+    const float* xr = s.x[m] + tok * n_in;
+    float acc = 0.0f;
+    for (int i = lane; i < n_in; i += 32) acc += wr[i] * xr[i];
+    acc = 0.0f + warp_sum(acc);
+    if (lane == 0) s.y[m][tok * n_out + o] = acc;
+}
+
 // gemv_kernel and gemv_pair_kernel for a few tokens with a block an output, not an output and a token: the block
 // reads its row of the weights once and takes every token's input against it.  A token's sum is the one those
 // kernels make for it, term for term and in the same order, and so is the block's sum over its warps.  Qwen3.6's
@@ -3462,8 +3479,12 @@ void gemv_set(const float* const* w, const float* const* x, float* const* y, con
         s.first[m + 1] = s.first[m] + n_out[m];
     }
     for (int m = count; m < kGemvSet; ++m) s.first[m + 1] = s.first[count];
-    const int threads = n_in >= 128 ? sum_threads(n_in) : 32;
-    gemv_set_kernel<<<dim3(s.first[count], rows), threads, 0, cs(stream)>>>(s, n_in);
+    if (n_in < 128) {
+        const int all = s.first[count];
+        gemv_set_warp_kernel<<<dim3((all + 7) / 8, rows), 256, 0, cs(stream)>>>(s, n_in, all);
+    } else {
+        gemv_set_kernel<<<dim3(s.first[count], rows), sum_threads(n_in), 0, cs(stream)>>>(s, n_in);
+    }
     if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
         throw std::runtime_error(std::string("gemv_set: ") + cudaGetErrorString(e));
 }

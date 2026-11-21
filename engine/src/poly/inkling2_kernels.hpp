@@ -20,6 +20,9 @@ struct InkStates {
 /// states' sum.  `query` holds n_query queries of n_embd; out[j] gets query j's rows.
 void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
              void* stream);
+/// ink_mix() and then rms_norm() of out[0] (weight norm_w, null: none) into norm_out, in one launch with the same bits.
+void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
+                  const float* norm_w, float* norm_out, float eps, void* stream);
 
 /// out = [rms_norm(cur) | rms_norm(msg)] a token (eps 1e-6, no weight): what a loop controller's down matrix takes.
 void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream);
@@ -48,6 +51,10 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
 /// acc = acc + out * a (axpy()), mode 1 keep = acc and then acc = out, mode 2 acc = out.  The same bits.
 void ink_conv_add(const float* x, float* state, const float* w, float* out, float* acc, float* keep, float a, int mode,
                   int channels, int taps, void* stream);
+/// One token's routed experts' sum onto fo (moe_sum(): fo += the n_used rows of x weighted by w), then ink_conv_add()
+/// of fo in mode 0, in one launch with the same bits.
+void ink_moe_conv_add(const float* x, const float* w, int n_used, float* fo, float* state, const float* cw, float* out,
+                      float* acc, float a, int channels, int taps, void* stream);
 
 /// Each head's `dim` values, times scale (null: none; [dim] a head), brought down to an L2 norm of at most `thr`
 /// (the norm has 1e-6 added), then times tau = 1 + alpha * log(max(1, (pos + row + 1) / floor)) when alpha > 0.

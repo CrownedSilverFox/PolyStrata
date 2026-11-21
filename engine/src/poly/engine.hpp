@@ -515,6 +515,14 @@ protected:
     }
     /// The shared expert, into fo_.  It runs on the GPU while the host routes.
     virtual void moe_shared(const Layer& L, int il, int n) = 0;
+    /// True: moe_card() leaves the routed experts' sum (d_ weighted by d_wts_, onto fo_) of a call of n tokens to the
+    /// family, which folds it into what follows (Inkling 2's layer_tail()), and sets moe_left_.
+    virtual bool moe_sum_later(int n) const {
+        (void) n;
+        return false;
+    }
+    bool moe_left_ = false;
+    bool whole_rec_ = false;   ///< a call's whole pass is being recorded (head, experts and tail of every layer)
     /// The scores of a layer's router for n tokens, into rl_.  The engine's own: the router's matrix times the
     /// experts' input (xn_).
     virtual void router_scores(const Layer& L, int n);

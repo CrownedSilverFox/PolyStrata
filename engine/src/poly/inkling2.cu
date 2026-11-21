@@ -69,6 +69,9 @@ struct MixArgs {
     const float* query;
     int nq;
     float* out[kQueries];
+    const float* norm_w;   // with norm_out: out[0]'s rms_norm()
+    float* norm_out;
+    float eps;
 };
 
 // A token a block.  A thread has every kMixThreads-th value of the row and reads each query's and each state's
@@ -149,6 +152,20 @@ __global__ void ink_mix_kernel(MixArgs a, int n_embd) {
                 }
                 a.out[j][row + i] = acc;
             }
+        }
+    }
+    if (a.norm_out) {   // rms_norm_kernel's arithmetic, a thread over the values it wrote
+        __shared__ float npart[kMixThreads / WARP];
+        float ss = 0.0f;
+        for (int i = tid; i < n_embd; i += blockDim.x) {
+            const float v = a.out[0][row + i];
+            ss += v * v;
+        }
+        ss = block_sum(ss, npart);
+        const float scale = 1.0f / sqrtf(ss / float(n_embd) + a.eps);
+        for (int i = tid; i < n_embd; i += blockDim.x) {
+            const float v = a.out[0][row + i];
+            a.norm_out[row + i] = a.norm_w ? v * scale * a.norm_w[i] : v * scale;
         }
     }
 }
@@ -303,6 +320,20 @@ __global__ void ink_conv_add_kernel(const float* __restrict__ x, float* state, c
         if (mode == 1) keep[c] = acc[c];
         acc[c] = y;
     }
+}
+
+__global__ void ink_moe_conv_add_kernel(const float* __restrict__ x, const float* __restrict__ w, int n_used, float* fo,
+                                        float* state, const float* __restrict__ cw, float* __restrict__ out,
+                                        float* acc, float a, int channels, int taps, float norm) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= channels) return;
+    float s = 0.0f;
+    for (int k = 0; k < n_used; ++k) s += w[k] * x[size_t(k) * channels + i];
+    fo[i] += s;
+    const float y = conv_value(fo, state, cw, nullptr, channels, 1, taps, 0, i, norm);
+    out[i] = y;
+    conv_state_at(fo, state, channels, taps, 1, i);
+    acc[i] = acc[i] + y * a;
 }
 
 struct QkvArgs {
@@ -545,19 +576,29 @@ __global__ void situ_rows_kernel(const float* __restrict__ gate_up, float* __res
 
 }  // namespace
 
-void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
-             void* stream) {
+void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
+                  const float* norm_w, float* norm_out, float eps, void* stream) {
     if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > kQueries)
         throw std::invalid_argument("ink_mix: 1 to 6 states and 1 to 4 queries");
     if (rows <= 0) return;
+    if (norm_out && sum_threads(n_embd) != kMixThreads)   // rms_norm()'s block must be this one
+        throw std::invalid_argument("ink_mix_norm: a row of this width is normed by another block");
     MixArgs a{};
     for (int s = 0; s < states.n; ++s) a.s[s] = states.p[s];
     a.n = states.n;
     a.query = query;
     a.nq = n_query;
     for (int j = 0; j < n_query; ++j) a.out[j] = out[j];
+    a.norm_w = norm_w;
+    a.norm_out = norm_out;
+    a.eps = eps;
     ink_mix_kernel<<<rows, kMixThreads, 0, cs(stream)>>>(a, n_embd);
     launched("ink_mix");
+}
+
+void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
+             void* stream) {
+    ink_mix_norm(states, query, n_query, out, n_embd, rows, nullptr, nullptr, 0.f, stream);
 }
 
 void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* const* out, int count, int n_embd,
@@ -619,6 +660,15 @@ void ink_conv_add(const float* x, float* state, const float* w, float* out, floa
     ink_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, state, w, out, acc, keep, a, mode,
                                                                             channels, taps, norm);
     launched("ink_conv_add");
+}
+
+void ink_moe_conv_add(const float* x, const float* w, int n_used, float* fo, float* state, const float* cw, float* out,
+                      float* acc, float a, int channels, int taps, void* stream) {
+    if (taps < 2 || taps > 8) throw std::invalid_argument("ink_moe_conv_add: 2 to 8 taps");
+    const float norm = 1.0f / std::sqrt((float) (taps + 1));
+    ink_moe_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, w, n_used, fo, state, cw, out, acc,
+                                                                                a, channels, taps, norm);
+    launched("ink_moe_conv_add");
 }
 
 void ink_qkv(const InkQkv& a, void* stream) {

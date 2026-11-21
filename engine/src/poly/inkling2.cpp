@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace strata::poly {
 namespace {
@@ -252,7 +253,16 @@ InkStates Inkling2::streams_of(int blocks, size_t at) const {
 void Inkling2::control(const float* cur, const float* msg, const Ctrl& c, float* out, int n) {
     ink_cat_norm(cur, msg, cat_, n_embd_, n, st_);
     lin(c.down, cat_, ch_, n);
-    lin_pair(c.gain, c.forget, ch_, gain_, forget_, n, nullptr);
+    if (n < kStageRows && c.gain.type == kTypeF32 && c.forget.type == kTypeF32 && c.gain.scale == 1.0f &&
+        c.forget.scale == 1.0f) {
+        const float* w[2] = {fp(c.gain), fp(c.forget)};
+        const float* x[2] = {ch_, ch_};
+        float* y[2] = {gain_, forget_};
+        const int outs[2] = {n_embd_, n_embd_};
+        gemv_set(w, x, y, outs, 2, rank_, n, st_);
+    } else {
+        lin_pair(c.gain, c.forget, ch_, gain_, forget_, n, nullptr);
+    }
     ink_gate(cur, msg, gain_, forget_, out, (size_t) n * n_embd_, st_);
 }
 
@@ -356,14 +366,17 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     // the attention's inputs: a mix of the streams so far, one for a window layer and one each for Q, K and V for
     // a full one
     const float* in[3] = {r_, r_, r_};
+    const bool looped = pass_of(il) > 0;   // a later pass of the core: its inputs take the pass before's messages
+    // a window layer outside a later pass has one input, normed in the mix's launch
+    const bool mix_normed = il > 0 && B.swa && !looped && sum_threads(n_embd_) == 1024;
     if (il > 0) {
         float* out[3] = {in_[0], in_[1], in_[2]};
-        ink_mix(streams_of((il - 1) / blk_ + 1, 0), fp(B.attn_query), B.swa ? 1 : 3, out, n_embd_, n, st_);
+        ink_mix_norm(streams_of((il - 1) / blk_ + 1, 0), fp(B.attn_query), B.swa ? 1 : 3, out, n_embd_, n,
+                     mix_normed ? fp(B.attn_norm) : nullptr, mix_normed ? xin_[0] : nullptr, rms_eps_, st_);
         in[0] = in_[0];
         in[1] = B.swa ? in_[0] : in_[1];
         in[2] = B.swa ? in_[0] : in_[2];
     }
-    const bool looped = pass_of(il) > 0;   // a later pass of the core: its inputs take the pass before's messages
     if (looped) {
         InkStates bank;
         if (n_bank > 0) bank.p[bank.n++] = bank_;
@@ -376,7 +389,7 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     }
     const float* x[3];
     if (B.swa && !looped) {
-        rms_norm(in[0], fp(B.attn_norm), xin_[0], n_embd_, n, rms_eps_, st_);
+        if (!mix_normed) rms_norm(in[0], fp(B.attn_norm), xin_[0], n_embd_, n, rms_eps_, st_);
         x[0] = x[1] = x[2] = xin_[0];
     } else {   // three inputs, normed in one launch
         const float* w[3] = {fp(B.attn_norm), fp(B.attn_norm), fp(B.attn_norm)};
@@ -526,6 +539,11 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
 // The experts' sum through its convolution, onto the stream.
 void Inkling2::layer_tail(Layer&, int il, int n) {
     const Slot& S = slots_[(size_t) slot_of(il, pass_of(il))];
+    if (n == 1 && std::exchange(moe_left_, false)) {   // moe_card() left the experts' sum here
+        ink_moe_conv_add(d_, d_wts_, n_used_, fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), fc_, r_, 1.f, n_embd_,
+                         taps_, st_);
+        return;
+    }
     if (n == 1) {
         ink_conv_add(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), fc_, r_, nullptr, 1.f, 0, n_embd_, taps_, st_);
         return;

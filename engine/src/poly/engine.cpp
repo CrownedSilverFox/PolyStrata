@@ -5203,7 +5203,8 @@ bool Engine::moe_card(Layer& L, int il, int n) {
     const kernels::MmvqIds down{table, d_ids_, L.gu2(), q8_, kernels::native_q8_1_bytes(n_ff_exp_), 1, d_,
                                 (size_t) n_embd_};
     kernels::native_mmvq_ids((int) L.d_type, down, rr, n_ff_exp_, n_embd_, st_);
-    moe_sum(d_, d_wts_, fo_, n_embd_, n_used_, n, st_);
+    if (moe_sum_later(n)) moe_left_ = true;
+    else moe_sum(d_, d_wts_, fo_, n_embd_, n_used_, n, st_);
     return true;
 }
 
@@ -6454,6 +6455,11 @@ void Engine::run(const int32_t* tokens, int n) {
         void*& pass = passes_[key];
         if (!pass)
             pass = record([&] {
+                struct Whole {
+                    bool& on;
+                    ~Whole() { on = false; }
+                } whole_rec{whole_rec_};
+                whole_rec_ = true;
                 for (int il = lo_; il < hi_; il = next_layer(il)) {
                     Layer& L = layers_[(size_t) il];
                     layer_head(L, il, n);
