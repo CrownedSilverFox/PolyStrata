@@ -247,6 +247,12 @@ class OwnPathModel(Base):
         self.result = feed_models.apply(self.setup, parsed(own_path()), {"qwen4exp", "qwen35moe"})
         self.fam = self.setup.OWN_PATH_FAMILIES["qwen35-test"]
 
+    def test_main_never_indexes_FAMILIES_by_an_own_path_family(self):
+        """#197: `--family qwen36-strata` on Windows died with KeyError where main() looked the family up in FAMILIES."""
+        import inspect, re
+        self.assertEqual(re.findall(r"and FAMILIES\[a\.family\]", inspect.getsource(self.setup.main)), [])
+        self.assertNotIn("qwen36-strata", self.setup.FAMILIES)
+
     def test_it_joins_the_own_path_families(self):
         self.assertEqual(self.result.registered, ["qwen35-test"])
         self.assertIs(self.setup.PREVIEW_FAMILIES, self.setup.OWN_PATH_FAMILIES)
