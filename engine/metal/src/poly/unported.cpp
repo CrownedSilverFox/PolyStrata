@@ -77,6 +77,8 @@ void coreset_mask(float*, int, int, int, float, void*) { unported("coreset routi
 
 // the guard is Flint's (Flint::Flint() turns it on), and Flint is no Mac family: false keeps it from being asked for
 bool Mmq::half_sums(int) { return false; }
+// down's rows in gemm_iq_i8_quantize's form: only with Mmq::int8(), which is false here
+void swiglu_clamp_i8_rows(const float*, void*, int, int, float, void*, const ExpertScales*) { unported("int8 down rows"); }
 void guard_half_sums(float*, int64_t, int, int, float*, void*) { unported("half-sum guard (Flint)"); }
 void scale_rows(float*, int64_t, int, int, const int32_t*, const float*, bool, void*) {
     unported("half-sum guard (Flint)");

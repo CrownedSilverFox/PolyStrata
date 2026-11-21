@@ -89,10 +89,11 @@ kernel void poly_gemm(constant GemmArgs& a [[buffer(0)]],uint3 tg [[threadgroup_
 GEMM(half,64,64,4) GEMM(half,64,32,4) GEMM(float,64,64,4) GEMM(float,64,32,4)
 
 // poly_mm_<type>_<TM>_<TN>_<TK>_<SG>: TM rows of a matrix, TN outputs, TK values a step, SG SIMD groups.  Every type
-// has the default tile; the others are for poly_mm_bench, on the expert types of LFM2.5 and Qwen3.6.
+// has the default tile and its 32-row form (a launch of matrices of 32 rows or fewer); the others are for
+// poly_mm_bench, on the expert types of LFM2.5 and Qwen3.6.
 #define MM_(name,QK,TM,TN,TK,SG) template [[host_name("poly_mm_" #name "_" #TM "_" #TN "_" #TK "_" #SG)]] kernel decltype(poly_mm<block_##name,QK,dequantize_##name<half4x4>,TM,TN,TK,SG>) poly_mm<block_##name,QK,dequantize_##name<half4x4>,TM,TN,TK,SG>;
-#define MM(name,QK) MM_(name,QK,64,64,64,4) template [[host_name("poly_dq_" #name)]] kernel decltype(poly_dq<block_##name,QK,dequantize_##name<half4x4>>) poly_dq<block_##name,QK,dequantize_##name<half4x4>>;
-#define MM_TRY(name,QK) MM_(name,QK,32,64,64,4) MM_(name,QK,64,64,32,4) MM_(name,QK,128,64,64,4)
+#define MM(name,QK) MM_(name,QK,64,64,64,4) MM_(name,QK,32,64,64,4) template [[host_name("poly_dq_" #name)]] kernel decltype(poly_dq<block_##name,QK,dequantize_##name<half4x4>>) poly_dq<block_##name,QK,dequantize_##name<half4x4>>;
+#define MM_TRY(name,QK) MM_(name,QK,64,64,32,4) MM_(name,QK,128,64,64,4)
 MM(q4_0,32) MM(q4_1,32) MM(q5_0,32) MM(q5_1,32) MM(q8_0,32) MM(q2_0,64) MM(mxfp4,32)
 MM(q2_K,256) MM(q3_K,256) MM(q4_K,256) MM(q5_K,256) MM(q6_K,256)
 MM(iq2_xxs,256) MM(iq2_xs,256) MM(iq3_xxs,256) MM(iq1_s,256) MM(iq4_nl,32)
