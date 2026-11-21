@@ -1284,14 +1284,14 @@ void Engine::metal_cover(int64_t end) {
     bool reduced = false;
     if (room < peak && exp_) {
         if (freeze_experts_)
-            throw std::runtime_error("balanced Metal KV growth needs memory held by frozen experts; reduce context or unfreeze the cache");
+            throw KvFull("balanced Metal KV growth needs memory held by frozen experts; reduce context or unfreeze the cache");
         const size_t cut = peak - room;
         metal_resize_cache(metal_cache_bytes_ > cut ? metal_cache_bytes_ - cut : 0);
         reduced = true;
         room = headroom();
     }
     if (room < peak)
-        throw std::runtime_error("not enough unified memory to grow the Metal attention cache; existing rows are preserved");
+        throw KvFull("not enough unified memory to grow the Metal attention cache; existing rows are preserved");
     const auto release = [&](void* p) {
         if (!p) return;
         const auto it = std::find(dev_allocs_.begin(), dev_allocs_.end(), p);
@@ -6502,6 +6502,8 @@ bool Engine::steps_guesses() const {
 int Engine::step_rows_alone() const { return std::min(rows_, kStageRows - 1); }
 
 void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* guesses) {
+    // step_picks() asks this step only: taken first, so a step that throws (KvFull below) leaves no ask for the next
+    const bool picks = std::exchange(step_picks_, false) && d_picks_;
     if (n < 1 || n > std::min(rows_, sequences())) throw std::logic_error("step takes 1 to sequences() tokens");
     if (guesses && !steps_guesses()) throw std::logic_error("step: guesses need --batch-mtp, a draft block and one card");
     if (!step_seqs_.empty()) throw std::logic_error("step: the rows of the step before are not kept yet (keep_step())");
@@ -6531,7 +6533,6 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
     }
     const int R = (int) rseq.size();
     if (R > rows_) throw std::logic_error("step: more rows than a call takes");
-    const bool picks = std::exchange(step_picks_, false) && d_picks_;
     picks_ = picks;
 
     ck(cudaStreamSynchronize(cs(st_)), "step");

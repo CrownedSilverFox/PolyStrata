@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -40,6 +41,12 @@ namespace strata::poly {
 
 class Shards;
 struct Likeliest;
+
+/// The attention caches could not grow to the rows asked for (balanced Metal: not memory enough beside the experts).
+/// The rows they hold are as they were, so a caller can end the answers that needed more and go on.
+struct KvFull : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 /// The attention caches' storing format, opt-in via --kv.  q8_0 is ggml's blocks (one fp16 scale a 32-value
 /// block of int8 codes) and reads them back element by element; int8 is the same rule with the codes and the

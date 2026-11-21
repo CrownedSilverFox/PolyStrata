@@ -953,6 +953,17 @@ int serve(Session& ss) {
                 if (on_card) engine.step_picks();
                 engine.step(seqs.data(), feed.data(), (int) seqs.size());
             }
+        } catch (const strata::poly::KvFull& e) {
+            // The attention caches could not grow for the step, and what they hold is as it was: the step's answers
+            // end here, as at the end of the context, and the engine takes the next requests.
+            std::fprintf(stderr, "strata-poly: batch: %s; the step's %zu answers end here\n", e.what(), which.size());
+            for (size_t b : which) {
+                Slot& sl = slots[b];
+                std::printf("BDONE %zu %lld length %.1f\n", b, sl.produced, ms_since(sl.t0));
+                sl.active = false;
+            }
+            std::fflush(stdout);
+            return true;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "strata-poly: batch: %s\n", e.what());
             std::printf("ERR %s\n", e.what());
