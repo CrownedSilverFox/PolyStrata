@@ -13533,6 +13533,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_I8M_RAW",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/kernels/cuda/i8_mma.cuh",
+     "line": 792,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "f541c23377",
+   "first_date": "2026-11-20",
+   "since": null,
+   "last_commit": "f541c23377",
+   "last_date": "2026-11-20",
+   "status": "rollback",
+   "owner": "kernels/cuda",
+   "note": "[reviewed] the int8 prompt product copies each stage of its weight rows into shared memory with 16-byte cp.async (Q4_0, Q5_0, Q5_1, Q8_0, Q4_K, Q5_K, IQ4_NL, Q6_K); =0 reads them in 4-byte pieces as before (engine/src/kernels/cuda/i8_mma.cuh:792)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_I8_BISECT",
    "backends": [
     "cuda-hip"

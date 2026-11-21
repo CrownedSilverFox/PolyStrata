@@ -59,8 +59,26 @@ class Batch(unittest.TestCase):
             with self.subTest(vram=vram, ctx=ctx):
                 self.assertEqual([m for m, d in qwen["models"].items() if setup.poly_batch(qwen, d, vram, ctx)], want)
         # a family without the figure keeps the engine's batch
-        self.assertFalse(setup.poly_batch(setup.FAMILIES["gemma4"], setup.FAMILIES["gemma4"]["models"]["UD-Q2_K_XL"],
-                                          96.0, 32768))
+        gemma = {k: v for k, v in setup.FAMILIES["gemma4"].items() if k != "batch_gb"}
+        self.assertFalse(setup.poly_batch(gemma, gemma["models"]["UD-Q2_K_XL"], 96.0, 32768))
+
+    def test_the_families_measured_on_the_5090(self):
+        # the RTX 5090 (32607 MiB) holds every expert of these sizes beside the larger batch; the 8 GB laptop (8188 MiB)
+        # holds none of them whole.  Kolibri's other two sizes do not fit the 5090 whole (test_setup_kolibri.py).
+        want = {"clover": ["Q3_K_M", "APEX-I-NANOPLUS", "Q4_K_M"],
+                "tiel": ["UD-Q3_K_XL", "UD-IQ3_XXS", "UD-Q4_K_XL"],
+                "ornith": ["APEX-I-COMPACT", "APEX-I-MINI", "APEX-I-QUALITY"],
+                "minicpmv": ["Q4_K_M", "mix_q3gud_im", "Q6_K"],
+                "gemma4": ["UD-Q3_K_M", "UD-Q2_K_XL", "UD-Q4_K_M", "QAT-UD-Q4_K_XL"],
+                "kolibri": ["Q2_K"]}
+        for family, sizes in want.items():
+            fam = setup.FAMILIES[family]
+            self.assertIn("batch_gb", fam, family)
+            self.assertNotIn("batch_from_gb", fam, family)
+            for vram, ctx, expect in ((32607 / 1024, 32768, sizes), (8188 / 1024, 32768, [])):
+                with self.subTest(family=family, vram=vram):
+                    got = [m for m, d in setup.family_models(family).items() if setup.poly_batch(fam, d, vram, ctx)]
+                    self.assertEqual(got, expect)
 
 
 class Main(unittest.TestCase):
