@@ -46,9 +46,10 @@ class UpdatePull(unittest.TestCase):
         subprocess.run([GIT, "clone", "-q", str(self.origin), str(self.clone)], check=True, capture_output=True)
 
     def update(self, root: Path, file: Path, env=None):
+        # (git speaks English here: a test reads its words, and a translated git says them in the user's language)
         out = io.StringIO()
         with mock.patch.object(setup, "ROOT", root), mock.patch.object(setup, "__file__", str(file)), \
-                mock.patch.object(setup, "CONTROL", False), mock.patch.dict(os.environ, env or {}, clear=False), \
+                mock.patch.object(setup, "CONTROL", False),                 mock.patch.dict(os.environ, {"LC_ALL": "C", "LANGUAGE": "C", **(env or {})}, clear=False), \
                 mock.patch.object(setup.subprocess, "call", return_value=0) as call, contextlib.redirect_stdout(out):
             os.environ.pop(setup.PULLED_ENV, None) if not env else None
             rc = setup.update_pull(["--update", "--yes"])
