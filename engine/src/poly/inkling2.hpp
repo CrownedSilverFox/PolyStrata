@@ -120,6 +120,7 @@ private:
     float* in_[3] = {};
     float* xin_[3] = {};
     float* msg_[kCtrl] = {};
+    std::vector<float*> msgs_;   ///< a later pass's messages of every core layer, kCtrl a layer, a token's
     float *cat_ = nullptr, *ch_ = nullptr, *gain_ = nullptr, *forget_ = nullptr, *mixf_ = nullptr;
     float *cat3_[3] = {}, *ch3_[3] = {}, *gain3_[3] = {}, *forget3_[3] = {};   ///< control3()'s, kStageRows rows
     void* xq3_[3] = {};   ///< project()'s quantized inputs, a token's

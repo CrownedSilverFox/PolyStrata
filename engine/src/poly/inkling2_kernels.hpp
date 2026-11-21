@@ -20,6 +20,10 @@ struct InkStates {
 /// states' sum.  `query` holds n_query queries of n_embd; out[j] gets query j's rows.
 void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
              void* stream);
+/// ink_mix() of one row for `jobs` queries sets (up to 12) over the same states, in one launch with the same bits:
+/// job k's n_query queries at query[k], its outputs out[k * n_query + j].
+void ink_mix_many(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs,
+                  int n_embd, void* stream);
 /// ink_mix() and then rms_norm() of out[0] (weight norm_w, null: none) into norm_out, in one launch with the same bits.
 void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
                   const float* norm_w, float* norm_out, float eps, void* stream);
@@ -115,6 +119,7 @@ struct InkAttn {
     const uint16_t* keys = nullptr;  ///< n_kv * dim halves a cache row
     const uint16_t* vals = nullptr;
     const float* rel_bias = nullptr; ///< n_rel values a distance, `extent` distances
+    const float* gate = nullptr;     ///< rows * n_head * dim: out times sigmoid(gate) (ink_mul_sigmoid()); null: none
     float* out = nullptr;            ///< rows * n_head * dim
     float* score = nullptr;
     size_t score_n = 0;

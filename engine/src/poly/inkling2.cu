@@ -77,7 +77,7 @@ struct MixArgs {
 // A token a block.  A thread has every kMixThreads-th value of the row and reads each query's and each state's
 // once: the states' squares and their products with the queries are summed over the warp, then over the warps in
 // their order.
-__global__ void ink_mix_kernel(MixArgs a, int n_embd) {
+__device__ __forceinline__ void mix_row(const MixArgs& a, int n_embd) {
     __shared__ float part[InkStates::kMax * kMixSums][kMixThreads / WARP];
     __shared__ float whole[InkStates::kMax * kMixSums];
     __shared__ float coef[InkStates::kMax * kQueries];
@@ -169,6 +169,16 @@ __global__ void ink_mix_kernel(MixArgs a, int n_embd) {
         }
     }
 }
+
+__global__ void ink_mix_kernel(MixArgs a, int n_embd) { mix_row(a, n_embd); }
+
+constexpr int kMixJobs = 12;
+struct MixMany {
+    MixArgs j[kMixJobs];
+};
+
+// blockIdx.y the job
+__global__ void ink_mix_many_kernel(MixMany m, int n_embd) { mix_row(m.j[blockIdx.y], n_embd); }
 
 constexpr int kSet = 3;   // the controllers one launch takes
 
@@ -552,7 +562,10 @@ __global__ void ink_join_kernel(InkAttn a, int t0, const float* __restrict__ par
     for (int i = threadIdx.x; i < a.dim; i += blockDim.x) {
         float total = 0.0f;
         for (int k = 0; k < n_parts; ++k) total += pt[size_t(k) * a.dim + i];
-        a.out[(size_t(t) * a.n_head + h) * a.dim + i] = total * inv;
+        const size_t at = (size_t(t) * a.n_head + h) * a.dim + i;
+        float v = total * inv;
+        if (a.gate) v *= 1.0f / (1.0f + expf(-a.gate[at]));   // ink_mul_sigmoid_kernel's
+        a.out[at] = v;
     }
 }
 
@@ -594,6 +607,23 @@ void ink_mix_norm(const InkStates& states, const float* query, int n_query, floa
     a.eps = eps;
     ink_mix_kernel<<<rows, kMixThreads, 0, cs(stream)>>>(a, n_embd);
     launched("ink_mix");
+}
+
+void ink_mix_many(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs,
+                  int n_embd, void* stream) {
+    if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > kQueries || jobs < 1 || jobs > kMixJobs)
+        throw std::invalid_argument("ink_mix_many: 1 to 6 states, 1 to 4 queries, 1 to 12 jobs");
+    MixMany m{};
+    for (int k = 0; k < jobs; ++k) {
+        MixArgs& a = m.j[k];
+        for (int s = 0; s < states.n; ++s) a.s[s] = states.p[s];
+        a.n = states.n;
+        a.query = query[k];
+        a.nq = n_query;
+        for (int j = 0; j < n_query; ++j) a.out[j] = out[k * n_query + j];
+    }
+    ink_mix_many_kernel<<<dim3(1, jobs), kMixThreads, 0, cs(stream)>>>(m, n_embd);
+    launched("ink_mix_many");
 }
 
 void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,

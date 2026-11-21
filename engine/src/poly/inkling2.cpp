@@ -203,6 +203,8 @@ void Inkling2::assign_scratch() {
     for (float*& b : in_) b = fbuf(e);
     for (float*& b : xin_) b = fbuf(e);
     for (float*& b : msg_) b = fbuf(e);
+    msgs_.assign((size_t) (core_end_ - core_start_) * kCtrl, nullptr);
+    for (float*& b : msgs_) b = fbuf((size_t) n_embd_);
     cat_ = fbuf(2 * e);
     ch_ = fbuf(n * rank_);
     gain_ = fbuf(e);
@@ -361,6 +363,15 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         if (n_bank > 0) copy_rows(bl_[core_block + 1], bank_, n);
         copy_rows(r_, bank_out_, n);
         copy_rows(bl_[core_block], r_, n);
+        const int core = core_end_ - core_start_;
+        if (n == 1 && core <= 12) {   // the pass's messages of every core layer, in one launch
+            InkStates bank;
+            if (n_bank > 0) bank.p[bank.n++] = bank_;
+            bank.p[bank.n++] = bank_out_;
+            const float* q[12];
+            for (int k = 0; k < core; ++k) q[k] = fp(blocks_[(size_t) (core_start_ + k)].msg_query);
+            ink_mix_many(bank, q, kCtrl, msgs_.data(), core, n_embd_, st_);
+        }
     }
 
     // the attention's inputs: a mix of the streams so far, one for a window layer and one each for Q, K and V for
@@ -377,14 +388,19 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         in[1] = B.swa ? in_[0] : in_[1];
         in[2] = B.swa ? in_[0] : in_[2];
     }
+    float* const* msg = msg_;   // the pass's messages for this layer
     if (looped) {
-        InkStates bank;
-        if (n_bank > 0) bank.p[bank.n++] = bank_;
-        bank.p[bank.n++] = bank_out_;
-        ink_mix(bank, fp(B.msg_query), kCtrl, msg_, n_embd_, n, st_);
+        if (n == 1 && core_end_ - core_start_ <= 12) {
+            msg = msgs_.data() + (size_t) (il - core_start_) * kCtrl;
+        } else {
+            InkStates bank;
+            if (n_bank > 0) bank.p[bank.n++] = bank_;
+            bank.p[bank.n++] = bank_out_;
+            ink_mix(bank, fp(B.msg_query), kCtrl, msg_, n_embd_, n, st_);
+        }
         // Q's last: a window layer's three inputs are one buffer until the messages make them differ
-        if (!control3(in, msg_, B.ctrl, in_, n))
-            for (int j = 2; j >= 0; --j) control(in[j], msg_[j], B.ctrl[j], in_[j], n);
+        if (!control3(in, msg, B.ctrl, in_, n))
+            for (int j = 2; j >= 0; --j) control(in[j], msg[j], B.ctrl[j], in_[j], n);
         for (int j = 0; j < 3; ++j) in[j] = in_[j];
     }
     const float* x[3];
@@ -504,10 +520,11 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         ck(cudaMemsetAsync(zeros_, 0, (size_t) n_head_ * sizeof(float), cs(st_)), "attention");
         attend_batch(blas_, q_, S.keys, S.vals, pos_, n, score_, score_n_, awork_, att_, head_dim_, n_head_, n_kv_,
                      a.scale, st_, a.window, a.ring, false, {}, {}, nullptr, nullptr, 0, zeros_, nullptr, &bias);
+        ink_mul_sigmoid(att_, gate_, (size_t) n * hq, st_);
     } else {
+        a.gate = gate_;   // the output gate in the join's launch
         ink_attend(a, st_);
     }
-    ink_mul_sigmoid(att_, gate_, (size_t) n * hq, st_);
     lin(B.wo, att_, aoraw_, n);
     // the first layer of a block starts a new stream from the attention's output; the one it had joins the mixes
     if (n == 1) {   // the convolution and the stream's update in one launch
@@ -529,7 +546,7 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     // the experts' input
     float* mixed[1] = {mixf_};
     ink_mix(streams_of(il / blk_ + 1, 0), fp(B.ffn_query), 1, mixed, n_embd_, n, st_);
-    if (looped) control(mixf_, msg_[3], B.ctrl[3], mixf_, n);
+    if (looped) control(mixf_, msg[3], B.ctrl[3], mixf_, n);
     kernels::native_add_rms_norm_q8_1(mixf_, nullptr, fp(B.ffn_norm), xn_, xq_, n_embd_, n, rms_eps_,
                                       sum_threads(n_embd_), st_);
     dbg("ffn_in", il, xn_, n_embd_);
