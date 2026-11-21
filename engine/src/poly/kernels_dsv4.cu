@@ -707,6 +707,78 @@ attend_mma_kernel(const float* __restrict__ q, const uint16_t* __restrict__ raw,
     }
 }
 
+// idx_score_kernel on the tensor cores for 64 heads: a block takes IDX_CHUNK keys of a token, four warps, a warp 16
+// heads, the keys IDX_TILE at a time.  The queries go in as a half and the half of what it left (split_bits()), so
+// a dot is the floats' to about 2^-22; each warp sums its heads' relu(dot) * weight over its rows, and the four warps'
+// sums meet in shared memory.
+constexpr int IDX_MMA_HEADS = 64, IDX_TILE = 64, IDX_CHUNK = 256, IDX_ROW = IDX_DIM + 8;
+
+__global__ void __launch_bounds__(4 * WARP)
+idx_mma_kernel(const float* __restrict__ q, const float* __restrict__ w, const uint16_t* __restrict__ keys,
+               float* __restrict__ score, int score_stride, int ratio, long long pos, float scale,
+               const long long* at) {
+    __shared__ __align__(16) half sk[IDX_TILE][IDX_ROW];
+    __shared__ float red[4][IDX_TILE];
+    const int lane = threadIdx.x % WARP, wid = threadIdx.x / WARP, gid = lane / 4, tig = lane % 4;
+    const int t = blockIdx.y;
+    const long long visible = (position(at, pos, 1, t) + 1) / ratio;
+    const long long c0 = (long long) blockIdx.x * IDX_CHUNK;
+    if (c0 >= visible) return;
+    const int h0 = 16 * wid;
+    uint32_t qa[IDX_DIM / 16][4], ql[IDX_DIM / 16][4];
+    for (int k = 0; k < IDX_DIM / 16; ++k)
+        for (int i = 0; i < 2; ++i)
+            for (int hi = 0; hi < 2; ++hi) {
+                const float2 x = *reinterpret_cast<const float2*>(
+                    q + (size_t(t) * IDX_MMA_HEADS + h0 + gid + 8 * i) * IDX_DIM + 16 * k + 8 * hi + 2 * tig);
+                split_bits(x.x, x.y, qa[k][i + 2 * hi], ql[k][i + 2 * hi]);
+            }
+    const float w0 = w[size_t(t) * IDX_MMA_HEADS + h0 + gid], w1 = w[size_t(t) * IDX_MMA_HEADS + h0 + gid + 8];
+    const long long end = min(visible, c0 + IDX_CHUNK);
+    for (long long k0 = c0; k0 < end; k0 += IDX_TILE) {
+        const int nk = (int) min((long long) IDX_TILE, end - k0);
+        for (int i = threadIdx.x; i < IDX_TILE * IDX_DIM / 8; i += 4 * WARP) {
+            const int r = i / (IDX_DIM / 8), c = 8 * (i % (IDX_DIM / 8));
+            copy16(&sk[r][c], keys + (r < nk ? size_t(k0 + r) * IDX_DIM + c : 0), r < nk);
+        }
+        copies_commit();
+        copies_wait<0>();
+        __syncthreads();
+        for (int n = 0; n < IDX_TILE / 8; ++n) {
+            float s[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            for (int k = 0; k < IDX_DIM / 16; k += 2) {
+                uint32_t b[4];   // keys 8 n.., values 16 k.. and 16 (k + 1)..
+                ldmatrix_x4(b, &sk[8 * n + lane % 8][16 * k + 8 * (lane / 8)], false);
+                mma16816(s, qa[k], b);
+                mma16816(s, ql[k], b);
+                mma16816(s, qa[k + 1], b + 2);
+                mma16816(s, ql[k + 1], b + 2);
+            }
+            // this lane's two keys over its two heads, then over the warp's 16 (the lanes of one tig)
+            float a = fmaxf(s[0], 0.0f) * w0 + fmaxf(s[2], 0.0f) * w1;
+            float b = fmaxf(s[1], 0.0f) * w0 + fmaxf(s[3], 0.0f) * w1;
+            for (int o = 4; o < WARP; o <<= 1) {
+                a += __shfl_xor_sync(0xffffffffu, a, o);
+                b += __shfl_xor_sync(0xffffffffu, b, o);
+            }
+            if (gid == 0) {
+                red[wid][8 * n + 2 * tig] = a;
+                red[wid][8 * n + 2 * tig + 1] = b;
+            }
+        }
+        __syncthreads();
+        if (threadIdx.x < nk)
+            score[size_t(t) * score_stride + k0 + threadIdx.x] =
+                (red[0][threadIdx.x] + red[1][threadIdx.x] + red[2][threadIdx.x] + red[3][threadIdx.x]) * scale;
+        __syncthreads();   // sk and red are read: the next tile may write them
+    }
+}
+
+bool idx_mma_runs() {
+    cudaFuncAttributes a{};
+    return cudaFuncGetAttributes(&a, idx_mma_kernel) == cudaSuccess && a.ptxVersion >= 80 && a.binaryVersion >= 80;
+}
+
 // This build runs attend_mma_kernel on the current card: compiled for Ampere or newer, not from an older PTX.
 bool attend_mma_runs() {
     cudaFuncAttributes a{};
@@ -763,6 +835,15 @@ void dsv4_idx_score(const float* q, const float* w, const uint16_t* keys, float*
         throw std::invalid_argument("dsv4_idx_score: the indexer's keys are not 128 values");
     const long long visible = (at ? room : pos + rows) / ratio;   // the last token sees the most
     if (rows <= 0 || visible == 0) return;
+#if !defined(__HIPCC__)
+    static const bool mma = idx_mma_runs();
+    if (n_head == IDX_MMA_HEADS && rows >= GROUP_ROWS && mma) {
+        idx_mma_kernel<<<dim3(grid((int) visible, IDX_CHUNK), rows), 4 * WARP, 0, cs(stream)>>>(
+            q, w, keys, score, score_stride, ratio, (long long) pos, scale, at);
+        ck("dsv4_idx_score");
+        return;
+    }
+#endif
     const size_t smem = (size_t(n_head) * (IDX_DIM + 1) + n_head + SCORE_KEYS * IDX_DIM) * sizeof(float);
     static unsigned done = 0;
     if (smem > allow_smem(idx_score_kernel, done))
