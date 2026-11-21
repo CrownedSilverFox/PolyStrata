@@ -113,6 +113,30 @@ __global__ void gemv_pair_kernel(const W* __restrict__ w1, const W* __restrict__
     if (threadIdx.x == 0) (second ? y2 : y1)[tok * n_out + o] = acc;
 }
 
+// Up to kGemvSet F32 matrices of one width, each on an input of its own, in one launch: an output's block is
+// gemv_kernel's for it, so are its bits.  Matrix m's outputs are the launch's [first[m], first[m + 1]).
+constexpr int kGemvSet = 6;
+struct GemvSet {
+    const float* w[kGemvSet];
+    const float* x[kGemvSet];
+    float* y[kGemvSet];
+    int first[kGemvSet + 1];
+};
+
+__global__ void gemv_set_kernel(GemvSet s, int n_in) {
+    __shared__ float part[32];
+    int m = 0;
+    while (int(blockIdx.x) >= s.first[m + 1]) ++m;
+    const int o = int(blockIdx.x) - s.first[m], n_out = s.first[m + 1] - s.first[m];
+    const size_t tok = blockIdx.y;
+    const float* wr = s.w[m] + size_t(o) * n_in;
+    const float* xr = s.x[m] + tok * n_in;
+    float acc = 0.0f;
+    for (int i = threadIdx.x; i < n_in; i += blockDim.x) acc += wr[i] * xr[i];
+    acc = block_sum(acc, part);
+    if (threadIdx.x == 0) s.y[m][tok * n_out + o] = acc;
+}
+
 // gemv_kernel and gemv_pair_kernel for a few tokens with a block an output, not an output and a token: the block
 // reads its row of the weights once and takes every token's input against it.  A token's sum is the one those
 // kernels make for it, term for term and in the same order, and so is the block's sum over its warps.  Qwen3.6's
@@ -3403,6 +3427,24 @@ void gemv_pair(int type, const void* w1, const void* w2, const float* x, float* 
                                                                    n_out1, n_out2);
     if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
         throw std::runtime_error(std::string("gemv_pair: ") + cudaGetErrorString(e));
+}
+
+void gemv_set(const float* const* w, const float* const* x, float* const* y, const int* n_out, int count, int n_in,
+              int rows, void* stream) {
+    if (count < 1 || count > kGemvSet) throw std::invalid_argument("gemv_set: 1 to 6 matrices");
+    if (rows <= 0) return;
+    GemvSet s{};
+    for (int m = 0; m < count; ++m) {
+        s.w[m] = w[m];
+        s.x[m] = x[m];
+        s.y[m] = y[m];
+        s.first[m + 1] = s.first[m] + n_out[m];
+    }
+    for (int m = count; m < kGemvSet; ++m) s.first[m + 1] = s.first[count];
+    const int threads = n_in >= 128 ? sum_threads(n_in) : 32;
+    gemv_set_kernel<<<dim3(s.first[count], rows), threads, 0, cs(stream)>>>(s, n_in);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("gemv_set: ") + cudaGetErrorString(e));
 }
 
 // gemm_small_kernel's blocks for the product over the card's multiprocessors.  It is bound by its multiprocessor's

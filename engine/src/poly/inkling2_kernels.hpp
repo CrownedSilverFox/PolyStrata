@@ -23,6 +23,14 @@ void ink_mix(const InkStates& states, const float* query, int n_query, float* co
 
 /// out = [rms_norm(cur) | rms_norm(msg)] a token (eps 1e-6, no weight): what a loop controller's down matrix takes.
 void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream);
+/// ink_cat_norm() of 1 to 3 pairs in one launch.
+void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* const* out, int count, int n_embd,
+                      int rows, void* stream);
+
+/// ink_gate() of 1 to 3 controllers in one launch.  Every cur is read before any out is written, so an out may be
+/// any of the cur.
+void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,
+                  const float* const* forget, float* const* out, int count, size_t n, void* stream);
 
 /// out = cur - tanh(forget) * cur + tanh(gain) * msg, n values.  out may be cur.
 void ink_gate(const float* cur, const float* msg, const float* gain, const float* forget, float* out, size_t n,

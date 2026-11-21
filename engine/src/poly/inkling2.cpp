@@ -206,6 +206,13 @@ void Inkling2::assign_scratch() {
     ch_ = fbuf(n * rank_);
     gain_ = fbuf(e);
     forget_ = fbuf(e);
+    const size_t few = (size_t) std::min(rows_, kStageRows);
+    for (int j = 0; j < 3; ++j) {
+        cat3_[j] = fbuf(2 * few * n_embd_);
+        ch3_[j] = fbuf(few * rank_);
+        gain3_[j] = fbuf(few * n_embd_);
+        forget3_[j] = fbuf(few * n_embd_);
+    }
     mixf_ = fbuf(e);
     q_ = fbuf(heads);
     kraw_ = fbuf(kv);
@@ -244,9 +251,45 @@ InkStates Inkling2::streams_of(int blocks, size_t at) const {
 void Inkling2::control(const float* cur, const float* msg, const Ctrl& c, float* out, int n) {
     ink_cat_norm(cur, msg, cat_, n_embd_, n, st_);
     lin(c.down, cat_, ch_, n);
-    lin(c.gain, ch_, gain_, n);
-    lin(c.forget, ch_, forget_, n);
+    lin_pair(c.gain, c.forget, ch_, gain_, forget_, n, nullptr);
     ink_gate(cur, msg, gain_, forget_, out, (size_t) n * n_embd_, st_);
+}
+
+// The three controllers of a later pass's attention inputs for a few tokens, each step one launch for the three
+// (ink_cat_norm_set(), gemv_set(), ink_gate_set()), every output the bits control() gives it.  A window layer's
+// three cur are one buffer, and out[0] is that buffer too: ink_gate_set() reads every cur before it writes.  False,
+// with nothing launched, where control() does it: a prompt batch, or matrices gemv_set() does not take.
+bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n) {
+    if (n >= kStageRows) return false;
+    for (int j = 0; j < 3; ++j)
+        for (const Dev* d : {&c[j].down, &c[j].gain, &c[j].forget})
+            if (d->type != kTypeF32 || d->scale != 1.0f) return false;
+    const float* m[3] = {msg[0], msg[1], msg[2]};
+    ink_cat_norm_set(cur, m, cat3_, 3, n_embd_, n, st_);
+    const float* w[6];
+    const float* x[6];
+    float* y[6];
+    int outs[6];
+    for (int j = 0; j < 3; ++j) {
+        w[j] = fp(c[j].down);
+        x[j] = cat3_[j];
+        y[j] = ch3_[j];
+        outs[j] = rank_;
+    }
+    gemv_set(w, x, y, outs, 3, 2 * n_embd_, n, st_);
+    for (int j = 0; j < 3; ++j) {
+        w[2 * j] = fp(c[j].gain);
+        w[2 * j + 1] = fp(c[j].forget);
+        x[2 * j] = x[2 * j + 1] = ch3_[j];
+        y[2 * j] = gain3_[j];
+        y[2 * j + 1] = forget3_[j];
+        outs[2 * j] = outs[2 * j + 1] = n_embd_;
+    }
+    gemv_set(w, x, y, outs, 6, rank_, n, st_);
+    const float* g[3] = {gain3_[0], gain3_[1], gain3_[2]};
+    const float* f[3] = {forget3_[0], forget3_[1], forget3_[2]};
+    ink_gate_set(cur, m, g, f, out, 3, (size_t) n * n_embd_, st_);
+    return true;
 }
 
 // A layer from its input to its router's copy: the attention, the block's residual, and the experts' input.
@@ -288,10 +331,9 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         bank.p[bank.n++] = bank_out_;
         ink_mix(bank, fp(B.msg_query), kCtrl, msg_, n_embd_, n, st_);
         // Q's last: a window layer's three inputs are one buffer until the messages make them differ
-        for (int j = 2; j >= 0; --j) {
-            control(in[j], msg_[j], B.ctrl[j], in_[j], n);
-            in[j] = in_[j];
-        }
+        if (!control3(in, msg_, B.ctrl, in_, n))
+            for (int j = 2; j >= 0; --j) control(in[j], msg_[j], B.ctrl[j], in_[j], n);
+        for (int j = 0; j < 3; ++j) in[j] = in_[j];
     }
     const float* x[3];
     if (B.swa) {

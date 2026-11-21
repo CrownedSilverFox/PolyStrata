@@ -23,6 +23,10 @@ void gemv_bf16(const uint16_t* w, const float* x, float* y, int n_in, int n_out,
 /// its n_out), in one launch with the same bits.  CUDA and HIP only.
 void gemv_pair(int type, const void* w1, const void* w2, const float* x, float* y1, float* y2, int n_in, int n_out1,
                int n_out2, int rows, void* stream);
+/// gemv_f32() of 1 to 6 matrices of one width (n_in), each a plain product on an input of its own, in one launch
+/// with the same bits.  CUDA and HIP only.
+void gemv_set(const float* const* w, const float* const* x, float* const* y, const int* n_out, int count, int n_in,
+              int rows, void* stream);
 /// The same for the many rows of a prompt batch, as a cuBLAS product on the stream of `blas` (blas_create), one
 /// for each group of rows_per_x outputs.  It sums in another order than gemv_f32, so a row does not come out
 /// to the last bit as it does there.  Throws std::runtime_error.

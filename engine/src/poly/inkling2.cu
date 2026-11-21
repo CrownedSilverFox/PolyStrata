@@ -153,9 +153,20 @@ __global__ void ink_mix_kernel(MixArgs a, int n_embd) {
     }
 }
 
-__global__ void ink_cat_norm_kernel(const float* __restrict__ cur, const float* __restrict__ msg,
-                                    float* __restrict__ out, int n_embd) {
+constexpr int kSet = 3;   // the controllers one launch takes
+
+struct CatNormSet {
+    const float* cur[kSet];
+    const float* msg[kSet];
+    float* out[kSet];
+};
+
+// A token's pair a block, blockIdx.y the pair.
+__global__ void ink_cat_norm_kernel(CatNormSet s, int n_embd) {
     __shared__ float part[256 / WARP];
+    const float* __restrict__ cur = s.cur[blockIdx.y];
+    const float* __restrict__ msg = s.msg[blockIdx.y];
+    float* __restrict__ out = s.out[blockIdx.y];
     const size_t row = size_t(blockIdx.x) * n_embd;
     const int tid = threadIdx.x;
     float a = 0.0f, b = 0.0f;
@@ -172,12 +183,26 @@ __global__ void ink_cat_norm_kernel(const float* __restrict__ cur, const float* 
     }
 }
 
-__global__ void ink_gate_kernel(const float* cur, const float* __restrict__ msg, const float* __restrict__ gain,
-                                const float* __restrict__ forget, float* out, size_t n) {
+struct GateSet {
+    const float* cur[kSet];
+    const float* msg[kSet];
+    const float* gain[kSet];
+    const float* forget[kSet];
+    float* out[kSet];
+    int count;
+};
+
+// A value a thread, of every controller of the set: all its cur are read before an out is written.
+__global__ void ink_gate_kernel(GateSet s, size_t n) {
     const size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    const float c = cur[i];
-    out[i] = c - tanhf(forget[i]) * c + tanhf(gain[i]) * msg[i];
+    float c[kSet];
+#pragma unroll
+    for (int j = 0; j < kSet; ++j)
+        if (j < s.count) c[j] = s.cur[j][i];
+#pragma unroll
+    for (int j = 0; j < kSet; ++j)
+        if (j < s.count) s.out[j][i] = c[j] - tanhf(s.forget[j][i]) * c[j] + tanhf(s.gain[j][i]) * s.msg[j][i];
 }
 
 __global__ void ink_conv_kernel(const float* __restrict__ x, const float* __restrict__ state,
@@ -453,17 +478,44 @@ void ink_mix(const InkStates& states, const float* query, int n_query, float* co
     launched("ink_mix");
 }
 
-void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream) {
+void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* const* out, int count, int n_embd,
+                      int rows, void* stream) {
+    if (count < 1 || count > kSet) throw std::invalid_argument("ink_cat_norm_set: 1 to 3 pairs");
     if (rows <= 0) return;
-    ink_cat_norm_kernel<<<rows, 256, 0, cs(stream)>>>(cur, msg, out, n_embd);
+    CatNormSet s{};
+    for (int j = 0; j < count; ++j) {
+        s.cur[j] = cur[j];
+        s.msg[j] = msg[j];
+        s.out[j] = out[j];
+    }
+    ink_cat_norm_kernel<<<dim3(rows, count), 256, 0, cs(stream)>>>(s, n_embd);
     launched("ink_cat_norm");
+}
+
+void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream) {
+    ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
+}
+
+void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,
+                  const float* const* forget, float* const* out, int count, size_t n, void* stream) {
+    if (count < 1 || count > kSet) throw std::invalid_argument("ink_gate_set: 1 to 3 controllers");
+    if (n == 0) return;
+    GateSet s{};
+    for (int j = 0; j < count; ++j) {
+        s.cur[j] = cur[j];
+        s.msg[j] = msg[j];
+        s.gain[j] = gain[j];
+        s.forget[j] = forget[j];
+        s.out[j] = out[j];
+    }
+    s.count = count;
+    ink_gate_kernel<<<grid(n, 256), 256, 0, cs(stream)>>>(s, n);
+    launched("ink_gate");
 }
 
 void ink_gate(const float* cur, const float* msg, const float* gain, const float* forget, float* out, size_t n,
               void* stream) {
-    if (n == 0) return;
-    ink_gate_kernel<<<grid(n, 256), 256, 0, cs(stream)>>>(cur, msg, gain, forget, out, n);
-    launched("ink_gate");
+    ink_gate_set(&cur, &msg, &gain, &forget, &out, 1, n, stream);
 }
 
 void ink_conv(const float* x, float* state, const float* w, const float* dyn, float* out, int channels, int heads,
