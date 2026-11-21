@@ -3236,10 +3236,15 @@ void Engine::load(const Options& o) {
             // No more than the experts that take kCover of the profile's uses outside VRAM, and no less than three
             // quarters of the budget.  On the RTX 4070 laptop, with the profiles its runs had written, Qwen3.6
             // UD-Q3_K_M wrote as fast with 75% of the budget (96.3% of those uses) and 10% slower with 50% (83.0%);
-            // LFM2.5 UD-Q4_K_XL, whose few experts are all used, needs more than its whole budget for 96% and wrote
-            // 26% slower at 75% of it.  Where the experts fit, every one stays: Gemma 4 UD-Q3_K_M, put under a
-            // budget there, wrote 14-36% slower.
-            constexpr int kCover = 96;
+            // LFM2.5 UD-Q4_K_XL, whose few experts are all used, wrote 26% slower at 75% of it.  Where the experts
+            // fit, every one stays: Gemma 4 UD-Q3_K_M, put under a budget there, wrote 14-36% slower.
+            //
+            // kCover was 96.  In the first runs after an install LFM2.5's profile put 96% of its uses in 5,835 MiB
+            // of a 7,100 MiB budget, and with that pool it wrote 42.2 tokens/s after a 30,156-token prompt where
+            // poly.10 wrote 49.3; a few runs later the same profile wanted 7,400 MiB for 96%, no pool was cut, and
+            // it wrote 54.4.  At 99 Qwen3.6's pool is still the three quarters (5,694 MiB cover 99% there, 6,103
+            // MiB are three quarters), and LFM2.5 wants 8,171 MiB, more than its budget.
+            constexpr int kCover = 99;
             const size_t most = std::max(covering(kCover), budget / 4 * 3);
             if (most < budget) {
                 budget = most;
