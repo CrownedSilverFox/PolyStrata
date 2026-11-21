@@ -1400,8 +1400,13 @@ void Qwen35::attn_rows(Block& B, int il, int n) {
                                 rms_eps_, st_, sections_, at + 1);
             head_norm_rope_rows(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, n,
                                 rms_eps_, st_, sections_, at + 1);
-            store_f16_rows(k_, keys, (int) kv, at, n, st_);
-            store_f16_rows(v_, vals, (int) kv, at, n, st_);
+            // the stores a sequence at a time, as the loop below: store_f16_rows(), a row each from its own
+            // position, left the draft block's caches different from run to run under --no-graphs
+            for (int i = 0, m; i < n; i += m) {
+                m = i + 1 < n && rows_of_[i + 1].seq == rows_of_[i].seq ? 2 : 1;
+                store_f16_at(k_ + i * kv, keys.rows[i], (int) kv, at + 2 * i, m, 0, st_);
+                store_f16_at(v_ + i * kv, vals.rows[i], (int) kv, at + 2 * i, m, 0, st_);
+            }
             attend_seqs(seqs, head_dim_, n_head_, n_kv_, scale, st_);
             mul_sigmoid(att_, qg_ + head_dim_, head_dim_, n * n_head_, 2 * head_dim_, false, st_);
             lin(B.wo, att_, ao_, n);

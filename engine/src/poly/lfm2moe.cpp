@@ -369,8 +369,10 @@ void Lfm2Moe::attn_rows(Block& B, int n) {
                                 rms_eps_, st_, 1, at_ + 1);
             head_norm_rope_rows(kraw_, head_dim_, fp(B.k_norm), k_, head_dim_, n_kv_, n_rot_, theta_scale_, n,
                                 rms_eps_, st_, 1, at_ + 1);
-            store_f16_rows(k_, keys, (int) kv, at_, n, st_);
-            store_f16_rows(v_, vals, (int) kv, at_, n, st_);
+            for (int i = 0; i < n; ++i) {
+                store_f16_at(k_ + i * kv, keys.rows[i], (int) kv, at_ + 2 * i, 1, 0, st_);
+                store_f16_at(v_ + i * kv, vals.rows[i], (int) kv, at_ + 2 * i, 1, 0, st_);
+            }
             attend_seqs(seqs, head_dim_, n_head_, n_kv_, scale, st_);
             lin(B.wo, att_, ao_, n);
             return;

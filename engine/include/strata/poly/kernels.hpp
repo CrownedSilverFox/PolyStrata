@@ -141,13 +141,11 @@ struct RowCaches {
     size_t rs = 0;   ///< the codes from a cache's row to its next, as Kvq8::rs; 0: n
 };
 void store_q8_rows(const float* x, const RowCaches& caches, int n, const long long* at, int rows, void* stream);
-/// store_f16_at() for rows of different sequences: row r into the fp16 cache rows[r] at the row at[2 * r].  CUDA
-/// only.
+/// A step's rows' fp16 caches, row r's own sequence's in rows[r] (attend_seqs() under an fp16 cache).
 struct RowHalves {
     static constexpr int kMax = 32;
     uint16_t* rows[kMax] = {};
 };
-void store_f16_rows(const float* x, const RowHalves& caches, int n, const long long* at, int rows, void* stream);
 
 #pragma pack(push, 1)
 struct block_q4_0 {

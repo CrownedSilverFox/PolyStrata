@@ -3636,20 +3636,6 @@ void store_q8_rows(const float* x, const RowCaches& caches, int n, const long lo
     store_q8_rows_kernel<<<grid((size_t) nb * rows, 256), 256, 0, cs(stream)>>>(x, caches, n, rows, nb, at);
 }
 
-// store_f16_at_kernel for rows of different sequences: row trow's values on its own cache's row.
-__global__ void store_f16_rows_kernel(const float* __restrict__ x, const RowHalves caches, int n, int rows,
-                                      const long long* __restrict__ at) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n * rows) return;
-    const int trow = i / n;
-    ((half*) caches.rows[trow])[size_t(at[2 * size_t(trow)]) * n + i % n] = __float2half(x[i]);
-}
-
-void store_f16_rows(const float* x, const RowHalves& caches, int n, const long long* at, int rows, void* stream) {
-    if (rows < 1 || rows > RowHalves::kMax) throw std::invalid_argument("store_f16_rows: 1 to 32 rows");
-    store_f16_rows_kernel<<<grid(size_t(n) * rows, 256), 256, 0, cs(stream)>>>(x, caches, n, rows, at);
-}
-
 void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const long long* at, int rows, int ring,
                  void* stream, size_t rs) {
     if ((n & 31) != 0 || (rs & 31) != 0) throw std::invalid_argument("store_q8_at: n or rs is not a multiple of 32");
