@@ -340,7 +340,9 @@ docker build -t strata:src -f tools/docker/Dockerfile.src --build-arg STRATA_COM
 
 `--build-arg CUDA_ARCHITECTURES=89` builds for one card only, which is much faster. For a GTX 10, P100 or V100 build the CUDA 12
 variant: `docker build -t strata:src-cuda12 -f tools/docker/Dockerfile.src --build-arg STRATA_COMMIT=$(git rev-parse HEAD)
---build-arg CUDA_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu24.04 --build-arg CUDA_ARCHITECTURES="60;61;70;75;80;86;89" --build-arg BUILD_VISION=0 .`
+--build-arg CUDA_IMAGE=nvidia/cuda:12.9.2-devel-ubuntu24.04 --build-arg CUDA_ARCHITECTURES="60;61;70;75;80;86;89" .`
+The picture reader is built for the same architectures as the engine; `--build-arg BUILD_VISION=0` leaves it out for a text-only
+package. The build takes its ignore list from `tools/docker/Dockerfile.src.dockerignore`.
 For AMD and Intel builds from source see [AMD_HIP.md](AMD_HIP.md) and [INTEL.md](INTEL.md); then package the result with
 `tools/packaging/package_engine.py` and use `tools/docker/build.sh`.
 
