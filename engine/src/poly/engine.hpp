@@ -300,7 +300,7 @@ public:
         const int32_t* tokens;
         int n;
     };
-    bool co_reads() const { return !next_ && !split_ && read_rows_ > rows_; }
+    bool co_reads() const { return !next_ && !split_ && read_rows_ > rows_ && reads_by_layer(); }
     bool read(const int32_t* tokens, int n, const Mark* marks = nullptr, int n_marks = 0,
               const std::function<bool(int, int)>* turn = nullptr, const CoRead* co = nullptr, int n_co = 0);
     /// The prompt's reads are done: the expert cache takes back what Options::stage_read_mib lent the staging
@@ -493,6 +493,12 @@ protected:
     virtual void layer_head(Layer& L, int il, int n) = 0;
     /// The routed experts' sum (fo_) into the layer's output.
     virtual void layer_tail(Layer& L, int il, int n) = 0;
+    /// The layer a call runs after layer il's tail: the next one, unless the architecture runs some of its layers
+    /// more than once a token (a looped core).  hi_ or more ends the call's layers.
+    virtual int next_layer(int il) { return il + 1; }
+    /// Whether read() may take a prompt's calls through a layer together before the next layer.  Not where a call's
+    /// layers keep rows of their own between them, or do not run in order.
+    virtual bool reads_by_layer() const { return true; }
     /// Optional host hook called before layer_head (including when layer_head is graph-replayed).
     virtual void prefetch_layer(int il, int n) { (void) il; (void) n; }
     /// The model's output for `rows` tokens from row `first` of the call, normed: what the output matrix takes.
@@ -534,6 +540,9 @@ protected:
     /// Which recording of a layer's head fits n tokens from pos().  Launches that are sized by the rows they read
     /// are recorded once for each size (room()), and the architecture numbers the sizes from 0.
     virtual int head_key(int il, int n) const { (void) il, (void) n; return 0; }
+    /// The same for a layer's tail, whose recording is one for every size unless the architecture has several (a
+    /// layer that runs more than once a token, each time with a state of its own).
+    virtual int tail_key(int il, int n) const { (void) il, (void) n; return 0; }
     /// layer_head() takes step()'s rows in one call: the products for every row at once, and each row's recurrent
     /// state and attention rows from its own sequence (rows_of_, seq_state(), seq_buf()), its position from at_.
     /// Otherwise step() runs the head a row at a time, with the row's sequence bound.
@@ -871,6 +880,11 @@ protected:
     void* ev_out_[2] = {};    ///< marks the card done with a call in each half
     float rms_eps_ = 0;
     bool gelu_ = false;       ///< the routed experts' activation: GELU of the gate, else SiLU within the layer's limits
+    /// above 0: the routed experts' activation is SiTU, beta * tanh(gate / beta) * sigmoid(gate) * lb * tanh(up / lb)
+    float situ_beta_ = 0, situ_lb_ = 0;
+    /// the file's ffn_gate_up_exps.scale is each expert's scale of its joined gate and up product, whatever the
+    /// experts' type, and ffn_down_exps.scale of its down product (load_moe())
+    bool joined_scales_ = false;
     std::vector<float> clamp_exp_, clamp_shexp_;   ///< a layer's SwiGLU limits: the routed experts', the shared one's
     /// a prompt batch's products go through guard_half_sums(): the model's activations can sum past a half's range
     /// in a block.  Off for the models whose sums stay in range: it cost LFM2.5 4% of a 30K prompt's read on a 5090.

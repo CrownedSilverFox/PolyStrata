@@ -410,11 +410,23 @@ size_t attend_split_floats(int chunk, int n_head, int max_rows, int dim);
 /// work_halves halves, `work_halves / (kv_heads * dim)` rows at most: a block of keys larger than that is split,
 /// taking more products.  The fp16 path (both null) is unchanged and reads the caches where they lie.
 /// `sinks` as attend()'s: the sink joins each token's sum after the last block of rows.
+/// `bias` (null: none): a score gets its key's bias by distance and loses its token's sink first (AttnBias), in the
+/// cuBLAS products' path only, which a model with a bias takes whatever its heads.
+/// A bias a score gets by its key's distance d from the query (the query's position minus the key's), for a model
+/// with learned relative positions: the dot product of the query's n_rel values (r: n_rel a head, the call's
+/// tokens in the engine's order) with table's column d (n_rel values a distance), nothing from `extent` on; and
+/// the token's own sink, a head (sink), taken off every score.
+struct AttnBias {
+    const float* r = nullptr;
+    const float* sink = nullptr;
+    const float* table = nullptr;
+    int n_rel = 0, extent = 0;
+};
 void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint16_t* vcache, int64_t pos, int rows,
                   float* score, size_t score_floats, float* work, float* out, int dim, int n_head, int kv_heads,
                   float scale, void* stream, int window = 0, int ring = 0, bool whole = false, Kvq8 kq8 = {},
                   Kvq8 vq8 = {}, uint16_t* kwork = nullptr, uint16_t* vwork = nullptr, size_t work_halves = 0,
-                  const float* sinks = nullptr, float* ml_out = nullptr);
+                  const float* sinks = nullptr, float* ml_out = nullptr, const AttnBias* bias = nullptr);
 /// attend() over int8 caches (store_int8): the same attention, the same order of products and sums.  `q8` is scratch
 /// in the same form for this call's queries (rows * n_head * dim / kQ8_0Values blocks of codes, and as many
 /// deltas).  A score is a dp4a of a lane's own run of codes - the query's against the key's, both 4-aligned - and

@@ -11,6 +11,7 @@
 #include "flint.hpp"
 #if !defined(STRATA_GPU_METAL)
 #include "laguna.hpp"   // CUDA and HIP: its YaRN turn and softplus gate have no Metal kernels yet
+#include "inkling2.hpp" // CUDA and HIP: its kernels (inkling2.cu) have no Metal form yet
 #endif
 #include "mmq.hpp"
 #include "qwen35.hpp"
@@ -1781,20 +1782,27 @@ void Engine::load_moe(int il, bool shared) {
     // (llama.cpp's ffn_*_exps_s).  Gate's and up's go on their products ahead of the activation (ExpertScales),
     // down's on the expert's weight in its token's sum.  Only NVFP4's: Gemma 4's ffn_down_exps.scale is its own.
     const bool nv = L.gu_type == kTypeNVFP4 || L.u_type == kTypeNVFP4 || L.d_type == kTypeNVFP4;
-    if (nv && tensor(il, "ffn_gate_up_exps.scale"))
+    if (nv && !joined_scales_ && tensor(il, "ffn_gate_up_exps.scale"))
         throw std::runtime_error(blk(il, "ffn_gate_up_exps.scale: NVFP4 scales of a joined gate and up are not supported"));
     // A projection of another type in the same layer has none (Qwen3.6 NVFP4-MTP-HQ: some ups are Q4_K).
     const auto one = [&](const char* n, uint32_t type, Dev& d, std::vector<float>& h) {
         const TensorInfo* t = tensor(il, n);
         h.clear();
-        if (type != kTypeNVFP4 || !t) return;
+        if ((type != kTypeNVFP4 && !joined_scales_) || !t) return;
         if (t->type != kTypeF32) throw std::runtime_error(t->name + " is not F32");
         d = upload(t, blk(il, n), n_expert_, 1, kF32);
         h.resize((size_t) n_expert_);
         std::memcpy(h.data(), home(*t).data(*t), h.size() * sizeof(float));
     };
-    one("ffn_gate_exps.scale", L.gu_type, L.s_gate, L.h_s_gate);
-    one("ffn_up_exps.scale", L.u_type, L.s_up, L.h_s_up);
+    if (joined_scales_ && tensor(il, "ffn_gate_up_exps.weight")) {
+        // one scale an expert on the joined product: its gate's and its up's
+        one("ffn_gate_up_exps.scale", L.gu_type, L.s_gate, L.h_s_gate);
+        L.s_up = L.s_gate;
+        L.h_s_up = L.h_s_gate;
+    } else {
+        one("ffn_gate_exps.scale", L.gu_type, L.s_gate, L.h_s_gate);
+        one("ffn_up_exps.scale", L.u_type, L.s_up, L.h_s_up);
+    }
     one("ffn_down_exps.scale", L.d_type, L.s_down, L.h_s_down);
     std::string err;
     if (!cpu_expert_types_ok((int) L.gu_type, (int) L.d_type, n_embd_, n_ff_exp_, err) ||
@@ -1844,7 +1852,13 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
         if (name == "kolibri1") return std::make_unique<Kolibri1>();
 #if !defined(STRATA_GPU_METAL)
         if (name == "laguna") return std::make_unique<Laguna>();
+        if (name == "inkling2_loop") return std::make_unique<Inkling2>();
 #endif
+        // Unsloth's own layout of the model (loop_kv_res_query and the like): no public description of it to follow
+        if (name == "inkling2")
+            throw std::runtime_error(o.model + " is an 'inkling2' file, the layout of Unsloth's own runtime; this engine "
+                                     "runs the 'inkling2_loop' files llama.cpp runs (the repository's Mainline_Support "
+                                     "folder)");
         throw std::runtime_error(o.model + " is a '" + name + "' model, which this engine does not run");
     };
     int cards = 1, devices = 1;
@@ -5001,7 +5015,8 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                 }
                 ExpertScales es = expert_scales(L);
                 for (int j = 0; j < m && (es.gate || es.up); ++j) es.e[j] = cached[i0 + j].e;
-                if (gelu_) geglu_rows(g_, h_, n_ff_exp_, m, st_, &es);
+                if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, m, situ_beta_, situ_lb_, st_, &es);
+                else if (gelu_) geglu_rows(g_, h_, n_ff_exp_, m, st_, &es);
                 else swiglu_clamp_rows(g_, h_, n_ff_exp_, m, limit, st_, &es);
                 kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_, m, st_);
                 if (!(m > 1 && kernels::native_mmvq_slots((int) L.d_type, down, m, n_ff_exp_, n_embd_, st_)))
@@ -5074,7 +5089,8 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         if (aside) aside_->start(*meanwhile);
         try {
             cpu_experts(*workers_, host, n_host, m, (int) L.gu_type, (int) L.u_type, (int) L.d_type, n_embd_, n_ff_exp_,
-                        x, limit, gelu_, cpu, aside ? nullptr : meanwhile, any_late ? late : nullptr, &wait);
+                        x, limit, gelu_, cpu, aside ? nullptr : meanwhile, any_late ? late : nullptr, &wait,
+                        situ_beta_, situ_lb_);
         } catch (...) {
             if (aside) try {
                     aside_->finish();
@@ -5169,7 +5185,8 @@ bool Engine::moe_card(Layer& L, int il, int n) {
         kernels::native_mmvq_ids((int) L.u_type, up, rr, n_embd_, n_ff_exp_, st_);
     }
     const ExpertScales es = expert_scales(L, d_ids_);
-    if (gelu_) geglu_rows(g_, h_, n_ff_exp_, rr, st_, &es);
+    if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, rr, situ_beta_, situ_lb_, st_, &es);
+    else if (gelu_) geglu_rows(g_, h_, n_ff_exp_, rr, st_, &es);
     else swiglu_clamp_rows(g_, h_, n_ff_exp_, rr, clamp_exp_[(size_t) il], st_, &es);
     if (!L.h_s_down.empty()) expert_weights(d_wts_, fp(L.s_down), d_ids_, rr, st_);
     kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_ * rr, 1, st_);   // the rows back to back, as one vector
@@ -6018,7 +6035,7 @@ void Engine::moe_rows(Layer& L, int il, int n) {
     const int64_t ff = n_ff_exp_, ff2 = 2 * ff;
     // swiglu's rows quantized for down as they are made, where down takes them as int8 (the same numbers, and
     // neither the floats between the two kernels nor a launch: a 2,048-token batch of LFM2.5 writes and reads 50 MB)
-    const bool fused = !gelu_ && !guard && Mmq::int8(dt, ff);
+    const bool fused = !gelu_ && situ_beta_ <= 0 && !guard && Mmq::int8(dt, ff);
     // A mixed layer multiplies gate and up apart, n_ff rows each, up's into the second half of a row: its rows
     // quantized for up's type too, since quantize() writes them for the matrix type they meet.
     const int64_t gu_rows = L.mixed() ? ff : ff2;
@@ -6080,7 +6097,8 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             if (fused) {
                 swiglu_clamp_i8_rows(gu_, mq2_, n_ff_exp_, rc, limit, st_, &es);
             } else {
-                if (gelu_) geglu_rows(gu_, hx_, n_ff_exp_, rc, st_, &es);
+                if (situ_beta_ > 0) situ_rows(gu_, hx_, n_ff_exp_, rc, situ_beta_, situ_lb_, st_, &es);
+                else if (gelu_) geglu_rows(gu_, hx_, n_ff_exp_, rc, st_, &es);
                 else swiglu_clamp_rows(gu_, hx_, n_ff_exp_, rc, limit, st_, &es);
                 if (guard) guard_half_sums(hx_, ff, n_ff_exp_, rc, hf_, st_);
                 Mmq::quantize(hx_, nullptr, mq2_, dt, ff, ff, rc, st_);
@@ -6136,7 +6154,9 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             if (fused) {
                 swiglu_clamp_i8_rows(gu_ + (size_t) r0 * ff2, mq2_, n_ff_exp_, rows, limit, st_, &er);
             } else {
-                if (gelu_) geglu_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, st_, &er);
+                if (situ_beta_ > 0)
+                    situ_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, situ_beta_, situ_lb_, st_, &er);
+                else if (gelu_) geglu_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, st_, &er);
                 else swiglu_clamp_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, limit, st_, &er);
                 if (guard) guard_half_sums(hx_ + (size_t) r0 * ff, ff, n_ff_exp_, rows, hf_ + r0, st_);
                 Mmq::quantize(hx_ + (size_t) r0 * ff, nullptr, mq2_, dt, ff, ff, rows, st_);
@@ -6165,7 +6185,7 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             done = Clock::now();
         });
         cpu_experts(*workers_, host_.data(), (int) host_.size(), n, gt, ut, dt, n_embd_, n_ff_exp_, h_x_, limit, gelu_,
-                    h_cpu_, nullptr);
+                    h_cpu_, nullptr, nullptr, nullptr, situ_beta_, situ_lb_);
         const double cpu = ms_since(start);
         behind.wait();
         const double gpu = std::chrono::duration<double, std::milli>(done - start).count();
@@ -6295,7 +6315,7 @@ void Engine::run(const int32_t* tokens, int n) {
     const auto tail = [&](int il, int m, size_t rec) {
         Layer& L = layers_[(size_t) il];
         dbg("ffn", il, fo_, n_embd_);
-        if (replay && L.fixed) replayed(L.tail, rec, [&] { layer_tail(L, il, m); });
+        if (replay && L.fixed) replayed(L.tail, (size_t) tail_key(il, m) * recs + rec, [&] { layer_tail(L, il, m); });
         else layer_tail(L, il, m);
     };
 
@@ -6408,7 +6428,7 @@ void Engine::run(const int32_t* tokens, int n) {
         void*& pass = passes_[key];
         if (!pass)
             pass = record([&] {
-                for (int il = lo_; il < hi_; ++il) {
+                for (int il = lo_; il < hi_; il = next_layer(il)) {
                     Layer& L = layers_[(size_t) il];
                     layer_head(L, il, n);
                     if (!L.moe) continue;
@@ -6421,7 +6441,7 @@ void Engine::run(const int32_t* tokens, int n) {
         for (int il = lo_; il < hi_; ++il) stats_.gpu_experts += layers_[(size_t) il].moe ? n * n_used_ : 0;
         return;
     }
-    for (int il = lo_; il < hi_; ++il) {
+    for (int il = lo_; il < hi_; il = next_layer(il)) {
         Layer& L = layers_[(size_t) il];
         up(il, n, (size_t) n - 1);
         if (!L.moe) continue;
@@ -7161,7 +7181,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         return (const std::function<bool(int, int)>*) &share;
     };
     // co-reads go through the layers in packs whatever the experts: one by one their calls would wait as long
-    if (n_co == 0 && (n_calls == 1 || !mmq_ || all_cached() || all < opt_.stage_ahead)) {
+    if (n_co == 0 && (n_calls == 1 || !mmq_ || all_cached() || all < opt_.stage_ahead || !reads_by_layer())) {
         turn = share_to(n_layer_);   // eval() takes the calls through the cards after this one
         // On several cards the next one takes a call on a thread of its own, while this one runs the call after
         // it.  Each card runs the calls as eval() does, in the same order.

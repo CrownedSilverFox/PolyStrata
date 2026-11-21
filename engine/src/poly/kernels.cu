@@ -2192,17 +2192,39 @@ __global__ void merge_attn_piece_kernel(float* __restrict__ acc_out, float* __re
 // is its exp against the largest its token and head have had (top), zero for a row the token does not attend, as
 // the half the values' product takes.  sum is the sum of the weights against that top, and shrink what the
 // weights of the blocks before are worth against it.  With `fresh` there was no block before.
-__global__ void attn_softmax_block_kernel(const float* __restrict__ score, half* __restrict__ weight, int n_keys,
+// With a bias (b.r not null), a score first gets its key's bias by distance and loses the token's sink, where it
+// lies: the scores are this block's own.
+__global__ void attn_softmax_block_kernel(float* __restrict__ score, half* __restrict__ weight, int n_keys,
                                           long long row0, long long pos, int first, int window, int tokens, int per,
-                                          long long last, float* top, float* sum, float* shrink, bool fresh) {
+                                          long long last, float* top, float* sum, float* shrink, bool fresh,
+                                          AttnBias b = {}, int n_head = 0) {
     __shared__ float part[8];
+    __shared__ float rs[64];
     const int tok = first + (blockIdx.x % (tokens * per)) / per;
     long long lo;
     const int n = attn_rows(pos + tok, window, last, &lo);
     const long long end = lo + n;   // the token attends the sequence's rows from lo to before end
     const int j0 = lo > row0 ? int(lo - row0) : 0, j1 = end - row0 < n_keys ? int(end - row0) : n_keys;
-    const float* row = score + size_t(blockIdx.x) * n_keys;
+    float* row = score + size_t(blockIdx.x) * n_keys;
     half* w = weight + size_t(blockIdx.x) * n_keys;
+    if (b.r) {
+        // the head in the engine's order: a group's heads are together
+        const int head = int(blockIdx.x / (tokens * per)) * per + int(blockIdx.x % per);
+        const float* r = b.r + (size_t(tok) * n_head + head) * b.n_rel;
+        for (int i = threadIdx.x; i < b.n_rel; i += blockDim.x) rs[i] = r[i];
+        __syncthreads();
+        const float sink = b.sink[size_t(tok) * n_head + head];
+        const long long p = pos + tok;
+        for (int j = j0 + threadIdx.x; j < j1; j += blockDim.x) {
+            const long long dist = p - (row0 + j);
+            float add = 0.0f;
+            if (dist >= 0 && dist < b.extent) {
+                const float* col = b.table + size_t(dist) * b.n_rel;
+                for (int i = 0; i < b.n_rel; ++i) add += col[i] * rs[i];
+            }
+            row[j] += add - sink;
+        }
+    }
     float mx = -INFINITY;
     for (int j = j0 + threadIdx.x; j < j1; j += blockDim.x) mx = fmaxf(mx, row[j]);
     mx = block_max(mx, part);
@@ -4825,19 +4847,22 @@ void probe_mma_speed(double* mma_ms, double* dp4a_ms) {
 void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint16_t* vcache, int64_t pos, int rows,
                   float* score, size_t score_floats, float* work, float* out, int dim, int n_head, int kv_heads,
                   float scale, void* stream, int window, int ring, bool whole, Kvq8 kq8, Kvq8 vq8, uint16_t* kwork,
-                  uint16_t* vwork, size_t work_halves, const float* sinks, float* ml_out) {
+                  uint16_t* vwork, size_t work_halves, const float* sinks, float* ml_out, const AttnBias* bias) {
     const int per = n_head / kv_heads, width = kv_heads * dim;
+    if (bias && (bias->n_rel < 1 || bias->n_rel > 64 || !bias->r || !bias->sink || !bias->table))
+        throw std::invalid_argument("attend_batch: a bias has 1 to 64 values a head, a sink a head and a table");
     // The fp16-only dim==64 fast path reads the fp16 caches, which are null under q8 (a q8 cache is load-restricted
     // to qwen35moe's head_dim 128, so it never reaches here); guard explicitly so it is provably not taken for q8.
     if (dim == 64 && per == 4 && window == 0 && ring == 0 && !whole && !sinks && !ml_out && kq8.codes == nullptr &&
-        vq8.codes == nullptr &&
+        vq8.codes == nullptr && !bias &&
         tensor_cores()) {
         attn_flash64_kernel<<<dim3(grid(rows, FLASH_TOKENS), kv_heads), FLASH_TOKENS / 4 * WARP, 0, cs(stream)>>>(
             q, (const half*) kcache, (const half*) vcache, out, rows, n_head, kv_heads, (long long) pos,
             scale * 1.44269504f);
         return;
     }
-    if (dim == 128 && per == 8 && !whole && !ml_out && kq8.codes == nullptr && vq8.codes == nullptr && kernels_ptx() >= 80) {
+    if (dim == 128 && per == 8 && !whole && !ml_out && kq8.codes == nullptr && vq8.codes == nullptr && !bias &&
+        kernels_ptx() >= 80) {
         // the device's own setting: asked on whichever card the call is for
         const cudaError_t e =
             cudaFuncSetAttribute(attn_flash128_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, FLASH128_SMEM);
@@ -4849,7 +4874,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
         return;
     }
     if (dim == 256 && (per == 8 || per == 16) && window == 0 && ring == 0 && !whole && !sinks && kq8.codes == nullptr &&
-        vq8.codes == nullptr && kernels_ptx() >= 80) {
+        vq8.codes == nullptr && !bias && kernels_ptx() >= 80) {
         const auto k = per == 8 ? attn_flash256_kernel<8> : attn_flash256_kernel<16>;
         const cudaError_t e = cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, FLASH256_SMEM);
         if (e != cudaSuccess)
@@ -4897,6 +4922,7 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
     const int work_rows_f = 0;
     const size_t cells = score_floats / 3 * 2;
 #endif
+    if (bias && (own || f32)) throw std::invalid_argument("attend_batch: a bias is not taken on the FP32 products");
     half* weight = (half*) (score + cells);
     for (int first = 0, c = 0; first < rows; first += c) {
         // every token left, unless a grid's 65535 rows or the scratch for one row's scores is less, or the results
@@ -4997,7 +5023,8 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
                     "attention scores");
             attn_softmax_block_kernel<<<c * n_head, 128, 0, cs(stream)>>>(score, weight, m, lo0 + k0, (long long) pos,
                                                                          first, window, c, per, last, top, sum,
-                                                                         shrink, k0 == 0);
+                                                                         shrink, k0 == 0, bias ? *bias : AttnBias{},
+                                                                         n_head);
             if (k0 > 0)
                 attn_scale_kernel<<<dim3(grid(dim, 256), c * n_head), 256, 0, cs(stream)>>>(og, shrink, dim, false);
             blas_ck(cublasGemmStridedBatchedEx(h, CUBLAS_OP_N, CUBLAS_OP_N, dim, (int) cols, m, &one,

@@ -86,8 +86,10 @@ size_t attend_split_floats(int,int,int,int) { return 0; } // online softmax has 
 // else attend()
 void attend_batch(void*,const float* q,const uint16_t* k,const uint16_t* v,int64_t pos,int rows,float* score,
                   size_t score_n,float*,float* out,int dim,int heads,int kv,float scale,void* s,int window,int ring,
-                  bool whole,Kvq8 kq,Kvq8 vq,uint16_t*,uint16_t*,size_t,const float* sinks,float* ml_out) {
+                  bool whole,Kvq8 kq,Kvq8 vq,uint16_t*,uint16_t*,size_t,const float* sinks,float* ml_out,
+                  const AttnBias* bias) {
     if(ml_out) throw std::invalid_argument("Metal attention has no streamed pieces (--kv-resident)");
+    if(bias) throw std::invalid_argument("Metal attention has no bias by distance (Inkling 2)");
     static const std::string source=metal_detail::read_source(STRATA_POLY_FLASH_SOURCE);
     static const bool ready=[] {
         std::string error;

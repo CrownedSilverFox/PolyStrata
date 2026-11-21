@@ -265,7 +265,8 @@ bool cpu_expert_types_ok(int gu_type, int d_type, int n_embd, int n_ff, std::str
 
 void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, int gu_type, int u_type, int d_type,
                  int n_embd, int n_ff, const float* x, float limit, bool gelu, float* out,
-                 const std::function<void()>* meanwhile, const uint8_t* late, const std::function<void(int)>* wait) {
+                 const std::function<void()>* meanwhile, const uint8_t* late, const std::function<void(int)>* wait,
+                 float situ_beta, float situ_lb) {
     const Rows tg = rows_of(gu_type), tu = rows_of(u_type), td = rows_of(d_type);
     const size_t gu_row = Q::row_bytes(gu_type, n_embd);
     const size_t u_row = Q::row_bytes(u_type, n_embd);
@@ -361,6 +362,11 @@ void cpu_experts(Workers& workers, const CpuExpert* experts, int n, int rows, in
                 for (int k = 0; k < m; ++k, ++i) {
                     const int j = byp[i];
                     float g = gs[k] * e.gate_scale, u = us[k] * e.up_scale;
+                    if (situ_beta > 0.f) {
+                        if (situ_lb > 0.f) u = situ_lb * std::tanh(u / situ_lb);
+                        hp[(size_t) j * n_ff + r] = situ_beta * std::tanh(g / situ_beta) / (1.f + std::exp(-g)) * u;
+                        continue;
+                    }
                     if (gelu) {
                         hp[(size_t) j * n_ff + r] =
                             0.5f * g * (1.f + std::tanh(0.7978845608f * g * (1.f + 0.044715f * g * g))) * u;
