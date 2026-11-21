@@ -183,7 +183,10 @@ void Mmq::mul(const void* w,int type,int64_t nr,int64_t nc,size_t stride,int n,c
         MArgs m;m.p[0]=w;m.p[1]=x;m.p[2]=y;m.p[3]=ids;m.p[4]=bounds;
         m.stride=stride;m.row_bytes=quant::row_bytes(type,nc);m.ld=uint64_t(ld);m.ni=int(nc);m.no=int(nr);m.total=int(total);
         const int64_t rows=bounds?max_rows:total;
-        const MmTile& t=mm_tile;
+        // matrices of 32 rows or fewer (most of Qwen3.6's 256 experts in a batch of 1,024 tokens) leave half of a
+        // 64-row tile empty: the 32-row one.  The products are the same to the bit whatever the tile.
+        MmTile t=mm_tile;
+        if(rows<=32 && t.tm==64 && t.tn==64 && t.tk==64 && t.sg==4) t.tm=32;
         const std::string name=std::string("poly_mm_")+quant_name(type)+"_"+std::to_string(t.tm)+"_"+std::to_string(t.tn)+"_"+
                                std::to_string(t.tk)+"_"+std::to_string(t.sg);
         dispatch("poly_mm",mm_source(),name.c_str(),m,s,
