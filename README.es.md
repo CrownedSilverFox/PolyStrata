@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, Qwen3.6, Cl
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens por segundo al escribir una respuesta: 94 a 100 con Qwen3.6-35B-A3B en un portátil con tarjeta de 8 GB, 394 a 395 en una RTX 5090"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens por segundo al escribir una respuesta, poly.10 y esta versión: Qwen3.6-35B-A3B pasa de 83 a 92 en un portátil con tarjeta de 8 GB y de 429 a 532 en una RTX 5090"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Claude Code en una terminal junto al API Monitor de PolyStrata"><br>
 <sub>Claude Code con Qwen3.6-35B-A3B UD-Q3_K_M en el portátil con la tarjeta de 8 GB, en tiempo real: añade una opción <code>--json</code> a un programa pequeño, escribe una prueba y ejecuta las pruebas. El servidor había leído el prompt de sistema de Claude Code al arrancar (<code>"warm_start": true</code>).</sub></p>
@@ -19,15 +19,15 @@ Qwen3.8-Flash-Next, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, Qwen3.6, Cl
 PolyStrata ejecuta modelos de IA grandes en un PC normal, modelos que normalmente necesitan un servidor.
 Conversan, escriben código y funcionan con tus aplicaciones y agentes de programación. Nada sale de tu PC.
 
-Ejecuta doce modelos, con dos motores:
+Ejecuta catorce modelos, con dos motores:
 
 - **[Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)** en una tarjeta gráfica NVIDIA o AMD de
   12 GB o más, en Windows o Linux. También entiende imágenes. Su motor es el de
   [Strata](https://github.com/Niko1221/Strata), sin cambios.
 
-Los otros once usan un motor escrito para PolyStrata, con una tarjeta NVIDIA o [dos](docs/MULTI_GPU.md#the-strata-poly-models): los once en Linux, y todos menos GLM 5.3 Flash y
-DeepSeek V4 Flash también en Windows. Son experimentales: solo han funcionado en un PC con una tarjeta de 32 GB, y los ocho más
-pequeños además en un portátil con una tarjeta de 8 GB.
+Los otros trece usan un motor escrito para PolyStrata, con una tarjeta NVIDIA o [dos](docs/MULTI_GPU.md#the-strata-poly-models): los trece en Linux, y todos menos GLM 5.3 Flash y
+DeepSeek V4 Flash también en Windows. Son experimentales: solo han funcionado en un PC con una tarjeta de 32 GB, nueve de los más
+pequeños además en un portátil con una tarjeta de 8 GB, y Groot en un PC con una RTX 5060 de 8 GB.
 
 - **[GLM 5.3 Flash](docs/models/glm.es.md)**, el más grande: un archivo de 79 a 114 GB, que en su mayor parte se queda en la RAM.
 - **[DeepSeek V4 Flash](docs/models/deepseek.es.md)**, un archivo de 91 GB, que en su mayor parte también se queda en la RAM. Su
@@ -39,6 +39,11 @@ pequeños además en un portátil con una tarjeta de 8 GB.
   mayoría de sus capas solo mira 513 tokens atrás, así que una conversación larga ocupa poca VRAM: un contexto de 128K
   solo ocupa 2,6 GB más que 32K.
 - **[Qwen3.6-35B-A3B](docs/models/qwen36.es.md)**, un archivo de 13 a 23 GB. También entiende imágenes.
+- **[Groot 19B-A3B 261023](docs/models/groot.md)**, integración experimental en el instalador para tres cuantizaciones de
+  Bartowski, Q4_K_M, Q6_K y Q8_0 (de 12,5 a 20,2 GB), con MTP y un proyector de imágenes opcional. Q4_K_M con texto ha
+  funcionado en una RTX 5060 de 8 GB y en una RTX 5090 en Linux; las imágenes, Q6_K y Q8_0 siguen pendientes.
+- **[Inkling 2 Mini](docs/models/inkling.md)** de Thinking Machines, experimental: un archivo de 14 o 18 GB. Ha funcionado
+  en Linux con una tarjeta NVIDIA de 32 GB y en Windows con una tarjeta de portátil de 8 GB: solo texto, una petición a la vez.
 - **[Clover-35B-A3B-Preview](docs/models/clover.es.md)** de DiffuSpace, Qwen3.6-35B-A3B entrenado más para escribir
   también un bloque de tokens de una vez: un archivo de 13 a 21 GB. Solo lee texto.
 - **[Ornith 1.5](docs/models/ornith.es.md)**, con la arquitectura de Qwen3.6-35B-A3B y otros pesos: un archivo de 14 a 24 GB.
@@ -69,17 +74,21 @@ La tabla da el tamaño que el instalador elige para cada modelo, en tokens por s
 
 | Modelo | Portátil con tarjeta de 8 GB<br>escribe / lee | RTX 5090<br>escribe / lee | Todos los tamaños |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 70-73 / 3,590-3,620 | 480-485 / 23,390-23,460 | [LFM2.5](docs/models/lfm25.es.md) |
-| Flint 40B-A2.5B | 61-63 / 2,000-2,010 | 251-252 / 12,900 | [Flint](docs/models/flint.es.md) |
-| Qwen3.6-35B-A3B | 94-100 / 1,690 | 394-395 / 7,800-7,810 | [Qwen3.6](docs/models/qwen36.es.md) |
-| Clover-35B-A3B-Preview | 68-73 / 1,560-1,700 | sin medir | [Clover](docs/models/clover.es.md) |
-| Ornith 1.5 | 76-82 / 1,620 | 316-319 / 8,040-8,110 | [Ornith](docs/models/ornith.es.md) |
-| Gemma 4 26B-A4B | 92-93 / 2,240 | 353-356 / 8,420-8,480 | [Gemma 4](docs/models/gemma4.es.md) |
-| Tiel Coder 35B-A3B | 83 / 1,700 | 337-345 / 8,080-8,110 | [Tiel Coder](docs/models/tiel.es.md) |
-| MiniCPM-V 4.7 35B-A3B | 64 / 1,150 | 308-311 / 7,910-7,950 | [MiniCPM-V](docs/models/minicpmv.es.md) |
-| Kolibri 1 | no medido | 189-192 / 4,980-5,070 | [Kolibri 1](docs/models/kolibri.es.md) |
-| GLM 5.3 Flash | no funciona: necesita una tarjeta de 32 GB | 59-66 / 820 | [GLM](docs/models/glm.es.md) |
-| DeepSeek V4 Flash | no funciona: necesita una tarjeta de 32 GB | 56 / 1,040 | [DeepSeek](docs/models/deepseek.es.md) |
+| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 488 → 486 / 23,103 → 24,822 | [LFM2.5](docs/models/lfm25.es.md) |
+| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 253 → 262 / 12,699 → 15,035 | [Flint](docs/models/flint.es.md) |
+| Qwen3.6-35B-A3B | 83 → 92 / 1,795 → 2,185 | 429 → 532 / 11,210 → 15,067 | [Qwen3.6](docs/models/qwen36.es.md) |
+| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 280 → 306 / 9,305 → 13,826 | [Clover](docs/models/clover.es.md) |
+| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 332 → 370 / 9,356 → 14,144 | [Ornith](docs/models/ornith.es.md) |
+| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 369 → 377 / 8,481 → 11,287 | [Gemma 4](docs/models/gemma4.es.md) |
+| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 366 → 448 / 9,941 → 15,214 | [Tiel Coder](docs/models/tiel.es.md) |
+| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 310 → 329 / 9,695 → 14,390 | [MiniCPM-V](docs/models/minicpmv.es.md) |
+| Kolibri 1 | no medido | 203 → 208 / 5,032 → 5,951 | [Kolibri 1](docs/models/kolibri.es.md) |
+| GLM 5.3 Flash | no funciona: necesita una tarjeta de 32 GB | 5 → 48 / 225 → 878 | [GLM](docs/models/glm.es.md) |
+| DeepSeek V4 Flash | no funciona: necesita una tarjeta de 32 GB | 37 → 54 / 1,064 → 1,916 | [DeepSeek](docs/models/deepseek.es.md) |
+| Inkling 2 Mini | 35 / 417 | 128 / 2,975 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | no medido | 457 / 15,321 | [Groot](docs/models/groot.md) |
+
+Cada celda es poly.10 → esta versión en el mismo PC: la mediana de tres ejecuciones de cada una, alternadas, con `--tail-skip 0`. Inkling 2 Mini y Groot son nuevos en esta versión. En la estación de trabajo, la escritura de LFM2.5, Qwen3.6, Ornith 1.5, Gemma 4 y Tiel Coder viene de otra máquina en la nube con una RTX 5090, medida el día anterior, donde esta versión escribió más rápido; los dos números de cada par son de esa máquina.
 
 Portátil: RTX 4070 Laptop (8 GB), Core i7-14700HX, 32 GB de RAM. Estación de trabajo: RTX 5090 (32 GB), Xeon Platinum 8470Q (25 vCPU), de 90 a 120 GB de RAM. Flint es UD-Q3_K_XL en el portátil, el tamaño que el instalador elige con 32 GB de RAM, y UD-Q4_K_XL en la estación de trabajo. Kolibri 1 es Q2_K en la estación de trabajo; el instalador elige allí Q4_K_M, que no se midió.
 
@@ -95,7 +104,7 @@ entre 1.5 y 1.8 veces más rápido, con Qwen3.6 y con Tiel Coder ([las dos medic
 
 ## Cuánta RAM ocupa
 
-Desde 0.1.45-poly.7, el motor de los once modelos ocupa menos RAM: ya no guarda en memoria las partes del archivo del
+Desde 0.1.45-poly.7, el motor de los trece modelos ocupa menos RAM: ya no guarda en memoria las partes del archivo del
 modelo que ya están en la tarjeta gráfica. En el portátil, tras un prompt de 32,000 tokens, Qwen3.6-35B-A3B ocupaba
 17.9 GiB con 0.1.45-poly.6 y ahora ocupa 13.1 GiB, y escribe igual de rápido. En Linux pasó de 17.8 a 12.6 GiB.
 
@@ -166,6 +175,8 @@ funciona y cómo se midió: [docs/BACKENDS.md](docs/BACKENDS.md#less-of-the-pcs-
 | [Tiel Coder 35B-A3B](docs/models/tiel.es.md) | igual que arriba; AMD en beta | unos 21 GB junto a una tarjeta de 8 GB | de 14 a 23 GB | Windows, Linux |
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.es.md) | igual que arriba; AMD en beta | unos 25 GB junto a una tarjeta de 8 GB | de 16 a 29 GB | Windows, Linux |
 | [Kolibri 1](docs/models/kolibri.es.md) | NVIDIA RTX serie 20 o más nueva, 8 GB o más | unos 33 GB junto a una tarjeta de 8 GB | de 29 a 48 GB | Windows, Linux |
+| [Groot 19B-A3B 261023](docs/models/groot.md) (experimental) | backends compartidos de CUDA/HIP; Q4_K_M con texto en una RTX 5060 de 8 GB (pico medido 7,05 GiB de VRAM, 21,8 GiB de RAM) | unos 17 GB junto a una tarjeta de 8 GB para Q4_K_M, estimación del instalador | de 12,5 a 20,2 GB; las imágenes añaden 0,9 GB | Windows, Linux; imágenes, Q6_K y Q8_0 sin probar |
+| [Inkling 2 Mini](docs/models/inkling.md) (experimental) | NVIDIA, 8 GB o más; ha funcionado en una RTX 5090 y en una RTX 4070 Laptop (8 GB, UD-Q3_K_XL) | unos 21 GB junto a una tarjeta de 8 GB para UD-Q4_K_XL, estimación del instalador | 14 o 18 GB | Windows, Linux |
 
 La RAM es la estimación del instalador; una tarjeta más grande necesita menos. El instalador se encarga de todo lo demás: en Windows descarga el motor ya compilado y solo lo compila en tu PC con un procesador sin AVX2, para los modelos propios de PolyStrata en una tarjeta AMD, o si el motor de tu copia es más nuevo que la última versión, y ofrece instalar las herramientas que falten. Dos o tres tarjetas pueden repartirse un modelo ([multi-GPU](docs/MULTI_GPU.md)). Tarjetas gráficas antiguas, Intel Arc, Macs con Apple Silicon (Qwen3.8-Flash-Next, y Qwen3.6 y LFM2.5 como beta), Strix Halo y procesadores antiguos sin AVX2: [la lista completa](docs/INSTALL.md#what-you-need). La tarjeta, la RAM y los tamaños de cada modelo en detalle están en su página.
 
@@ -204,8 +215,8 @@ Qwen3.8-Flash-Next, de 79 a 114 GB para GLM 5.3 Flash, 91 GB para DeepSeek V4 Fl
 descarga se detiene, vuelve a ejecutarlo: sigue donde lo dejó. Tu navegador abre la aplicación de PolyStrata en
 `http://127.0.0.1:8080`.
 
-Los doce están en la lista de modelos del instalador. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
-`gemma4`, `tiel`, `minicpmv` o `kolibri` va directo a uno ([qué pregunta y qué escribe](docs/GLM.md#install), en inglés).
+Los catorce están en la lista de modelos del instalador. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
+`gemma4`, `tiel`, `minicpmv`, `kolibri`, `groot` o `inkling` va directo a uno ([qué pregunta y qué escribe](docs/GLM.md#install), en inglés).
 
 > **Mientras el modelo arranca, tu PC puede ir lento o dejar de responder durante 1-3 minutos** (más la primera vez).
 > PolyStrata carga 35-55 GB en tu RAM y reserva una parte para la tarjeta gráfica. Es normal. Espera y no cierres la
@@ -235,12 +246,14 @@ El mismo modelo viene en varios tamaños, más o menos comprimidos: los pequeño
 | [Tiel Coder 35B-A3B](docs/models/tiel.es.md) | UD-Q3_K_XL | UD-IQ3_XXS | UD-Q4_K_XL |
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.es.md) | Q4_K_M | mix_q3gud_im | Q6_K |
 | [Kolibri 1](docs/models/kolibri.es.md) | Q4_K_M desde unos 48 GB de RAM | Q2_K | Q3_K_M |
+| [Groot 19B-A3B 261023](docs/models/groot.md) | Q4_K_M | — | Q6_K, Q8_0 |
+| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | — |
 
 Qué es cada tamaño, su descarga, la RAM que necesita junto a otras tarjetas y cuánto se acerca al más grande: la página de cada modelo, enlazada en la tabla de «¿Qué velocidad tiene?».
 
 ## Cómo usarlo
 
-Los doce modelos se usan igual: la misma aplicación, la misma API.
+Los catorce modelos se usan igual: la misma aplicación, la misma API.
 
 <p align="center"><img src="docs/media/runpagoda.png" width="900" alt="La pestaña Monitor de la aplicación de PolyStrata junto a un agente de programación"><br>
 <sub>El <b>Monitor</b> de la aplicación de PolyStrata (izquierda) mientras un agente de programación escribe el jardín de la pagoda del vídeo (derecha). Una captura de <a href="https://github.com/Niko1221/Strata">Strata</a>.</sub></p>
@@ -333,7 +346,7 @@ de Unsloth y de patrickbdevaney. Qwen3.6-35B-A3B es del equipo de Qwen, Gemma 4 
 cuantización de [Unsloth](https://huggingface.co/unsloth). LFM2.5-24B-A2B es de
 [Liquid AI](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B), en la cuantización de Unsloth y en el QAD-Q4_0 de la
 propia Liquid AI. Flint 40B-A2.5B es de [Recursive](https://huggingface.co/RecursiveSI/flint), en la
-cuantización de Unsloth. Kolibri 1 es de [Aleph Alpha](https://huggingface.co/Aleph-Alpha/Kolibri-1), en la conversión GGUF de [Hob-forge](https://huggingface.co/Hob-forge/Kolibri-1-GGUF). Clover-35B-A3B-Preview es de [DiffuSpace](https://huggingface.co/Diffuspace/Clover-35B-A3B-Preview), en la cuantización de [maternion](https://huggingface.co/maternion/Clover-35B-A3B-Preview-GGUF) y el APEX de IsValorum. Ornith 1.5 es de ornith-ai, en la cuantización APEX de
+cuantización de Unsloth. Inkling 2 Mini es de [Thinking Machines](https://huggingface.co/thinkingmachines/Inkling-2-Mini), en la cuantización de Unsloth. Groot 19B-A3B 261023 es de GrootTeam, en la cuantización de [bartowski](https://huggingface.co/bartowski/GrootTeam_Groot-19B-A3B-261023-GGUF). Kolibri 1 es de [Aleph Alpha](https://huggingface.co/Aleph-Alpha/Kolibri-1), en la conversión GGUF de [Hob-forge](https://huggingface.co/Hob-forge/Kolibri-1-GGUF). Clover-35B-A3B-Preview es de [DiffuSpace](https://huggingface.co/Diffuspace/Clover-35B-A3B-Preview), en la cuantización de [maternion](https://huggingface.co/maternion/Clover-35B-A3B-Preview-GGUF) y el APEX de IsValorum. Ornith 1.5 es de ornith-ai, en la cuantización APEX de
 [mudler](https://huggingface.co/mudler/Ornith-1.5-35B-A3B-APEX-MTP-GGUF). Tiel Coder 35B-A3B es Ornith 1.5 en la cuantización de
 [peculiar-ragdoll](https://huggingface.co/peculiar-ragdoll/Tiel-Coder-35B-A3B-GGUF-MTP);
 [u/Sensitive_Song4219](https://www.reddit.com/r/LocalLLM/comments/1x22inc/comment/pf3r111/) descubrió que funciona en PolyStrata. MiniCPM-V 4.7 35B-A3B es de [OpenBMB](https://huggingface.co/openbmb/MiniCPM-V-4.7-35B-A3B-gguf),

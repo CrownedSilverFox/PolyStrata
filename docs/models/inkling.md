@@ -15,16 +15,20 @@ number is the range of three runs.
 
 | Size | Writes after a 19-token prompt | Writes after a 10,081-token prompt | Reads that prompt |
 | --- | ---: | ---: | ---: |
-| **UD-Q4_K_XL** | 111-112 tokens/s | 108 tokens/s | 3,440-3,470 tokens/s |
-| **UD-Q3_K_XL** | 114 tokens/s | 111-112 tokens/s | 3,650-3,660 tokens/s |
+| **UD-Q4_K_XL** | 111-112 tokens/s | 109 tokens/s | 3,290-3,300 tokens/s |
+| **UD-Q3_K_XL** | 114 tokens/s | 110-112 tokens/s | 3,360-3,450 tokens/s |
 
 llama.cpp on the same card, run in turns with the above on the same prompts (commit 29b52d3 with the fix of its
 pull request 32704, `llama-server -ngl 99`):
 
 | Size | Writes after a 19-token prompt | Writes after a 10,081-token prompt | Reads that prompt |
 | --- | ---: | ---: | ---: |
-| **UD-Q4_K_XL** | 82-84 tokens/s | 76-77 tokens/s | 1,560 tokens/s |
-| **UD-Q3_K_XL** | 85 tokens/s | 78 tokens/s | 1,520-1,530 tokens/s |
+| **UD-Q4_K_XL** | 82-83 tokens/s | 76-77 tokens/s | 1,540-1,550 tokens/s |
+| **UD-Q3_K_XL** | 84-86 tokens/s | 77-78 tokens/s | 1,510-1,530 tokens/s |
+
+Both runs print the three likeliest tokens of every step, which the comparison below reads; that costs a little.
+Without it, UD-Q4_K_XL writes 127-129 tokens/s after the short prompt and 124 after the long one, and reads the long
+one at 3,280-3,320 tokens/s (six runs each); the README's benchmark measures 128.
 
 The two start with the same tokens. For UD-Q4_K_XL the first 13 after the short prompt and the first 14 after the
 long one are the same, and they part at a step whose two leading candidates are nearly as likely (0.35 against 0.34,
@@ -35,7 +39,7 @@ its 3,072 experts on the card and the rest are computed on the CPU. Three runs o
 
 | Size | Writes in a short chat | Reads a 30,954-token prompt | Writes after it |
 | --- | ---: | ---: | ---: |
-| **UD-Q3_K_XL** | 36 tokens/s | 408-412 tokens/s | 27-29 tokens/s |
+| **UD-Q3_K_XL** | 34-37 tokens/s | 415-417 tokens/s | 28-29 tokens/s |
 
 Reading is the slow part on a small card. The model's looped layers make every batch of the prompt upload the
 experts that are not on the card again. With `--prompt-batch 2048` the same prompt was read at 539 tokens/s (one

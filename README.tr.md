@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, Qwen3.6, Cl
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Yanıt yazarken saniyede token: 8 GB kartlı bir dizüstünde Qwen3.6-35B-A3B ile 94 ila 100, bir RTX 5090'da 394 ila 395"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Yanıt yazarken saniyede token, poly.10 ve bu sürüm: Qwen3.6-35B-A3B 8 GB kartlı bir dizüstünde 83'ten 92'ye, bir RTX 5090'da 429'dan 532'ye"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Bir terminalde Claude Code ve yanında PolyStrata'nın API Monitor ekranı"><br>
 <sub>Claude Code, Qwen3.6-35B-A3B UD-Q3_K_M ile 8 GB kartlı dizüstünde, gerçek zamanlı: küçük bir programa <code>--json</code> seçeneği ekliyor, bunun için bir test yazıyor ve testleri çalıştırıyor. Sunucu, başlarken Claude Code'un sistem prompt'unu okumuştu (<code>"warm_start": true</code>).</sub></p>
@@ -20,15 +20,15 @@ PolyStrata, normalde bir sunucu gerektiren büyük yapay zekâ modellerini sıra
 modeller sohbet eder, kod yazar, uygulamaların ve kodlama ajanlarınla birlikte çalışır. Hiçbir veri bilgisayarından
 dışarı çıkmaz.
 
-İki motor üzerinde on iki model çalıştırır:
+İki motor üzerinde on dört model çalıştırır:
 
 - **[Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)**: Windows veya Linux'ta, 12 GB ya da
   daha fazla belleği olan bir NVIDIA veya AMD ekran kartında. Resimleri de okur. Motoru
   [Strata](https://github.com/Niko1221/Strata) projesinin motorudur, değiştirilmeden kullanılır.
 
-Diğer on biri, PolyStrata için yazılmış bir motorda, bir NVIDIA kartıyla ya da [iki](docs/MULTI_GPU.md#the-strata-poly-models) kartla çalışır: hepsi
+Diğer on üçü, PolyStrata için yazılmış bir motorda, bir NVIDIA kartıyla ya da [iki](docs/MULTI_GPU.md#the-strata-poly-models) kartla çalışır: hepsi
 Linux'ta, GLM 5.3 Flash ve DeepSeek V4 Flash dışındakiler Windows'ta da. Deneyseldirler: 32 GB kartlı tek bir
-bilgisayarda, sekiz küçük olanı ayrıca 8 GB kartlı bir dizüstünde de çalıştırıldı.
+bilgisayarda, küçüklerden dokuzu ayrıca 8 GB kartlı bir dizüstünde, Groot da 8 GB'lık RTX 5060'lı bir bilgisayarda çalıştırıldı.
 
 - **[GLM 5.3 Flash](docs/models/glm.md)**, en büyükleri: 79 ila 114 GB'lık bir dosya, çoğu RAM'de kalır.
 - **[DeepSeek V4 Flash](docs/models/deepseek.md)**, 91 GB'lık bir dosya; bunun da çoğu RAM'de kalır. Bir sohbeti
@@ -40,6 +40,11 @@ bilgisayarda, sekiz küçük olanı ayrıca 8 GB kartlı bir dizüstünde de ça
   bir dosya. Katmanlarının çoğu yalnızca 513 token geriye bakar, bu yüzden uzun bir sohbet az VRAM alır: 128K bağlam,
   32K'ya göre 2,6 GB daha fazla alır.
 - **[Qwen3.6-35B-A3B](docs/models/qwen36.md)**, 13 ila 23 GB'lık bir dosya. Resimleri de okur.
+- **[Groot 19B-A3B 261023](docs/models/groot.md)**, yükleyicide deneysel destek: Bartowski'nin üç kuantizasyonu, Q4_K_M,
+  Q6_K ve Q8_0 (12,5 ila 20,2 GB), MTP ve isteğe bağlı bir görüntü projektörüyle. Q4_K_M metinle 8 GB'lık bir RTX 5060'ta
+  ve Linux'ta bir RTX 5090'da çalıştı; görüntüler, Q6_K ve Q8_0 henüz denenmedi.
+- **[Inkling 2 Mini](docs/models/inkling.md)**, Thinking Machines tarafından geliştirildi, deneysel: 14 veya 18 GB'lık bir
+  dosya. Linux'ta 32 GB'lık bir NVIDIA kartıyla ve Windows'ta 8 GB'lık bir dizüstü kartıyla çalıştı: yalnızca metin, aynı anda tek istek.
 - **[Clover-35B-A3B-Preview](docs/models/clover.md)**, DiffuSpace tarafından, bir seferde bir blok token da yazabilmesi
   için daha fazla eğitilmiş Qwen3.6-35B-A3B: 13 ila 21 GB'lık bir dosya. Yalnızca metin okur.
 - **[Ornith 1.5](docs/models/ornith.md)**, Qwen3.6-35B-A3B'nin mimarisine ve farklı ağırlıklara sahip: 14 ila 24 GB'lık
@@ -73,17 +78,21 @@ Tablo, her model için yükleyicinin seçtiği boyutu, saniyede token olarak ver
 
 | Model | 8 GB kartlı dizüstü<br>yazma / okuma | RTX 5090<br>yazma / okuma | Tüm boyutlar |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 70-73 / 3.590-3.620 | 480-485 / 23.390-23.460 | [LFM2.5](docs/models/lfm25.md) |
-| Flint 40B-A2.5B | 61-63 / 2.000-2.010 | 251-252 / 12.900 | [Flint](docs/models/flint.md) |
-| Qwen3.6-35B-A3B | 94-100 / 1.690 | 394-395 / 7.800-7.810 | [Qwen3.6](docs/models/qwen36.md) |
-| Clover-35B-A3B-Preview | 68-73 / 1.560-1.700 | ölçülmedi | [Clover](docs/models/clover.md) |
-| Ornith 1.5 | 76-82 / 1.620 | 316-319 / 8.040-8.110 | [Ornith](docs/models/ornith.md) |
-| Gemma 4 26B-A4B | 92-93 / 2.240 | 353-356 / 8.420-8.480 | [Gemma 4](docs/models/gemma4.md) |
-| Tiel Coder 35B-A3B | 83 / 1.700 | 337-345 / 8.080-8.110 | [Tiel Coder](docs/models/tiel.md) |
-| MiniCPM-V 4.7 35B-A3B | 64 / 1.150 | 308-311 / 7.910-7.950 | [MiniCPM-V](docs/models/minicpmv.md) |
-| Kolibri 1 | ölçülmedi | 189-192 / 4.980-5.070 | [Kolibri 1](docs/models/kolibri.md) |
-| GLM 5.3 Flash | çalışmaz: 32 GB kart gerekir | 59-66 / 820 | [GLM](docs/models/glm.md) |
-| DeepSeek V4 Flash | çalışmaz: 32 GB kart gerekir | 56 / 1.040 | [DeepSeek](docs/models/deepseek.md) |
+| LFM2.5-24B-A2B | 89 → 81 / 3.617 → 3.452 | 488 → 486 / 23.103 → 24.822 | [LFM2.5](docs/models/lfm25.md) |
+| Flint 40B-A2.5B | 60 → 56 / 2.112 → 2.273 | 253 → 262 / 12.699 → 15.035 | [Flint](docs/models/flint.md) |
+| Qwen3.6-35B-A3B | 83 → 92 / 1.795 → 2.185 | 429 → 532 / 11.210 → 15.067 | [Qwen3.6](docs/models/qwen36.md) |
+| Clover-35B-A3B-Preview | 62 → 62 / 1.721 → 1.973 | 280 → 306 / 9.305 → 13.826 | [Clover](docs/models/clover.md) |
+| Ornith 1.5 | 70 → 76 / 1.758 → 2.036 | 332 → 370 / 9.356 → 14.144 | [Ornith](docs/models/ornith.md) |
+| Gemma 4 26B-A4B | 77 → 76 / 1.914 → 1.896 | 369 → 377 / 8.481 → 11.287 | [Gemma 4](docs/models/gemma4.md) |
+| Tiel Coder 35B-A3B | 71 → 81 / 1.791 → 2.171 | 366 → 448 / 9.941 → 15.214 | [Tiel Coder](docs/models/tiel.md) |
+| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1.740 → 1.982 | 310 → 329 / 9.695 → 14.390 | [MiniCPM-V](docs/models/minicpmv.md) |
+| Kolibri 1 | ölçülmedi | 203 → 208 / 5.032 → 5.951 | [Kolibri 1](docs/models/kolibri.md) |
+| GLM 5.3 Flash | çalışmaz: 32 GB kart gerekir | 5 → 48 / 225 → 878 | [GLM](docs/models/glm.md) |
+| DeepSeek V4 Flash | çalışmaz: 32 GB kart gerekir | 37 → 54 / 1.064 → 1.916 | [DeepSeek](docs/models/deepseek.md) |
+| Inkling 2 Mini | 35 / 417 | 128 / 2.975 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | ölçülmedi | 457 / 15.321 | [Groot](docs/models/groot.md) |
+
+Her hücre aynı bilgisayarda poly.10 → bu sürümdür: sırayla çalıştırılan üçer ölçümün ortancası, `--tail-skip 0` ile. Inkling 2 Mini ve Groot bu sürümde yeni. İş istasyonunda LFM2.5, Qwen3.6, Ornith 1.5, Gemma 4 ve Tiel Coder'ın yazma hızları bir gün önce başka bir RTX 5090 bulut makinesinde ölçüldü; bu sürüm orada daha hızlı yazdı ve her çiftin iki sayısı da o makineden.
 
 Dizüstü: RTX 4070 Laptop (8 GB), Core i7-14700HX, 32 GB RAM. İş istasyonu: RTX 5090 (32 GB), Xeon Platinum 8470Q (25 vCPU), 90 ila 120 GB RAM. Flint, dizüstünde UD-Q3_K_XL boyutuyla (yükleyicinin 32 GB RAM ile seçtiği boyut), iş istasyonunda UD-Q4_K_XL boyutuyla ölçüldü. Kolibri 1, iş istasyonunda Q2_K boyutuyla ölçüldü; yükleyici orada Q4_K_M boyutunu seçer, bu boyut ölçülmedi.
 
@@ -99,7 +108,7 @@ hızlı okudu ve 1,5 ila 1,8 kat daha hızlı yazdı ([iki çalıştırma](docs/
 
 ## Ne kadar RAM tutar?
 
-0.1.45-poly.7 sürümünden beri on bir modelin motoru RAM'inin daha azını tutuyor: model dosyasının zaten ekran
+0.1.45-poly.7 sürümünden beri on üç modelin motoru RAM'inin daha azını tutuyor: model dosyasının zaten ekran
 kartında olan kısımlarını artık RAM'de tutmuyor. Dizüstünde Qwen3.6-35B-A3B, 32.000 token'lık bir prompt'tan sonra
 0.1.45-poly.6 ile 17,9 GiB tutuyordu; şimdi 13,1 GiB tutuyor ve aynı hızda yazıyor. Linux'ta 17,8 GiB yerine
 12,6 GiB.
@@ -171,6 +180,8 @@ Nasıl çalıştığı ve nasıl ölçüldüğü: [docs/BACKENDS.md](docs/BACKEN
 | [Tiel Coder 35B-A3B](docs/models/tiel.md) | yukarıdakiyle aynı; AMD beta olarak | 8 GB'lık bir kartın yanında yaklaşık 21 GB | 14 ila 23 GB | Windows, Linux |
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.md) | yukarıdakiyle aynı; AMD beta olarak | 8 GB'lık bir kartın yanında yaklaşık 25 GB | 16 ila 29 GB | Windows, Linux |
 | [Kolibri 1](docs/models/kolibri.md) | NVIDIA RTX 20 serisi veya daha yenisi, 8 GB veya daha fazla | 8 GB'lık bir kartın yanında yaklaşık 33 GB | 29 ila 48 GB | Windows, Linux |
+| [Groot 19B-A3B 261023](docs/models/groot.md) (deneysel) | ortak CUDA/HIP arka uçları; Q4_K_M metinle 8 GB'lık bir RTX 5060'ta çalıştı (ölçülen tepe 7,05 GiB VRAM, 21,8 GiB RAM) | Q4_K_M için 8 GB'lık bir kartın yanında yaklaşık 17 GB, yükleyicinin tahmini | 12,5 ila 20,2 GB; görüntüler 0,9 GB ekler | Windows, Linux; görüntüler, Q6_K ve Q8_0 denenmedi |
+| [Inkling 2 Mini](docs/models/inkling.md) (deneysel) | NVIDIA, 8 GB veya daha fazla; bir RTX 5090'da ve bir RTX 4070 Laptop'ta (8 GB, UD-Q3_K_XL) çalıştı | UD-Q4_K_XL için 8 GB'lık bir kartın yanında yaklaşık 21 GB, yükleyicinin tahmini | 14 veya 18 GB | Windows, Linux |
 
 RAM değeri yükleyicinin tahminidir; daha büyük bir kartla daha azı gerekir. Geri kalan her şeyi yükleyici kurar: Windows'ta motoru hazır derlenmiş olarak indirir; yalnızca AVX2 desteği olmayan bir işlemcide, AMD kartta PolyStrata'nın kendi modelleri için ya da senin kopyandaki motor son sürümden daha yeniyse onu bilgisayarında derler ve gereken araçları kurmayı önerir. İki ya da üç kart bir modeli paylaşabilir ([çoklu GPU](docs/MULTI_GPU.md)). Eski ekran kartları, Intel Arc, Apple Silicon Mac'ler (Qwen3.8-Flash-Next; beta olarak Qwen3.6 ve LFM2.5), Strix Halo ve AVX2 desteği olmayan eski işlemciler: [tam liste](docs/INSTALL.md#what-you-need). Her modelin kart, RAM ve boyut ayrıntıları kendi sayfasında.
 
@@ -215,8 +226,8 @@ Yükleyici kartını bulur ve ona uygun motoru kurar. Sana birkaç soru sorar:
 GLM 5.3 Flash için 79 ila 114 GB, DeepSeek V4 Flash için 91 GB, Kolibri 1 için 29 ila 48 GB, diğer sekizi için 11 ila 42 GB) ve başlatır. İndirme yarıda kalırsa yeniden çalıştır:
 kaldığı yerden devam eder. Tarayıcın PolyStrata uygulamasını `http://127.0.0.1:8080` adresinde açar.
 
-On ikisinin hepsi yükleyicinin model listesinde. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
-`gemma4`, `tiel`, `minicpmv` veya `kolibri` doğrudan o modele gider ([ne sorduğu ve ne yazdığı](docs/GLM.md#install)).
+On dördünün hepsi yükleyicinin model listesinde. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
+`gemma4`, `tiel`, `minicpmv`, `kolibri`, `groot` veya `inkling` doğrudan o modele gider ([ne sorduğu ve ne yazdığı](docs/GLM.md#install)).
 
 > **Model başlarken bilgisayarın 1-3 dakika boyunca yavaşlayabilir ya da yanıt vermeyebilir** (en uzunu ilk seferde).
 > PolyStrata RAM'ine 35-55 GB yükler ve bir kısmını ekran kartı için kilitler. Bu normaldir. Bekle ve pencereyi
@@ -247,12 +258,14 @@ Aynı model, az ya da çok sıkıştırılmış birkaç boyutta gelir: küçük 
 | [Tiel Coder 35B-A3B](docs/models/tiel.md) | UD-Q3_K_XL | UD-IQ3_XXS | UD-Q4_K_XL |
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.md) | Q4_K_M | mix_q3gud_im | Q6_K |
 | [Kolibri 1](docs/models/kolibri.md) | yaklaşık 48 GB RAM'den itibaren Q4_K_M | Q2_K | Q3_K_M |
+| [Groot 19B-A3B 261023](docs/models/groot.md) | Q4_K_M | — | Q6_K, Q8_0 |
+| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | — |
 
 Her boyutun ne olduğu, indirme bilgisi, başka kartların yanında ne kadar RAM istediği ve en büyük boyuta ne kadar yaklaştığı: her modelin kendi sayfasında; sayfalara "Ne kadar hızlı?" başlığının altındaki tablodan ulaşabilirsin.
 
 ## Kullanım
 
-On iki modelin hepsi aynı şekilde kullanılır: aynı uygulama, aynı API.
+On dört modelin hepsi aynı şekilde kullanılır: aynı uygulama, aynı API.
 
 <p align="center"><img src="docs/media/runpagoda.png" width="900" alt="Uygulamanın Monitor sekmesi, bir kodlama ajanının yanında"><br>
 <sub>Bir kodlama ajanı videodaki pagoda bahçesini yazarken (sağda) uygulamanın <b>Monitor</b> sekmesi (solda). Ekran görüntüsü <a href="https://github.com/Niko1221/Strata">Strata</a> projesinden.</sub></p>
@@ -358,6 +371,8 @@ Qwen3.6-35B-A3B Qwen ekibi, Gemma 4 Google, DeepSeek V4 Flash ise DeepSeek taraf
 [Liquid AI](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B) tarafından geliştirildi; Unsloth kuantizasyonuyla ve
 Liquid AI'ın kendi QAD-Q4_0 sürümüyle kullanılıyor. Flint 40B-A2.5B, [Recursive](https://huggingface.co/RecursiveSI/flint)
 tarafından geliştirildi; Unsloth kuantizasyonuyla kullanılıyor.
+Inkling 2 Mini, [Thinking Machines](https://huggingface.co/thinkingmachines/Inkling-2-Mini) tarafından geliştirildi; Unsloth kuantizasyonuyla kullanılıyor.
+Groot 19B-A3B 261023, GrootTeam tarafından geliştirildi; [bartowski](https://huggingface.co/bartowski/GrootTeam_Groot-19B-A3B-261023-GGUF) kuantizasyonuyla kullanılıyor.
 Kolibri 1, [Aleph Alpha](https://huggingface.co/Aleph-Alpha/Kolibri-1) tarafından geliştirildi;
 [Hob-forge](https://huggingface.co/Hob-forge/Kolibri-1-GGUF) tarafından yapılan GGUF dönüşümüyle kullanılıyor.
 Clover-35B-A3B-Preview, [DiffuSpace](https://huggingface.co/Diffuspace/Clover-35B-A3B-Preview) tarafından geliştirildi;
