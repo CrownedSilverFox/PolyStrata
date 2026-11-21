@@ -3322,7 +3322,6 @@ void Engine::load(const Options& o) {
     if (!h_state_) {
         h_state_bytes_ = card_state_bytes();
         h_state_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
-        h_mark_ = (uint8_t*) hmalloc(h_state_bytes_, "pinned memory");
         cudaEvent_t ev = nullptr;
         ck(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming), "cudaEventCreate");
         ev_saved_ = ev;
@@ -7143,8 +7142,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
                 eval(tokens + call.at, call.m, false);
             }
             if (call.mark >= 0 && marks[call.mark].state && behind_states) {
-                settle.now();
-                stage = stage == h_state_ ? h_mark_ : h_state_;
+                settle.now();   // the copy before is done: h_state_ is free
                 stage_to = marks[call.mark].state;
                 for (int il = 0; il < (int) layers_.size(); ++il)
                     if (runs(il)) save_layer(il, pos_, stage);
@@ -7219,12 +7217,15 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     // a turn for each layer, and one for the model's output, which the draft block keeps a row of
     const int turns = hi_ - lo_ + (draft_ ? 1 : 0);
     // A checkpoint's layers are copied in the stream, behind the call before it and ahead of the next one's turn
-    // at the layer, so the card goes on.  The first two go to pinned memory, at the card's speed, and to their
-    // states after the read; the others straight to their states, which are pageable: 2 MB of Qwen3.6's took the
-    // card 1.3 ms a layer.
+    // at the layer, so the card goes on.  The first goes to pinned memory, at the card's speed, and to its state
+    // after the read; the others straight to their states, which are pageable: 2 MB of Qwen3.6's took the card
+    // 1.3 ms a layer.
     std::vector<uint8_t*> staged((size_t) n_marks, nullptr);
-    for (int m = 0, used = 0; m < n_marks && used < 2; ++m)
-        if (marks[m].state && h_state_bytes_ >= card_state_bytes()) staged[(size_t) m] = used++ ? h_mark_ : h_state_;
+    for (int m = 0; m < n_marks; ++m)
+        if (marks[m].state && h_state_bytes_ >= card_state_bytes()) {
+            staged[(size_t) m] = h_state_;
+            break;
+        }
     shared_ahead_ = all >= opt_.stage_ahead;   // (co-reads of fewer tokens: one pack, its own experts)
     try {
         for (int k = 0; k < turns; ++k) {

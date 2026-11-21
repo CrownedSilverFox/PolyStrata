@@ -987,8 +987,7 @@ protected:
     int way_backoff_[9] = {};    ///< the way behind waits kWayAgain << this many windows of the size
     bool halves_ = false;        ///< the way of the window under way
     float *wlogits_ = nullptr, *h_wlogits_ = nullptr;   ///< a window's logits, token after token: VRAM and pinned
-    uint8_t* h_state_ = nullptr;   ///< pinned: save_state()'s way to its caller's memory
-    uint8_t* h_mark_ = nullptr;    ///< pinned: and with it read()'s, for two checkpoints inside a read
+    uint8_t* h_state_ = nullptr;   ///< pinned: save_state()'s way to its caller's memory, and read()'s checkpoints'
     void* ev_saved_ = nullptr;     ///< marks read()'s copy of a checkpoint's state into one of them
     size_t h_state_bytes_ = 0;
     void state_out(const uint8_t* from, uint8_t* to);
