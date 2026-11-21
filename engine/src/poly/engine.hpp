@@ -366,7 +366,6 @@ public:
     size_t row_bytes() const { return card_row_bytes() + (next_ ? next_->row_bytes() : 0); }
     /// The bytes of the mapped files that the cards' expert caches hold, on every card.
     size_t cached_file_bytes() const;
-    size_t covering(int pct) const;
     /// The recurrent state at pos(), state_bytes() long.
     void save_state(uint8_t* dst);
     /// Back to position `pos` with the recurrent state it had there.  The rows before pos must be the sequence's.
