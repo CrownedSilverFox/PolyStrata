@@ -389,6 +389,27 @@ __global__ void rms_norm_kernel(const float* __restrict__ x, const float* __rest
     for (int i = threadIdx.x; i < n; i += blockDim.x) yr[i] = w ? xr[i] * scale * w[i] : xr[i] * scale;
 }
 
+// rms_norm_kernel of up to 3 inputs, blockIdx.y the input: a row's block is that kernel's.
+struct RmsMany {
+    const float* x[3];
+    const float* w[3];
+    float* y[3];
+};
+
+__global__ void rms_norm_many_kernel(RmsMany m, int n, float eps) {
+    __shared__ float part[32];
+    const float* __restrict__ x = m.x[blockIdx.y];
+    const float* __restrict__ w = m.w[blockIdx.y];
+    float* y = m.y[blockIdx.y];
+    const float* xr = x + size_t(blockIdx.x) * n;
+    float* yr = y + size_t(blockIdx.x) * n;
+    float ss = 0.0f;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) ss += xr[i] * xr[i];
+    ss = block_sum(ss, part);
+    const float scale = 1.0f / sqrtf(ss / float(n) + eps);
+    for (int i = threadIdx.x; i < n; i += blockDim.x) yr[i] = w ? xr[i] * scale * w[i] : xr[i] * scale;
+}
+
 __global__ void layer_norm_kernel(const float* __restrict__ x, const float* __restrict__ w,
                                   const float* __restrict__ b, float* y, int n, float eps) {
     __shared__ float part[8];
@@ -3507,6 +3528,21 @@ void rms_norm(const float* x, const float* w, float* y, int n, int rows, float e
     rms_norm_kernel<<<rows, sum_threads(n), 0, cs(stream)>>>(x, w, y, n, eps, y_stride ? y_stride : n);
     if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
         throw std::runtime_error(std::string("rms_norm: ") + cudaGetErrorString(e));
+}
+
+void rms_norm_many(const float* const* x, const float* const* w, float* const* y, int count, int n, int rows, float eps,
+                   void* stream) {
+    if (count < 1 || count > 3) throw std::invalid_argument("rms_norm_many: 1 to 3 inputs");
+    if (rows <= 0) return;
+    RmsMany m{};
+    for (int j = 0; j < count; ++j) {
+        m.x[j] = x[j];
+        m.w[j] = w[j];
+        m.y[j] = y[j];
+    }
+    rms_norm_many_kernel<<<dim3(rows, count), sum_threads(n), 0, cs(stream)>>>(m, n, eps);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("rms_norm_many: ") + cudaGetErrorString(e));
 }
 
 void layer_norm(const float* x, const float* w, const float* b, float* y, int n, int rows, float eps, void* stream) {

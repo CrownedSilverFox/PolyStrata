@@ -44,6 +44,11 @@ void ink_gate(const float* cur, const float* msg, const float* gain, const float
 void ink_conv(const float* x, float* state, const float* w, const float* dyn, float* out, int channels, int heads,
               int taps, int rows, void* stream);
 
+/// One token's ink_conv() (no dyn, one head) and its state, out written, then the stream acc updated: mode 0
+/// acc = acc + out * a (axpy()), mode 1 keep = acc and then acc = out, mode 2 acc = out.  The same bits.
+void ink_conv_add(const float* x, float* state, const float* w, float* out, float* acc, float* keep, float a, int mode,
+                  int channels, int taps, void* stream);
+
 /// Each head's `dim` values, times scale (null: none; [dim] a head), brought down to an L2 norm of at most `thr`
 /// (the norm has 1e-6 added), then times tau = 1 + alpha * log(max(1, (pos + row + 1) / floor)) when alpha > 0.
 /// With `at` (a recorded launch), row t's position is what the card holds at at[2 * t] when the launch runs.

@@ -375,20 +375,18 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         for (int j = 0; j < 3; ++j) in[j] = in_[j];
     }
     const float* x[3];
-    if (B.swa) {
+    if (B.swa && !looped) {
         rms_norm(in[0], fp(B.attn_norm), xin_[0], n_embd_, n, rms_eps_, st_);
         x[0] = x[1] = x[2] = xin_[0];
-        if (looped)
-            for (int j = 1; j < 3; ++j) {
-                rms_norm(in[j], fp(B.attn_norm), xin_[j], n_embd_, n, rms_eps_, st_);
-                x[j] = xin_[j];
-            }
-    } else {
-        const Dev* norm[3] = {&B.q_norm, &B.k_norm, &B.v_norm};
-        for (int j = 0; j < 3; ++j) {
-            rms_norm(in[j], fp(*norm[j]), xin_[j], n_embd_, n, rms_eps_, st_);
-            x[j] = xin_[j];
+    } else {   // three inputs, normed in one launch
+        const float* w[3] = {fp(B.attn_norm), fp(B.attn_norm), fp(B.attn_norm)};
+        if (!B.swa) {
+            w[0] = fp(B.q_norm);
+            w[1] = fp(B.k_norm);
+            w[2] = fp(B.v_norm);
         }
+        rms_norm_many(in, w, xin_, 3, n_embd_, n, rms_eps_, st_);
+        for (int j = 0; j < 3; ++j) x[j] = xin_[j];
     }
     dbg("attn_in", il, xin_[0], n_embd_);
 
@@ -498,15 +496,21 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     }
     ink_mul_sigmoid(att_, gate_, (size_t) n * hq, st_);
     lin(B.wo, att_, aoraw_, n);
-    ink_conv(aoraw_, past_a(S), fp(B.a_conv), nullptr, ao_, n_embd_, 1, taps_, n, st_);
-    dbg("attn", il, ao_, n_embd_);
-
     // the first layer of a block starts a new stream from the attention's output; the one it had joins the mixes
-    if (il % blk_ == 0) {
-        if (!(il == core_start_ && looped)) copy_rows(r_, bl_[il / blk_], n);
-        copy_rows(ao_, r_, n);
+    if (n == 1) {   // the convolution and the stream's update in one launch
+        const int mode = il % blk_ != 0 ? 0 : il == core_start_ && looped ? 2 : 1;
+        ink_conv_add(aoraw_, past_a(S), fp(B.a_conv), ao_, r_, mode == 1 ? bl_[il / blk_] : nullptr, 1.f, mode,
+                     n_embd_, taps_, st_);
+        dbg("attn", il, ao_, n_embd_);
     } else {
-        axpy(ao_, 1.f, r_, (int) ne, true, st_);
+        ink_conv(aoraw_, past_a(S), fp(B.a_conv), nullptr, ao_, n_embd_, 1, taps_, n, st_);
+        dbg("attn", il, ao_, n_embd_);
+        if (il % blk_ == 0) {
+            if (!(il == core_start_ && looped)) copy_rows(r_, bl_[il / blk_], n);
+            copy_rows(ao_, r_, n);
+        } else {
+            axpy(ao_, 1.f, r_, (int) ne, true, st_);
+        }
     }
 
     // the experts' input
@@ -522,6 +526,10 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
 // The experts' sum through its convolution, onto the stream.
 void Inkling2::layer_tail(Layer&, int il, int n) {
     const Slot& S = slots_[(size_t) slot_of(il, pass_of(il))];
+    if (n == 1) {
+        ink_conv_add(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), fc_, r_, nullptr, 1.f, 0, n_embd_, taps_, st_);
+        return;
+    }
     ink_conv(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), nullptr, fc_, n_embd_, 1, taps_, n, st_);
     axpy(fc_, 1.f, r_, n * n_embd_, true, st_);
 }

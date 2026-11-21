@@ -289,6 +289,22 @@ __global__ void ink_head_rms_kernel(float* x, int dim, int heads, float eps) {
     rms_head(x + size_t(blockIdx.x) * dim, dim, eps, part);
 }
 
+__global__ void ink_conv_add_kernel(const float* __restrict__ x, float* state, const float* __restrict__ w,
+                                    float* __restrict__ out, float* acc, float* keep, float a, int mode, int channels,
+                                    int taps, float norm) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= channels) return;
+    const float y = conv_value(x, state, w, nullptr, channels, 1, taps, 0, c, norm);
+    out[c] = y;
+    conv_state_at(x, state, channels, taps, 1, c);
+    if (mode == 0) {
+        acc[c] = acc[c] + y * a;
+    } else {
+        if (mode == 1) keep[c] = acc[c];
+        acc[c] = y;
+    }
+}
+
 struct QkvArgs {
     InkQkv a;
     float k_norm, v_norm;
@@ -594,6 +610,15 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
     launched("ink_conv");
     ink_conv_state_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, state, channels, taps, rows);
     launched("ink_conv_state");
+}
+
+void ink_conv_add(const float* x, float* state, const float* w, float* out, float* acc, float* keep, float a, int mode,
+                  int channels, int taps, void* stream) {
+    if (taps < 2 || taps > 8) throw std::invalid_argument("ink_conv_add: 2 to 8 taps");
+    const float norm = 1.0f / std::sqrt((float) (taps + 1));
+    ink_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, state, w, out, acc, keep, a, mode,
+                                                                            channels, taps, norm);
+    launched("ink_conv_add");
 }
 
 void ink_qkv(const InkQkv& a, void* stream) {
