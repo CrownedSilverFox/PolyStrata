@@ -675,7 +675,7 @@ protected:
     void* hmalloc(size_t bytes, const char* what);
     void hfree(void* p);
     std::vector<uint8_t> ram_keep(const std::vector<float>* lately = nullptr) const;
-    bool read_file(uint8_t* dst, const uint8_t* src, size_t n) const;
+    bool read_file(uint8_t* dst, const uint8_t* src, size_t n, bool copy = false) const;
     /// A write into VRAM, on st_.  Every one of them goes through these two or is an async call on a stream of
     /// its own: see the note on h2d() in engine.cpp.
     void h2d(void* dst, const void* src, size_t bytes);

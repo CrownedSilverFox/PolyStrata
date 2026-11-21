@@ -4041,7 +4041,7 @@ void Engine::trim() {
 // pages stay out of this process's working set; false when src is in none of the files or the read fails.  A
 // thread keeps a handle to each file.  For the experts the RAM budget leaves out (Options::ram_experts_mib), which
 // a prompt batch copies to the card: through the mapping they came back into the working set a fault at a time.
-bool Engine::read_file(uint8_t* dst, const uint8_t* src, size_t n) const {
+bool Engine::read_file(uint8_t* dst, const uint8_t* src, size_t n, bool copy) const {
     const FileView* v = nullptr;
     for (const FileView& f : views_)
         if (src >= f.base && src + n <= f.base + f.bytes) v = &f;
@@ -4080,7 +4080,12 @@ bool Engine::read_file(uint8_t* dst, const uint8_t* src, size_t n) const {
     // cgroup is charged for those pages too, so they took the budget's RAM a second time, and the system made room for
     // them by dropping the pages of the ones it keeps.  With no such limit the cache is the machine's free RAM, not
     // this process's: the pages it has room for stay there, and a miss found there is no disk read.
-    if (pool_ && pool_uncached_) {
+    //
+    // `copy`: the pinned copy of the experts outside VRAM (build_mirror(), lock_loop()), read past the file cache under
+    // a cgroup's limit too.  Through it, the copy's pages were charged twice while it was made: on an RTX 5090 pod held
+    // to 90 GiB, DeepSeek V4 Flash's 56.8 GiB copy took the container to its limit and the pod ended the engine with
+    // SIGKILL at each of four starts (no OOM kill counted), where with no copy it started.
+    if ((pool_ || copy) && pool_uncached_) {
         thread_local Fds raw;
         auto it = raw.fd.find(v->path);
         if (it == raw.fd.end()) it = raw.fd.emplace(v->path, open_uncached(v->path.c_str())).first;
@@ -5422,8 +5427,9 @@ void Engine::build_mirror() {
                      opt_.lock_experts ? ", and --lock-experts locks their pages in the model file" : "");
         return;
     }
-    // the copies are read from the files (read_file()), through the file cache: through the mapping every page of
-    // them would be faulted in, and on Windows a fault reads a few pages at a time (map_pages())
+    // the copies are read from the files (read_file()), through the file cache, or past it under a cgroup's limit:
+    // through the mapping every page of them would be faulted in, and on Windows a fault reads a few pages at a
+    // time (map_pages())
     if (views_.empty())
         for (const Shards* sh : {gg_.get(), dg_.get()}) {
             if (!sh) continue;
@@ -5431,6 +5437,21 @@ void Engine::build_mirror() {
             for (size_t i = 0; i < v.size(); ++i)
                 if (v[i].first) views_.push_back({v[i].first, v[i].second, sh->paths()[i]});
         }
+#ifdef __linux__
+    // Under a cgroup's limit the file cache is the container's: the pages the load read from the files stay charged
+    // to it beside the copy.  On an RTX 5090 pod held to 90 GiB, GLM 5.3 Flash's load left 54 GiB of them, its
+    // 80.9 GiB copy took the container to its limit, and the pod ended the engine with SIGKILL while the copy was
+    // made or while the next long prompt was read.  A page still mapped stays in the cache, so the mapping lets
+    // them go first; what is read from it later is read again.
+    if (pool_uncached_ && !opt_.lock_experts)
+        for (const FileView& f : views_) {
+            drop_pages(f.base, f.bytes);
+            if (const int fd = ::open(f.path.c_str(), O_RDONLY | O_CLOEXEC); fd >= 0) {
+                posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+                ::close(fd);
+            }
+        }
+#endif
     const Clock::time_point t0 = Clock::now();
     // The memory is the process's own, its pages placed by the threads that fill it and then pinned
     // (cudaHostRegister()): cudaMallocHost()'s came from the card's NUMA node, and the CPU experts, read there by
@@ -5465,7 +5486,7 @@ void Engine::build_mirror() {
             const size_t e = (size_t) want[p.c][i].e;
             uint8_t* to = m.base + (i - p.first) * stride[p.c];
             const auto get = [&](uint8_t* dst, const uint8_t* src, size_t n) {
-                if (!read_file(dst, src, n)) std::memcpy(dst, src, n);
+                if (!read_file(dst, src, n, true)) std::memcpy(dst, src, n);
             };
             get(to, L.exp_gate + e * L.gu_stride, L.gu_bytes);
             get(to + L.gu_bytes, L.exp_up + e * L.u_stride, L.u_bytes);
@@ -5736,7 +5757,7 @@ void Engine::lock_loop() {
             uint8_t* to = slots[c].back();
             slots[c].pop_back();
             const auto get = [&](uint8_t* dst, const uint8_t* src, size_t n) {
-                if (!read_file(dst, src, n)) std::memcpy(dst, src, n);
+                if (!read_file(dst, src, n, true)) std::memcpy(dst, src, n);
             };
             get(to, L.exp_gate + e * L.gu_stride, L.gu_bytes);
             get(to + L.gu_bytes, L.exp_up + e * L.u_stride, L.u_bytes);
