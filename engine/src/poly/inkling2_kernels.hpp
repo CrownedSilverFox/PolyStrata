@@ -62,6 +62,33 @@ void ink_store_ring(const float* x, uint16_t* cache, int n, int64_t pos, int row
 /// logits[i] = cap * tanh(logits[i] / cap) for the first n_keep, -infinity for the rest of n_all, a row each.
 void ink_softcap(float* logits, int n_keep, int n_all, int rows, float cap, void* stream);
 
+/// One token's ink_conv() of K and V with their states, ink_clip() of Q, K and the relative positions' values,
+/// ink_head_rms() of V, and the stores of K and V as cache row p, or p % ring when ring > 0 (p: pos, or at[0] when the
+/// card holds it), in one launch with the same bits.  Heads of up to 128 values.
+struct InkQkv {
+    float* q = nullptr;                 ///< n_head * dim, clipped in place
+    const float* q_scale = nullptr;
+    float* r = nullptr;                 ///< n_head * n_rel, clipped in place
+    const float* r_scale = nullptr;
+    const float* kraw = nullptr;        ///< n_kv * dim: the products the convolutions take
+    const float* vraw = nullptr;
+    float* kstate = nullptr;
+    float* vstate = nullptr;
+    const float* kw = nullptr;
+    const float* vw = nullptr;
+    const float* kdyn = nullptr;        ///< null: none
+    const float* vdyn = nullptr;
+    float* k = nullptr;
+    float* v = nullptr;
+    uint16_t* keys = nullptr;
+    uint16_t* vals = nullptr;
+    const long long* at = nullptr;
+    int64_t pos = 0;
+    float qk_thr = 0.f, rel_thr = 0.f, alpha = 0.f, floor = 1.f, eps = 0.f;
+    int n_head = 0, n_kv = 0, dim = 0, n_rel = 0, taps = 0, ring = 0;
+};
+void ink_qkv(const InkQkv& a, void* stream);
+
 /// The attention of `rows` tokens from position pos over the keys and values of an fp16 cache.  A key at distance
 /// d = the query's position - its own scores scale * q.k + bias(d) - sink, where bias(d) is the dot product of the
 /// query's n_rel values (r) with rel_bias's column d, and 0 from `extent` on; a softmax with one more term of

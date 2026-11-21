@@ -205,12 +205,10 @@ __global__ void ink_gate_kernel(GateSet s, size_t n) {
         if (j < s.count) s.out[j][i] = c[j] - tanhf(s.forget[j][i]) * c[j] + tanhf(s.gain[j][i]) * s.msg[j][i];
 }
 
-__global__ void ink_conv_kernel(const float* __restrict__ x, const float* __restrict__ state,
-                                const float* __restrict__ w, const float* __restrict__ dyn, float* __restrict__ out,
-                                int channels, int heads, int taps, int rows, float norm) {
-    const size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (idx >= size_t(rows) * channels) return;
-    const int t = (int) (idx / channels), c = (int) (idx % channels);
+// Token t's convolved value of channel c (ink_conv()).
+__device__ __forceinline__ float conv_value(const float* __restrict__ x, const float* __restrict__ state,
+                                            const float* __restrict__ w, const float* __restrict__ dyn, int channels,
+                                            int heads, int taps, int t, int c, float norm) {
     float past[8];   // past[k]: the input k tokens back
     for (int k = 0; k < taps; ++k) {
         const int u = t - k;
@@ -223,13 +221,12 @@ __global__ void ink_conv_kernel(const float* __restrict__ x, const float* __rest
         const float* d = dyn + (size_t(t) * heads + head) * taps;
         for (int lag = 0; lag < taps; ++lag) acc += past[lag] * d[lag];
     }
-    out[idx] = (past[0] + acc) * norm;
+    return (past[0] + acc) * norm;
 }
 
-// a channel a thread: the last taps - 1 inputs, oldest first
-__global__ void ink_conv_state_kernel(const float* __restrict__ x, float* state, int channels, int taps, int rows) {
-    const int c = blockIdx.x * blockDim.x + threadIdx.x;
-    if (c >= channels) return;
+// Channel c's state after a call of `rows` tokens: the last taps - 1 inputs, oldest first.
+__device__ __forceinline__ void conv_state_at(const float* __restrict__ x, float* state, int channels, int taps,
+                                              int rows, int c) {
     const int keep = taps - 1;
     for (int k = 0; k < keep; ++k) {
         const int u = rows - keep + k;
@@ -238,13 +235,10 @@ __global__ void ink_conv_state_kernel(const float* __restrict__ x, float* state,
     }
 }
 
-// a token's head a block
-__global__ void ink_clip_kernel(float* x, const float* __restrict__ scale, float thr, int dim, int heads,
-                                long long pos, float alpha, float floor_, const long long* __restrict__ at) {
-    __shared__ float part[128 / WARP];
-    const int row = blockIdx.x / heads, head = blockIdx.x % heads, tid = threadIdx.x;
-    float* v = x + (size_t(row) * heads + head) * dim;
-    const float* sc = scale ? scale + size_t(head) * dim : nullptr;
+// One head's clip (ink_clip()), the whole block taking part; p is the token's position.
+__device__ __forceinline__ void clip_head(float* v, const float* __restrict__ sc, float thr, int dim, float alpha,
+                                          float floor_, long long p, float* part) {
+    const int tid = threadIdx.x;
     float ss = 0.0f;
     for (int i = tid; i < dim; i += blockDim.x) {
         const float y = sc ? v[i] * sc[i] : v[i];
@@ -252,18 +246,90 @@ __global__ void ink_clip_kernel(float* x, const float* __restrict__ scale, float
     }
     const float tot = block_sum(ss, part);
     float f = fminf(thr / (sqrtf(tot) + 1e-6f), 1.0f);
-    if (alpha > 0.0f) f *= 1.0f + alpha * logf(fmaxf(1.0f, (float) ((at ? at[2 * row] : pos + row) + 1) / floor_));
+    if (alpha > 0.0f) f *= 1.0f + alpha * logf(fmaxf(1.0f, (float) (p + 1) / floor_));
     for (int i = tid; i < dim; i += blockDim.x) v[i] = (sc ? v[i] * sc[i] : v[i]) * f;
 }
 
-__global__ void ink_head_rms_kernel(float* x, int dim, int heads, float eps) {
-    __shared__ float part[128 / WARP];
+// One head's RMS (ink_head_rms()), the whole block taking part.
+__device__ __forceinline__ void rms_head(float* v, int dim, float eps, float* part) {
     const int tid = threadIdx.x;
-    float* v = x + size_t(blockIdx.x) * dim;
     float ss = 0.0f;
     for (int i = tid; i < dim; i += blockDim.x) ss += v[i] * v[i];
     const float f = 1.0f / sqrtf(block_sum(ss, part) / (float) dim + eps);
     for (int i = tid; i < dim; i += blockDim.x) v[i] *= f;
+}
+
+__global__ void ink_conv_kernel(const float* __restrict__ x, const float* __restrict__ state,
+                                const float* __restrict__ w, const float* __restrict__ dyn, float* __restrict__ out,
+                                int channels, int heads, int taps, int rows, float norm) {
+    const size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx >= size_t(rows) * channels) return;
+    const int t = (int) (idx / channels), c = (int) (idx % channels);
+    out[idx] = conv_value(x, state, w, dyn, channels, heads, taps, t, c, norm);
+}
+
+// a channel a thread
+__global__ void ink_conv_state_kernel(const float* __restrict__ x, float* state, int channels, int taps, int rows) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= channels) return;
+    conv_state_at(x, state, channels, taps, rows, c);
+}
+
+// a token's head a block
+__global__ void ink_clip_kernel(float* x, const float* __restrict__ scale, float thr, int dim, int heads,
+                                long long pos, float alpha, float floor_, const long long* __restrict__ at) {
+    __shared__ float part[128 / WARP];
+    const int row = blockIdx.x / heads, head = blockIdx.x % heads;
+    clip_head(x + (size_t(row) * heads + head) * dim, scale ? scale + size_t(head) * dim : nullptr, thr, dim, alpha,
+              floor_, at ? at[2 * row] : pos + row, part);
+}
+
+__global__ void ink_head_rms_kernel(float* x, int dim, int heads, float eps) {
+    __shared__ float part[128 / WARP];
+    rms_head(x + size_t(blockIdx.x) * dim, dim, eps, part);
+}
+
+struct QkvArgs {
+    InkQkv a;
+    float k_norm, v_norm;
+};
+
+// ink_qkv(): blocks [0, n_head) Q's heads, then K's n_kv, V's n_kv, and the relative positions' n_head; 128 threads.
+__global__ void ink_qkv_kernel(QkvArgs g) {
+    __shared__ float part[128 / WARP];
+    const InkQkv& a = g.a;
+    const long long p = a.at ? a.at[0] : (long long) a.pos;
+    int b = blockIdx.x;
+    if (b < a.n_head) {
+        clip_head(a.q + size_t(b) * a.dim, a.q_scale ? a.q_scale + size_t(b) * a.dim : nullptr, a.qk_thr, a.dim,
+                  a.alpha, a.floor, p, part);
+        return;
+    }
+    b -= a.n_head;
+    if (b < 2 * a.n_kv) {
+        const bool is_v = b >= a.n_kv;
+        const int h = is_v ? b - a.n_kv : b, channels = a.n_kv * a.dim, i = threadIdx.x;
+        const float* x = is_v ? a.vraw : a.kraw;
+        float* state = is_v ? a.vstate : a.kstate;
+        float* out = is_v ? a.v : a.k;
+        if (i < a.dim) {
+            const int c = h * a.dim + i;
+            out[c] = conv_value(x, state, is_v ? a.vw : a.kw, is_v ? a.vdyn : a.kdyn, channels, a.n_kv, a.taps, 0, c,
+                                is_v ? g.v_norm : g.k_norm);
+            conv_state_at(x, state, channels, a.taps, 1, c);
+        }
+        float* head = out + size_t(h) * a.dim;
+        if (is_v) rms_head(head, a.dim, a.eps, part);
+        else clip_head(head, nullptr, a.qk_thr, a.dim, 0.0f, 1.0f, p, part);
+        if (i < a.dim) {
+            const long long row = a.ring > 0 ? p % a.ring : p;
+            ((__half*) (is_v ? a.vals : a.keys))[size_t(row) * channels + size_t(h) * a.dim + i] = __float2half(head[i]);
+        }
+        return;
+    }
+    b -= 2 * a.n_kv;
+    clip_head(a.r + size_t(b) * a.n_rel, a.r_scale ? a.r_scale + size_t(b) * a.n_rel : nullptr, a.rel_thr, a.n_rel,
+              a.alpha, a.floor, p, part);
 }
 
 __global__ void ink_mul_sigmoid_kernel(float* x, const float* __restrict__ gate, size_t n) {
@@ -528,6 +594,15 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
     launched("ink_conv");
     ink_conv_state_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, state, channels, taps, rows);
     launched("ink_conv_state");
+}
+
+void ink_qkv(const InkQkv& a, void* stream) {
+    if (a.dim > 128 || a.n_rel > 128 || a.taps < 2 || a.taps > 8 || a.n_kv < 1)
+        throw std::invalid_argument("ink_qkv: heads of up to 128 values, 2 to 8 taps");
+    QkvArgs g{a, 1.0f / std::sqrt((float) ((a.kdyn ? 2 : 1) * a.taps + 1)),
+              1.0f / std::sqrt((float) ((a.vdyn ? 2 : 1) * a.taps + 1))};
+    ink_qkv_kernel<<<2 * a.n_head + 2 * a.n_kv, 128, 0, cs(stream)>>>(g);
+    launched("ink_qkv");
 }
 
 void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int rows, int64_t pos, float alpha,

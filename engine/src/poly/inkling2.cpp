@@ -407,23 +407,57 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         kd = kdyn_;
         vd = vdyn_;
     }
-    ink_conv(kraw_, past_k(S), fp(B.k_conv), kd, k_, kv, n_kv_, taps_, n, st_);
-    ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_);
     const float alpha = B.swa ? 0.f : log_alpha_;
     const long long* at = recording_ ? at_ : nullptr;   // a recorded launch: the tokens' positions from what at_ holds
-    ink_clip(q_, fp(B.q_clip), qk_clip_, head_dim_, n_head_, n, pos_, alpha, log_floor_, st_, at);
-    ink_clip(k_, nullptr, qk_clip_, head_dim_, n_kv_, n, pos_, 0.f, 1.f, st_);
-    ink_head_rms(v_, head_dim_, n_kv_, n, rms_eps_, st_);
-    ink_clip(rr_, fp(B.rel_clip), rel_clip_, n_rel_, n_head_, n, pos_, alpha, log_floor_, st_, at);
-    if (at) {
-        store_f16_at(k_, S.keys, kv, at, n, B.swa ? ring_ : 0, st_);
-        store_f16_at(v_, S.vals, kv, at, n, B.swa ? ring_ : 0, st_);
-    } else if (B.swa) {
-        ink_store_ring(k_, S.keys, kv, pos_, n, ring_, st_);
-        ink_store_ring(v_, S.vals, kv, pos_, n, ring_, st_);
+    if (n == 1 && head_dim_ <= 128 && n_rel_ <= 128) {   // one launch for all of it, the same bits
+        InkQkv c;
+        c.q = q_;
+        c.q_scale = fp(B.q_clip);
+        c.r = rr_;
+        c.r_scale = fp(B.rel_clip);
+        c.kraw = kraw_;
+        c.vraw = vraw_;
+        c.kstate = past_k(S);
+        c.vstate = past_v(S);
+        c.kw = fp(B.k_conv);
+        c.vw = fp(B.v_conv);
+        c.kdyn = kd;
+        c.vdyn = vd;
+        c.k = k_;
+        c.v = v_;
+        c.keys = S.keys;
+        c.vals = S.vals;
+        c.at = at;
+        c.pos = pos_;
+        c.qk_thr = qk_clip_;
+        c.rel_thr = rel_clip_;
+        c.alpha = alpha;
+        c.floor = log_floor_;
+        c.eps = rms_eps_;
+        c.n_head = n_head_;
+        c.n_kv = n_kv_;
+        c.dim = head_dim_;
+        c.n_rel = n_rel_;
+        c.taps = taps_;
+        c.ring = B.swa ? ring_ : 0;
+        ink_qkv(c, st_);
     } else {
-        store_f16(k_, S.keys, kv, pos_, n, st_);
-        store_f16(v_, S.vals, kv, pos_, n, st_);
+        ink_conv(kraw_, past_k(S), fp(B.k_conv), kd, k_, kv, n_kv_, taps_, n, st_);
+        ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_);
+        ink_clip(q_, fp(B.q_clip), qk_clip_, head_dim_, n_head_, n, pos_, alpha, log_floor_, st_, at);
+        ink_clip(k_, nullptr, qk_clip_, head_dim_, n_kv_, n, pos_, 0.f, 1.f, st_);
+        ink_head_rms(v_, head_dim_, n_kv_, n, rms_eps_, st_);
+        ink_clip(rr_, fp(B.rel_clip), rel_clip_, n_rel_, n_head_, n, pos_, alpha, log_floor_, st_, at);
+        if (at) {
+            store_f16_at(k_, S.keys, kv, at, n, B.swa ? ring_ : 0, st_);
+            store_f16_at(v_, S.vals, kv, at, n, B.swa ? ring_ : 0, st_);
+        } else if (B.swa) {
+            ink_store_ring(k_, S.keys, kv, pos_, n, ring_, st_);
+            ink_store_ring(v_, S.vals, kv, pos_, n, ring_, st_);
+        } else {
+            store_f16(k_, S.keys, kv, pos_, n, st_);
+            store_f16(v_, S.vals, kv, pos_, n, st_);
+        }
     }
     InkAttn a;
     a.q = q_;
