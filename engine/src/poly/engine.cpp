@@ -3189,19 +3189,17 @@ void Engine::load(const Options& o) {
     // UD-Q3_K_M wrote 51, 73 and 99 tokens/s (a chat, after a 24,000-token prompt, a chat again) with every expert
     // mapped and 61, 88 and 120 with a budget of 6 GiB.
     //
-    // Where a cgroup's limit is what leaves the least (a container), that RAM is this process's own: the budget leaves
-    // kOwnHeadroom for the rest of it (the process took 1.5 GB besides its pool under an 8 GiB limit), and holds no
-    // more than the experts outside VRAM.  Under 8 GiB the 4 GiB left 3.6 GiB for the pool, and the experts it did not
-    // hold were read from the disk: Qwen3.6 at 8 GB of VRAM wrote 70 tokens/s where 6,000 MiB wrote 91.
+    // Under a cgroup's limit (a container) as well: on lab-241 under MemoryMax=8G, Qwen3.6 UD-Q3_K_M at 8 GB of VRAM
+    // with 1.5 GiB left budgeted 6,389 MiB and peaked at 8,034 MiB; with the 4 GiB, 3,834 MiB, it peaked at 5,507
+    // and still read 1.27 and wrote 2.13 times as fast as poly.10 with the same budget.
     {
         bool own = false;
         ram_available(&own);
         pool_uncached_ = own;   // read_file()
     }
     if (opt_.ram_experts_mib < -1) {
-        constexpr size_t kRamHeadroom = size_t(4) << 30, kOwnHeadroom = size_t(3) << 29;
-        bool own = false;
-        size_t avail = ram_available(&own);
+        constexpr size_t kRamHeadroom = size_t(4) << 30;
+        size_t avail = ram_available();
 #ifdef _WIN32
         // fill_expert_cache() let the card's experts go from the working set to the standby list, which Windows
         // counts as available: the budget would take for the CPU's experts the RAM the load just saved.  They are
@@ -3212,8 +3210,7 @@ void Engine::load(const Options& o) {
 #endif
         opt_.ram_experts_mib = -1;
         if (avail && !opt_.lock_experts && outside_bytes_ + kRamHeadroom > avail) {
-            const size_t keep = own ? kOwnHeadroom : kRamHeadroom;
-            const size_t budget = std::min(avail > keep ? avail - keep : 0, outside_bytes_);
+            const size_t budget = std::min(avail > kRamHeadroom ? avail - kRamHeadroom : 0, outside_bytes_);
             opt_.ram_experts_mib = std::max<int64_t>(1024, (int64_t) (budget >> 20));
             std::fprintf(stderr, "strata-poly: %.1f GiB of RAM free for %.1f GiB of experts outside VRAM: they do not fit, "
                                  "so the ones used most stay in RAM (--ram-experts-mib -1 maps them all)\n",
