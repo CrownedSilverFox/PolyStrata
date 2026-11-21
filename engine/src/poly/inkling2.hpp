@@ -125,6 +125,7 @@ private:
     float *cat_ = nullptr, *ch_ = nullptr, *gain_ = nullptr, *forget_ = nullptr, *mixf_ = nullptr;
     float *cat3_[3] = {}, *ch3_[3] = {}, *gain3_[3] = {}, *forget3_[3] = {};   ///< control3()'s, kStageRows rows
     void* xq3_[3] = {};   ///< project()'s quantized inputs, a token's
+    void* xqo_ = nullptr;   ///< a token's attention output quantized for the output product
     float *q_ = nullptr, *kraw_ = nullptr, *k_ = nullptr, *vraw_ = nullptr, *v_ = nullptr, *rr_ = nullptr,
           *sink_ = nullptr, *gate_ = nullptr, *kdyn_ = nullptr, *vdyn_ = nullptr, *att_ = nullptr, *aoraw_ = nullptr,
           *fc_ = nullptr, *score_ = nullptr, *zeros_ = nullptr, *awork_ = nullptr;

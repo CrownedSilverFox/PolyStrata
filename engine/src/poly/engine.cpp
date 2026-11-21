@@ -5025,7 +5025,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                 }
                 ExpertScales es = expert_scales(L);
                 for (int j = 0; j < m && (es.gate || es.up); ++j) es.e[j] = cached[i0 + j].e;
-                if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, m, situ_beta_, situ_lb_, st_, &es);
+                if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, m, situ_beta_, situ_lb_, st_, nullptr, &es);
                 else if (gelu_) geglu_rows(g_, h_, n_ff_exp_, m, st_, &es);
                 else swiglu_clamp_rows(g_, h_, n_ff_exp_, m, limit, st_, &es);
                 kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_, m, st_);
@@ -5195,11 +5195,12 @@ bool Engine::moe_card(Layer& L, int il, int n) {
         kernels::native_mmvq_ids((int) L.u_type, up, rr, n_embd_, n_ff_exp_, st_);
     }
     const ExpertScales es = expert_scales(L, d_ids_);
-    if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, rr, situ_beta_, situ_lb_, st_, &es);
+    // SiTU's rows come out quantized too (situ_rows()), the bytes native_quantize_q8_1() gives them
+    if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, rr, situ_beta_, situ_lb_, st_, q8_, &es);
     else if (gelu_) geglu_rows(g_, h_, n_ff_exp_, rr, st_, &es);
     else swiglu_clamp_rows(g_, h_, n_ff_exp_, rr, clamp_exp_[(size_t) il], st_, &es);
     if (!L.h_s_down.empty()) expert_weights(d_wts_, fp(L.s_down), d_ids_, rr, st_);
-    kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_ * rr, 1, st_);   // the rows back to back, as one vector
+    if (!(situ_beta_ > 0)) kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_ * rr, 1, st_);   // the rows back to back, as one vector
     const kernels::MmvqIds down{table, d_ids_, L.gu2(), q8_, kernels::native_q8_1_bytes(n_ff_exp_), 1, d_,
                                 (size_t) n_embd_};
     kernels::native_mmvq_ids((int) L.d_type, down, rr, n_ff_exp_, n_embd_, st_);
@@ -6124,7 +6125,7 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             if (fused) {
                 swiglu_clamp_i8_rows(gu_, mq2_, n_ff_exp_, rc, limit, st_, &es);
             } else {
-                if (situ_beta_ > 0) situ_rows(gu_, hx_, n_ff_exp_, rc, situ_beta_, situ_lb_, st_, &es);
+                if (situ_beta_ > 0) situ_rows(gu_, hx_, n_ff_exp_, rc, situ_beta_, situ_lb_, st_, nullptr, &es);
                 else if (gelu_) geglu_rows(gu_, hx_, n_ff_exp_, rc, st_, &es);
                 else swiglu_clamp_rows(gu_, hx_, n_ff_exp_, rc, limit, st_, &es);
                 if (guard) guard_half_sums(hx_, ff, n_ff_exp_, rc, hf_, st_);
@@ -6182,7 +6183,8 @@ void Engine::moe_rows(Layer& L, int il, int n) {
                 swiglu_clamp_i8_rows(gu_ + (size_t) r0 * ff2, mq2_, n_ff_exp_, rows, limit, st_, &er);
             } else {
                 if (situ_beta_ > 0)
-                    situ_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, situ_beta_, situ_lb_, st_, &er);
+                    situ_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, situ_beta_, situ_lb_, st_, nullptr,
+                              &er);
                 else if (gelu_) geglu_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, st_, &er);
                 else swiglu_clamp_rows(gu_ + (size_t) r0 * ff2, hx_ + (size_t) r0 * ff, n_ff_exp_, rows, limit, st_, &er);
                 if (guard) guard_half_sums(hx_ + (size_t) r0 * ff, ff, n_ff_exp_, rows, hf_ + r0, st_);

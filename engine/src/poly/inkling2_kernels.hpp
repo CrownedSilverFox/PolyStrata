@@ -47,6 +47,12 @@ void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* c
 
 /// ink_gate() of 1 to 3 controllers in one launch.  Every cur is read before any out is written, so an out may be
 /// any of the cur.
+/// One token's three controllers after their down products: value i's gain and forget (gemv_set()'s, rank values
+/// wide, rank under 128) and its gate (ink_gate()), a warp a value for the three, in one launch with the same bits.
+/// Every cur is read before an out is written.
+void ink_control3_gate(const float* const* cur, const float* const* msg, const float* const* ch,
+                       const float* const* gain_w, const float* const* forget_w, float* const* out, int n, int rank,
+                       void* stream);
 void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,
                   const float* const* forget, float* const* out, int count, size_t n, void* stream);
 
@@ -131,6 +137,7 @@ struct InkAttn {
     const uint16_t* vals = nullptr;
     const float* rel_bias = nullptr; ///< n_rel values a distance, `extent` distances
     const float* gate = nullptr;     ///< rows * n_head * dim: out times sigmoid(gate) (ink_mul_sigmoid()); null: none
+    void* q8 = nullptr;              ///< one token: out also quantized here, native_quantize_q8_1()'s bytes
     float* out = nullptr;            ///< rows * n_head * dim
     float* score = nullptr;
     size_t score_n = 0;

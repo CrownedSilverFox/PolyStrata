@@ -622,6 +622,7 @@ __global__ void ink_join_kernel(InkAttn a, int t0, const float* __restrict__ par
         float v = total * inv;
         if (a.gate) v *= 1.0f / (1.0f + expf(-a.gate[at]));   // ink_mul_sigmoid_kernel's
         a.out[at] = v;
+        if (a.q8) q8_put((QB*) a.q8, (int) at, v);   // one token's row, for the output product
     }
 }
 
@@ -631,8 +632,9 @@ __device__ __forceinline__ float2 situ_scales(const ExpertScales& s, int row) {
     return make_float2(s.gate ? s.gate[e] : 1.0f, s.up ? s.up[e] : 1.0f);
 }
 
+// with q8: the rows also quantized, back to back as one vector (n a multiple of 32: a warp's values are a block)
 __global__ void situ_rows_kernel(const float* __restrict__ gate_up, float* __restrict__ out, int n, float beta,
-                                 float lb, ExpertScales s) {
+                                 float lb, ExpertScales s, QB* q8) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     const float* row = gate_up + size_t(blockIdx.y) * 2 * n;
@@ -640,7 +642,43 @@ __global__ void situ_rows_kernel(const float* __restrict__ gate_up, float* __res
     const float g = row[i] * sc.x;
     float u = row[n + i] * sc.y;
     if (lb > 0.0f) u = lb * tanhf(u / lb);
-    out[size_t(blockIdx.y) * n + i] = beta * tanhf(g / beta) / (1.0f + expf(-g)) * u;
+    const float h = beta * tanhf(g / beta) / (1.0f + expf(-g)) * u;
+    out[size_t(blockIdx.y) * n + i] = h;
+    if (q8) q8_put(q8, (int) (size_t(blockIdx.y) * n + i), h);
+}
+
+struct Control3 {
+    const float* cur[3];
+    const float* msg[3];
+    const float* ch[3];
+    const float* gw[3];
+    const float* fw[3];
+    float* out[3];
+};
+
+// a warp value i of the three controllers: 6 products of rank values (gemv_set_warp_kernel's), then the gates
+__global__ void ink_control3_gate_kernel(Control3 c, int n, int rank) {
+    const int i = int(blockIdx.x) * 8 + int(threadIdx.x >> 5), lane = threadIdx.x & 31;
+    if (i >= n) return;
+    float g[3], f[3];
+#pragma unroll
+    for (int j = 0; j < 3; ++j) {
+        const float* gr = c.gw[j] + size_t(i) * rank;
+        const float* fr = c.fw[j] + size_t(i) * rank;
+        float ga = 0.0f, fa = 0.0f;
+        for (int k = lane; k < rank; k += 32) {
+            ga += gr[k] * c.ch[j][k];
+            fa += fr[k] * c.ch[j][k];
+        }
+        g[j] = 0.0f + warp_sum(ga);
+        f[j] = 0.0f + warp_sum(fa);
+    }
+    if (lane != 0) return;
+    float cv[3];
+#pragma unroll
+    for (int j = 0; j < 3; ++j) cv[j] = c.cur[j][i];
+#pragma unroll
+    for (int j = 0; j < 3; ++j) c.out[j][i] = cv[j] - tanhf(f[j]) * cv[j] + tanhf(g[j]) * c.msg[j][i];
 }
 
 }  // namespace
@@ -905,11 +943,30 @@ void ink_attend(const InkAttn& a, void* stream) {
     }
 }
 
-void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream,
+void ink_control3_gate(const float* const* cur, const float* const* msg, const float* const* ch,
+                       const float* const* gain_w, const float* const* forget_w, float* const* out, int n, int rank,
+                       void* stream) {
+    if (rank >= 128) throw std::invalid_argument("ink_control3_gate: gemv_set() takes products this wide otherwise");
+    Control3 c{};
+    for (int j = 0; j < 3; ++j) {
+        c.cur[j] = cur[j];
+        c.msg[j] = msg[j];
+        c.ch[j] = ch[j];
+        c.gw[j] = gain_w[j];
+        c.fw[j] = forget_w[j];
+        c.out[j] = out[j];
+    }
+    ink_control3_gate_kernel<<<(n + 7) / 8, 256, 0, cs(stream)>>>(c, n, rank);
+    launched("ink_control3_gate");
+}
+
+void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream, void* q8,
                const ExpertScales* scales) {
     if (rows <= 0) return;
+    if (q8 && n % 32 != 0) throw std::invalid_argument("situ_rows: quantized rows of a multiple of 32");
     situ_rows_kernel<<<dim3(grid((size_t) n, 256), rows), 256, 0, cs(stream)>>>(gate_up, out, n, beta, lb,
-                                                                                scales ? *scales : ExpertScales{});
+                                                                                scales ? *scales : ExpertScales{},
+                                                                                (QB*) q8);
     launched("situ_rows");
 }
 

@@ -235,6 +235,7 @@ void Inkling2::assign_scratch() {
     score_n_ = std::max(kScoreFloats, ink_attend_floats(n_head_, n_kv_, head_dim_, opt_.max_context));
     score_ = fbuf(score_n_);
     zeros_ = fbuf((size_t) n_head_);
+    xqo_ = fbuf((kernels::native_q8_1_bytes(n_head_ * head_dim_) + sizeof(float) - 1) / sizeof(float));
     if (rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
 }
 
@@ -346,6 +347,13 @@ bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* 
         outs[j] = rank_;
     }
     gemv_set(w, x, y, outs, 3, 2 * n_embd_, n, st_);
+    if (n == 1 && rank_ < 128) {   // the gain and forget products and the gates in one launch
+        const float* ch[3] = {ch3_[0], ch3_[1], ch3_[2]};
+        const float* gw[3] = {fp(c[0].gain), fp(c[1].gain), fp(c[2].gain)};
+        const float* fw[3] = {fp(c[0].forget), fp(c[1].forget), fp(c[2].forget)};
+        ink_control3_gate(cur, m, ch, gw, fw, out, n_embd_, rank_, st_);
+        return true;
+    }
     for (int j = 0; j < 3; ++j) {
         w[2 * j] = fp(c[j].gain);
         w[2 * j + 1] = fp(c[j].forget);
@@ -549,9 +557,10 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         ink_mul_sigmoid(att_, gate_, (size_t) n * hq, st_);
     } else {
         a.gate = gate_;   // the output gate in the join's launch
+        if (n == 1) a.q8 = xqo_;   // and the output quantized for wo
         ink_attend(a, st_);
     }
-    lin(B.wo, att_, aoraw_, n);
+    lin(B.wo, att_, aoraw_, n, n == 1 && n < kStageRows ? xqo_ : nullptr);
     // the first layer of a block starts a new stream from the attention's output; the one it had joins the mixes
     if (n == 1) {   // the convolution and the stream's update in one launch
         const int mode = il % blk_ != 0 ? 0 : il == core_start_ && looped ? 2 : 1;

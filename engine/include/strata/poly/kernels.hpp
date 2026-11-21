@@ -232,7 +232,7 @@ void swiglu_clamp_rows(const float* gate_up, float* out, int n, int rows, float 
 /// Inkling 2's activation (SiTU) for the same rows: out = beta * tanh(gate / beta) * sigmoid(gate) * lb * tanh(up /
 /// lb), each row's gate and up values times its expert's scales first.  Declared here because the experts' shared
 /// code calls it (Engine::situ_beta_); the kernel is inkling2.cu's, and Metal has none.
-void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream,
+void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream, void* q8,
                const ExpertScales* scales = nullptr);
 /// swiglu_clamp_rows, its rows written straight into xq as gemm_iq_i8_quantize writes them (n a multiple of 32),
 /// the same numbers as the two calls one after the other, without the floats between them.
