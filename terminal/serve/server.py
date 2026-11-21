@@ -334,7 +334,24 @@ from strata_control import tls  # noqa: E402
 from strata_control.childenv import arena_env, limit_own_arenas, quiet_crash_env  # noqa: E402
 from strata_control import reader_room  # noqa: E402
 
-tls.install()       # #3722: image URLs and tool servers over HTTPS are checked against the operating system's certificates
+def _install_tls() -> None:
+    """tls.install() (#3722: image URLs and tool servers over HTTPS are checked against the operating system's certificates),
+    without the HTTP libraries it would load.  truststore.inject_into_ssl() imports urllib3 and requests to patch their own SSL
+    contexts, about 110 modules and 11 MiB that stayed in every server: the server uses neither.  Names set to None in sys.modules
+    make those imports fail, which truststore takes as "not installed"; they are taken out again after, so a later import works,
+    with an SSL context made from the already replaced ssl.SSLContext.  A library loaded before this is patched as before."""
+    held = [name for name in ("urllib3", "requests") if name not in sys.modules]
+    for name in held:
+        sys.modules[name] = None  # type: ignore[assignment]
+    try:
+        tls.install()
+    finally:
+        for name in held:
+            if sys.modules.get(name, 0) is None:
+                del sys.modules[name]
+
+
+_install_tls()
 from strata_control import hipblaslt_tuning  # noqa: E402
 from strata_control import speed_switches  # noqa: E402
 from strata_control import vision_reader  # noqa: E402
