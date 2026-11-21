@@ -281,6 +281,8 @@ int main() {
     bad += test_attend(false, 128, 40, 12, 40);
     bad += test_attend(true, 4, 40, 12, 40);
     bad += test_attend(false, 4, 40, 12, 40);
+    bad += test_attend(true, 4, 40, 64, 128);     // the model's 64 heads and window of 128
+    bad += test_attend(false, 128, 40, 64, 128);
     bad += test_index();
     if (cudaGetLastError() != cudaSuccess) {
         std::printf("CUDA error\n");
