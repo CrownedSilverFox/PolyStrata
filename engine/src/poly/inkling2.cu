@@ -3,7 +3,10 @@
 //
 // A token (or a token's head) a block, sums in a fixed order so that a token comes out the same in any company.
 // The attention of a few tokens reads a key or a value with a warp, its lanes side by side: ink_attend().
+// q81_div(): a block's scale divided as native_mmvq.cu's --use_fast_math division does it (q8_1_finite.hpp)
+#define STRATA_Q81_FASTMATH_DIV 1
 #include "inkling2_kernels.hpp"
+#include "strata/kernels/q8_1_finite.hpp"
 
 #include "strata/poly/kernels.hpp"
 
@@ -34,6 +37,51 @@ __device__ __forceinline__ float warp_sum(float x) {
 #pragma unroll
     for (int o = WARP / 2; o > 0; o >>= 1) x += __shfl_xor_sync(0xffffffff, x, o, WARP);
     return x;
+}
+
+__device__ __forceinline__ float warp_max(float x) {
+#pragma unroll
+    for (int o = WARP / 2; o > 0; o >>= 1) x = fmaxf(x, __shfl_xor_sync(0xffffffff, x, o, WARP));
+    return x;
+}
+
+struct QB {   // a q8_1 block, as native_quantize_q8_1() writes it
+    half2 ds;
+    int8_t qs[32];
+};
+static_assert(sizeof(QB) == 36, "q8_1 block");
+
+// Value i of a row into its q8_1 blocks, native_quantize_q8_1_kernel's arithmetic; a warp's 32 lanes hold one block.
+__device__ __forceinline__ void q8_put(QB* y, int i, float xi) {
+    const float amax = warp_max(fabsf(xi));
+    const float sum = warp_sum(xi);
+    const float d = strata::kernels::q8_1_finite(strata::kernels::q81_div(amax, 127.0f));
+    const int8_t q = strata::kernels::q8_1_quant(xi, d, amax);
+    y[i / 32].qs[i % 32] = q;
+    if (i % 32 == 0) y[i / 32].ds = strata::kernels::q8_1_ds(d, sum);
+}
+
+// native_add_rms_norm_q8_1_kernel<blockDim>'s norm (no add) of a row x, a thread over its values, into y and q.
+__device__ __forceinline__ void add_rms_q8(const float* x, const float* __restrict__ w, float* y, QB* q, int n,
+                                           float eps, float* part) {
+    const int tid = threadIdx.x;
+    float ss = 0.0f;
+    for (int i = tid; i < n; i += blockDim.x) {
+        const float v = x[i];
+        ss = __fmaf_rn(v, v, ss);
+    }
+    ss = warp_sum(ss);
+    if ((tid & 31) == 0) part[tid >> 5] = ss;
+    __syncthreads();
+    float sum = 0.0f;
+    for (int k = 0; k < int(blockDim.x) / WARP; ++k) sum = __fadd_rn(sum, part[k]);
+    __syncthreads();
+    const float scale = __fdiv_rn(1.0f, __fsqrt_rn(__fadd_rn(__fdiv_rn(sum, float(n)), eps)));
+    for (int i = tid; i < n; i += blockDim.x) {
+        const float xi = __fmul_rn(__fmul_rn(x[i], scale), w[i]);
+        y[i] = xi;
+        q8_put(q, i, xi);
+    }
 }
 
 // The block's sum of x, the same in every thread: the warps' sums added in their order.  blockDim.x is a multiple
@@ -72,6 +120,8 @@ struct MixArgs {
     const float* norm_w;   // with norm_out: out[0]'s rms_norm()
     float* norm_out;
     float eps;
+    QB* q8;     // and the norm quantized (one row)
+    int ffn;    // the norm is native_add_rms_norm_q8_1()'s
 };
 
 // A token a block.  A thread has every kMixThreads-th value of the row and reads each query's and each state's
@@ -154,7 +204,11 @@ __device__ __forceinline__ void mix_row(const MixArgs& a, int n_embd) {
             }
         }
     }
-    if (a.norm_out) {   // rms_norm_kernel's arithmetic, a thread over the values it wrote
+    if (a.norm_out && a.ffn) {
+        __shared__ float fpart[kMixThreads / WARP];
+        add_rms_q8(a.out[0] + row, a.norm_w, a.norm_out + row, a.q8 + size_t(blockIdx.x) * (n_embd / 32), n_embd,
+                   a.eps, fpart);
+    } else if (a.norm_out) {   // rms_norm_kernel's arithmetic, a thread over the values it wrote
         __shared__ float npart[kMixThreads / WARP];
         float ss = 0.0f;
         for (int i = tid; i < n_embd; i += blockDim.x) {
@@ -165,7 +219,9 @@ __device__ __forceinline__ void mix_row(const MixArgs& a, int n_embd) {
         const float scale = 1.0f / sqrtf(ss / float(n_embd) + a.eps);
         for (int i = tid; i < n_embd; i += blockDim.x) {
             const float v = a.out[0][row + i];
-            a.norm_out[row + i] = a.norm_w ? v * scale * a.norm_w[i] : v * scale;
+            const float y = a.norm_w ? v * scale * a.norm_w[i] : v * scale;
+            a.norm_out[row + i] = y;
+            if (a.q8) q8_put(a.q8 + size_t(blockIdx.x) * (n_embd / 32), i, y);
         }
     }
 }
@@ -589,8 +645,67 @@ __global__ void situ_rows_kernel(const float* __restrict__ gate_up, float* __res
 
 }  // namespace
 
+struct NormMany {
+    const float* x[3];
+    const float* w[3];
+    float* y[3];
+    QB* q[3];
+};
+
+// rms_norm_many_kernel's row (blockIdx.y the input), each value also quantized
+__global__ void ink_norm_many_q8_kernel(NormMany m, int n, float eps) {
+    __shared__ float part[32];
+    const float* __restrict__ xr = m.x[blockIdx.y];
+    const float* __restrict__ w = m.w[blockIdx.y];
+    float* yr = m.y[blockIdx.y];
+    float ss = 0.0f;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) ss += xr[i] * xr[i];
+    ss = block_sum(ss, part);
+    const float scale = 1.0f / sqrtf(ss / float(n) + eps);
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        const float y = w ? xr[i] * scale * w[i] : xr[i] * scale;
+        yr[i] = y;
+        q8_put(m.q[blockIdx.y], i, y);
+    }
+}
+
+// ink_gate_kernel's values of one row, then add_rms_q8() of them
+__global__ void ink_gate_norm_q8_kernel(const float* cur, const float* __restrict__ msg, const float* __restrict__ gain,
+                                        const float* __restrict__ forget, float* out, const float* __restrict__ w,
+                                        float* y, QB* q, int n, float eps) {
+    __shared__ float part[32];
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        const float c = cur[i];
+        out[i] = c - tanhf(forget[i]) * c + tanhf(gain[i]) * msg[i];
+    }
+    add_rms_q8(out, w, y, q, n, eps, part);
+}
+
+void ink_norm_many_q8(const float* const* x, const float* const* w, float* const* y, void* const* q8, int count, int n,
+                      float eps, void* stream) {
+    if (count < 1 || count > 3 || n % 32 != 0) throw std::invalid_argument("ink_norm_many_q8: 1 to 3 rows of 32k");
+    NormMany m{};
+    for (int j = 0; j < count; ++j) {
+        m.x[j] = x[j];
+        m.w[j] = w[j];
+        m.y[j] = y[j];
+        m.q[j] = (QB*) q8[j];
+    }
+    ink_norm_many_q8_kernel<<<dim3(1, count), sum_threads(n), 0, cs(stream)>>>(m, n, eps);
+    launched("ink_norm_many_q8");
+}
+
+void ink_gate_norm_q8(const float* cur, const float* msg, const float* gain, const float* forget, float* out,
+                      const float* w, float* y, void* q8, int n, float eps, void* stream) {
+    const int threads = sum_threads(n);
+    if (n % 32 != 0 || threads != std::min(1024, std::max(threads, n)))   // add_rms_norm_q8_1's block is this one
+        throw std::invalid_argument("ink_gate_norm_q8: not add_rms_norm_q8_1's block");
+    ink_gate_norm_q8_kernel<<<1, threads, 0, cs(stream)>>>(cur, msg, gain, forget, out, w, y, (QB*) q8, n, eps);
+    launched("ink_gate_norm_q8");
+}
+
 void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
-                  const float* norm_w, float* norm_out, float eps, void* stream) {
+                  const float* norm_w, float* norm_out, float eps, void* stream, void* q8, bool ffn) {
     if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > kQueries)
         throw std::invalid_argument("ink_mix: 1 to 6 states and 1 to 4 queries");
     if (rows <= 0) return;
@@ -605,6 +720,10 @@ void ink_mix_norm(const InkStates& states, const float* query, int n_query, floa
     a.norm_w = norm_w;
     a.norm_out = norm_out;
     a.eps = eps;
+    a.q8 = (QB*) q8;
+    a.ffn = ffn;
+    if ((q8 || ffn) && (rows != 1 || !norm_out || (ffn && (!q8 || !norm_w))))
+        throw std::invalid_argument("ink_mix_norm: a quantized norm is one row's");
     ink_mix_kernel<<<rows, kMixThreads, 0, cs(stream)>>>(a, n_embd);
     launched("ink_mix");
 }

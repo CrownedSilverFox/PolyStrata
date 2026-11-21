@@ -96,7 +96,8 @@ private:
     InkStates streams_of(int blocks, size_t at) const;
     void control(const float* cur, const float* msg, const Ctrl& c, float* out, int n);
     bool control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n);
-    bool project(const Block& B, const float* const* x, int n);
+    bool project(const Block& B, const float* const* x, int n, bool quantized = false);
+    bool control_ffn(const float* msg, const Ctrl& c, const Block& B);
     // only where moe_card() and layer_tail() are recorded together (whole_rec_)
     bool moe_sum_later(int n) const override { return n == 1 && whole_rec_; }
     void copy_rows(const float* from, float* to, int n);

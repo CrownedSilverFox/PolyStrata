@@ -268,11 +268,29 @@ void Inkling2::control(const float* cur, const float* msg, const Ctrl& c, float*
     ink_gate(cur, msg, gain_, forget_, out, (size_t) n * n_embd_, st_);
 }
 
+// A later pass's FFN controller for one token (control() on mixf_), its gate in the launch of the experts' input
+// norm and quantization (native_add_rms_norm_q8_1()'s): the same bytes.  False, with nothing launched, where
+// control() and that norm do it.
+bool Inkling2::control_ffn(const float* msg, const Ctrl& c, const Block& B) {
+    if (c.gain.type != kTypeF32 || c.forget.type != kTypeF32 || c.gain.scale != 1.0f || c.forget.scale != 1.0f ||
+        sum_threads(n_embd_) != 1024)
+        return false;
+    ink_cat_norm(mixf_, msg, cat_, n_embd_, 1, st_);
+    lin(c.down, cat_, ch_, 1);
+    const float* w[2] = {fp(c.gain), fp(c.forget)};
+    const float* x[2] = {ch_, ch_};
+    float* y[2] = {gain_, forget_};
+    const int outs[2] = {n_embd_, n_embd_};
+    gemv_set(w, x, y, outs, 2, rank_, 1, st_);
+    ink_gate_norm_q8(mixf_, msg, gain_, forget_, mixf_, fp(B.ffn_norm), xn_, xq_, n_embd_, rms_eps_, st_);
+    return true;
+}
+
 // A token's Q, K, V, relative positions' and gate's products: each distinct input quantized once, the three in one
 // launch, and the five Q8_0 matrices in one launch, every output the bits lin() gives it.  A window layer's three
 // inputs are one buffer until a later pass's controllers make them differ.  False, with nothing launched, where
 // lin() does them: more tokens, or matrices native_mmvq_many() does not take.
-bool Inkling2::project(const Block& B, const float* const* x, int n) {
+bool Inkling2::project(const Block& B, const float* const* x, int n, bool quantized) {
     if (n != 1) return false;
     const Dev* w[5] = {&B.wq, &B.wk, &B.wv, &B.rel, &B.gate};
     float* y[5] = {q_, kraw_, vraw_, rr_, gate_};
@@ -300,8 +318,8 @@ bool Inkling2::project(const Block& B, const float* const* x, int n) {
         m.n_out[i] = w[i]->n_out;
     }
     m.count = 5;
-    if (!kernels::native_mmvq_many_fits((int) w[0]->type, m, n_embd_)) return false;
-    kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
+    if (!kernels::native_mmvq_many_fits((int) w[0]->type, m, n_embd_)) return false;   // lin() quantizes its own
+    if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
     kernels::native_mmvq_many((int) w[0]->type, m, n_embd_, st_);
     return true;
 }
@@ -383,7 +401,8 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     if (il > 0) {
         float* out[3] = {in_[0], in_[1], in_[2]};
         ink_mix_norm(streams_of((il - 1) / blk_ + 1, 0), fp(B.attn_query), B.swa ? 1 : 3, out, n_embd_, n,
-                     mix_normed ? fp(B.attn_norm) : nullptr, mix_normed ? xin_[0] : nullptr, rms_eps_, st_);
+                     mix_normed ? fp(B.attn_norm) : nullptr, mix_normed ? xin_[0] : nullptr, rms_eps_, st_,
+                     mix_normed && n == 1 ? xq3_[0] : nullptr);
         in[0] = in_[0];
         in[1] = B.swa ? in_[0] : in_[1];
         in[2] = B.swa ? in_[0] : in_[2];
@@ -404,9 +423,11 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         for (int j = 0; j < 3; ++j) in[j] = in_[j];
     }
     const float* x[3];
+    bool quantized = false;   // project()'s inputs quantized by the norms' launch
     if (B.swa && !looped) {
         if (!mix_normed) rms_norm(in[0], fp(B.attn_norm), xin_[0], n_embd_, n, rms_eps_, st_);
         x[0] = x[1] = x[2] = xin_[0];
+        quantized = mix_normed && n == 1;
     } else {   // three inputs, normed in one launch
         const float* w[3] = {fp(B.attn_norm), fp(B.attn_norm), fp(B.attn_norm)};
         if (!B.swa) {
@@ -414,12 +435,17 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
             w[1] = fp(B.k_norm);
             w[2] = fp(B.v_norm);
         }
-        rms_norm_many(in, w, xin_, 3, n_embd_, n, rms_eps_, st_);
+        if (n == 1) {
+            ink_norm_many_q8(in, w, xin_, xq3_, 3, n_embd_, rms_eps_, st_);
+            quantized = true;
+        } else {
+            rms_norm_many(in, w, xin_, 3, n_embd_, n, rms_eps_, st_);
+        }
         for (int j = 0; j < 3; ++j) x[j] = xin_[j];
     }
     dbg("attn_in", il, xin_[0], n_embd_);
 
-    if (!project(B, x, n)) {
+    if (!project(B, x, n, quantized)) {
         lin(B.wq, x[0], q_, n);
         lin(B.wk, x[1], kraw_, n);
         lin(B.wv, x[2], vraw_, n);
@@ -545,10 +571,17 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
 
     // the experts' input
     float* mixed[1] = {mixf_};
-    ink_mix(streams_of(il / blk_ + 1, 0), fp(B.ffn_query), 1, mixed, n_embd_, n, st_);
-    if (looped) control(mixf_, msg[3], B.ctrl[3], mixf_, n);
-    kernels::native_add_rms_norm_q8_1(mixf_, nullptr, fp(B.ffn_norm), xn_, xq_, n_embd_, n, rms_eps_,
-                                      sum_threads(n_embd_), st_);
+    if (n == 1 && !looped && sum_threads(n_embd_) == 1024) {   // the mix, add_rms_norm_q8_1's norm and quantization
+        ink_mix_norm(streams_of(il / blk_ + 1, 0), fp(B.ffn_query), 1, mixed, n_embd_, n, fp(B.ffn_norm), xn_,
+                     rms_eps_, st_, xq_, true);
+    } else {
+        ink_mix(streams_of(il / blk_ + 1, 0), fp(B.ffn_query), 1, mixed, n_embd_, n, st_);
+        if (!(looped && n == 1 && control_ffn(msg[3], B.ctrl[3], B))) {
+            if (looped) control(mixf_, msg[3], B.ctrl[3], mixf_, n);
+            kernels::native_add_rms_norm_q8_1(mixf_, nullptr, fp(B.ffn_norm), xn_, xq_, n_embd_, n, rms_eps_,
+                                              sum_threads(n_embd_), st_);
+        }
+    }
     dbg("ffn_in", il, xn_, n_embd_);
     if (!batched(L, n)) moe_router(L, n);
 }

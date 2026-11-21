@@ -26,7 +26,18 @@ void ink_mix_many(const InkStates& states, const float* const* query, int n_quer
                   int n_embd, void* stream);
 /// ink_mix() and then rms_norm() of out[0] (weight norm_w, null: none) into norm_out, in one launch with the same bits.
 void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
-                  const float* norm_w, float* norm_out, float eps, void* stream);
+                  const float* norm_w, float* norm_out, float eps, void* stream, void* q8 = nullptr, bool ffn = false);
+/// With q8 (one row): the norm also quantized there as native_quantize_q8_1() does it; with ffn the norm is
+/// native_add_rms_norm_q8_1()'s instead of rms_norm()'s (and q8 is required).  The same bytes.
+
+/// One row's rms_norm_many() of 1 to 3 inputs (a rows a launch of sum_threads(n) threads), each also quantized into
+/// q8[j] as native_quantize_q8_1() does it.  The same bytes.
+void ink_norm_many_q8(const float* const* x, const float* const* w, float* const* y, void* const* q8, int count, int n,
+                      float eps, void* stream);
+
+/// One row's ink_gate() into out, then native_add_rms_norm_q8_1() of out (weight w) into y and q8.  The same bytes.
+void ink_gate_norm_q8(const float* cur, const float* msg, const float* gain, const float* forget, float* out,
+                      const float* w, float* y, void* q8, int n, float eps, void* stream);
 
 /// out = [rms_norm(cur) | rms_norm(msg)] a token (eps 1e-6, no weight): what a loop controller's down matrix takes.
 void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream);
