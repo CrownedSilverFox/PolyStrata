@@ -25,9 +25,10 @@ a second machine, a Windows laptop whose card has 8 GB.
 | Flint 40B-A2.5B | `flint` | `strata-poly` | Unsloth UD-Q4_K_XL, UD-Q3_K_XL, UD-Q6_K_XL and Q8_0, 18.5 to 42.3 GB | repeats only: there is no draft model |
 | Kolibri 1 | `kolibri1` | `strata-poly` | Hob-forge Q4_K_M, Q2_K and Q3_K_M, 28.6 to 47.5 GB | repeats only: there is no draft model |
 | Clover-35B-A3B-Preview | `clover_moe` | `strata-poly` | maternion Q3_K_M and Q4_K_M, IsValorum APEX-I-NanoPlus, 12.6 to 21.2 GB | repeats only: its own block guesses are off ([below](#clover-35b-a3b-preview)) |
+| Inkling 2 Mini (experimental) | `inkling2_loop` | `strata-poly` | Unsloth UD-Q4_K_XL and UD-Q3_K_XL, 17.6 and 13.6 GB | none: it answers one token at a time ([below](#inkling-2-mini-one-card-text-only)) |
 
 `strata` is the first engine and runs Qwen3.8 only; nothing in it changed. `strata-poly` is the engine that reads a
-GGUF in place, and it now has eight architectures. It was called `strata-glm`, after its first model; an install
+GGUF in place, and it now has nine architectures. It was called `strata-glm`, after its first model; an install
 from then keeps its engine and moves to the new name the next time setup updates it.
 
 The CUDA [GDN prefill adapter](DETAILS.md#strata-poly-chunked-gdn-prefill) reads eligible Qwen35 prompts on the
@@ -45,6 +46,26 @@ Q6_K, Q8_0, images, Linux and other cards still need validation. The shared cont
 offers 8K, 32K (default), 64K and 128K; `--context` overrides it. The engine detects the embedded MTP block normally.
 Hardware-aware expert caching, CPU experts, parallel requests and multi-GPU settings use the shared paths, not a
 specific card preset. Installation and estimates are in [groot.md](models/groot.md).
+
+### Inkling 2 Mini (one card, text only)
+
+`python setup.py --family inkling` installs one of two of Unsloth's quantizations (UD-Q4_K_XL by default, 17.6 GB,
+or UD-Q3_K_XL, 13.6 GB). They are the files under the repository's `Mainline_Support` folder,
+`general.architecture` `inkling2_loop`, the layout llama.cpp runs. The files at the top of that repository are
+another layout (`inkling2`), and the engine refuses them by name.
+
+The model has 24 layers of weights and runs 48: the twelve in the middle three times a token, each time with
+attention caches of its own. Forty of the 48 read the last 1,024 tokens only and keep a ring of that many rows; the
+other eight read the whole context, 32,768 bytes of VRAM a token. A reply is a list of typed blocks (thinking,
+text, a tool call), which the server turns into the same reasoning, content and tool calls as for the other models.
+A request that asks for no thinking has its prompt end inside the text block.
+
+It has run on Linux with an RTX 5090: chat, streaming, separate reasoning, a tool call and its answer, and a
+conversation continued from the cache. Not run yet: its image tower, its draft file, Windows, AMD cards, a Mac,
+several cards and several requests at once, which the engine refuses for it (setup writes `"parallel": 1`).
+UD-Q2_K_XL is not offered: six of its layers have 1-bit (IQ1_S) experts, which the card's expert cache does not
+hold, and with them on the CPU the RTX 5090 wrote 46 tokens/s where llama.cpp wrote 86. Speeds and the
+comparison with llama.cpp are in [inkling.md](models/inkling.md).
 
 ## Install
 
@@ -265,6 +286,7 @@ and, by the tokenizer's `pre` name, how the model writes its reasoning and its t
 | LFM2.5 | the prompt opens it, `</think>` ends it | `<\|tool_call_start\|>[NAME(K='V', ...), NAME2()]<\|tool_call_end\|>` |
 | Flint | `<think>` to `</think>`, opened by the model | as GLM's |
 | Kolibri 1 | the prompt opens it, `</think>` ends it | a JSON object in the wrapper: `{"name": NAME, "arguments": {...}}` |
+| Inkling 2 | a block of the reply, `<\|content_thinking\|>` to `<\|end_message\|>`, opened by the model | a block of the reply: `<\|message_model\|>NAME<\|content_invoke_tool_json\|>{"name": NAME, "args": {...}}` |
 
 Gemma 4's template thinks only when it is told to, reads a tool in OpenAI's shape and starts with the tokenizer's
 `<bos>`; the server gives it all three. A tool's answers are put in the order of their calls for every model,

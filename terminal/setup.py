@@ -136,6 +136,7 @@ HF_REVISIONS = {
     "unsloth/Qwen3.6-35B-A3B-MTP-GGUF": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",                  # 2026-10-12
     "unsloth/DeepSeek-V4-Flash-0731-GGUF": "fbbb5b93fb787c21338159b0af3318bb3f4d9768",               # 2026-10-15
     "unsloth/LFM2.5-24B-A2B-GGUF": "aacc77834f6aa568c93b4dbd6d295059736be98c",                        # 2026-10-20
+    "unsloth/Inkling-2-Mini-GGUF": "ea0c79b2ecd73669e774c8519b79bfabfddbc027",                        # 2026-11-21
     "LiquidAI/LFM2.5-24B-A2B-GGUF": "0912d33141f77e10705345a6732bfd83f0252fdc",                       # 2026-10-15
     "unsloth/flint-GGUF": "20468edfc38ab43d6914cc88b08cbecb05d0fc62",                                 # 2026-10-21
     "openbmb/MiniCPM-V-4.7-35B-A3B-gguf": "77f6d8cb08b2b115ce27d2e2ac1359e126921689",                   # 2026-10-12
@@ -920,6 +921,31 @@ FAMILIES = {
                          (21861204224, "abcb7e21e006eb4c826a2b75fb91c0804db7b20f908a61beeebdbdd07c88f41d"),
                          "LFM2.5-24B-A2B-Q8_0.gguf":
                          (25493733344, "97cd912b01124793a69ddebc309abbbad7ebb38ac2fb9c2bc55dfc1ad9d1809e")}},
+    # Inkling 2 Mini (llama.cpp's inkling2_loop): 24 layers of weights run as 48, the middle twelve three times, so a
+    # context token is the rows of the eight full-attention applications ("row_bytes"); the forty window ones keep
+    # rings.  The files are the repository's Mainline_Support ones, the layout llama.cpp runs: the repository names them
+    # .gguf_file ("remote_suffix") and its top-level files are another layout (architecture inkling2), which the
+    # engine refuses.  UD-Q2_K_XL is not offered: six of its layers have IQ1_S experts, which the card's expert cache
+    # does not hold, and with them on the CPU an RTX 5090 wrote 46 tokens/s where llama.cpp wrote 86.  The engine keeps one sequence's state for it, so it answers one
+    # request at a time ("one_request": setup writes "parallel": 1).  "vram_beside_gb" is the peak VRAM measured on an RTX 5090 with no expert on the card, a 10,081-token
+    # prompt read 1,024 tokens at a time at a 32K context (2,916 MiB), plus the rows of the context's other tokens.
+    "inkling": {"title": "Inkling 2 Mini", "by": "Thinking Machines; quantized by Unsloth",
+                "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux, text only so far; "
+                         "a 17.6 GB file, or 13.6 GB",
+                "hf": hf("unsloth/Inkling-2-Mini-GGUF") + "Mainline_Support/", "file": "Inkling-2-Mini-{q}.gguf",
+                "remote_suffix": "_file", "shards": 1,
+                "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": False, "experimental": True,
+                "row_bytes": 32768, "one_request": True,
+                "models": {"UD-Q4_K_XL": {"about": "4-bit experts (NVFP4, Unsloth Dynamic), 8-bit where they write",
+                                          "download_gb": 17.6, "ram_gb": 21, "arena_gb": 15.797846016,
+                                          "vram_beside_gb": 3.7},
+                           "UD-Q3_K_XL": {"about": "3-bit i-quant and 4-bit experts mixed",
+                                          "download_gb": 13.6, "ram_gb": 17, "arena_gb": 12.198739968,
+                                          "vram_beside_gb": 3.6}},
+                "sha256": {"Inkling-2-Mini-UD-Q4_K_XL.gguf":
+                           (17629760736, "e64276656f072e9b2197a61723667cbdb71da66a716ffd966e572c21088f3cd3"),
+                           "Inkling-2-Mini-UD-Q3_K_XL.gguf":
+                           (13631779296, "e2d03e8c92ac21cff0e3309b95f40dfd27d1825184f0d2bc09db249797273639")}},
     # Flint (llama.cpp's flint): no draft block and no image encoder.  Its window layers' caches are rings, so a context
     # token is the full layers' rows only.  UD-Q4_K_XL is taken unasked only with 15 GB of RAM past its estimate,
     # about 40 GB beside an 8 GB card: on the 32 GB laptop its file did not stay in RAM beside the desktop's programs,
@@ -4303,7 +4329,8 @@ def sha256_matches(s: Path, size: int, sha: str) -> bool:
 # general.architecture of each strata-poly family's GGUFs, the name Engine::open() (src/poly/engine.cpp) picks its
 # code by; the families not listed are qwen35moe
 POLY_GGUF_ARCHS = {"glm": ("glm5-next", "glm5next"), "deepseek": ("deepseek4",), "lfm25": ("lfm2moe",),
-                   "gemma4": ("gemma4",), "flint": ("flint",), "kolibri": ("kolibri1",), "clover": ("clover_moe",)}
+                   "gemma4": ("gemma4",), "flint": ("flint",), "kolibri": ("kolibri1",), "clover": ("clover_moe",),
+                   "inkling": ("inkling2_loop",)}
 
 
 def gguf_arch(s: Path) -> str:
@@ -10652,7 +10679,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
                 ok(f"{s.name} already downloaded")
                 continue
             rel = s.relative_to(models_dir).as_posix() if s.is_relative_to(models_dir) else s.name
-            download(d.get("hf", fam["hf"]) + rel, s)
+            download(d.get("hf", fam["hf"]) + rel + fam.get("remote_suffix", ""), s)
     check_shards(shards)
     # a size from another repository can ship a draft model or an image encoder of the family's file names
     sha = {**fam["sha256"], **d.get("sha256", {})}
@@ -10791,11 +10818,18 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
                          "max_tokens": vt}
         if vision == "cpu":
             cfg["vision"]["threads"] = max(1, (os.cpu_count() or 8) // 2)
-    # requests at once: written only when given, else an earlier "parallel" is carried over (write_setup_config)
-    if a.parallel is not None:
-        cfg["parallel"] = a.parallel if a.parallel >= 2 else 1
-    for line in poly_parallel_note(a.parallel, d, vram):
-        (ok if a.parallel is not None else say)(line if a.parallel is not None else "  " + line)
+    # requests at once: written only when given, else an earlier "parallel" is carried over (write_setup_config).
+    # A family the engine answers one request at a time ("one_request") is written 1, whatever was asked or kept.
+    if fam.get("one_request"):
+        cfg["parallel"] = 1
+        if (a.parallel or 1) >= 2:
+            warn(f"--parallel {a.parallel}: {title} answers one request at a time on this engine; \"parallel\" is "
+                 "left at 1")
+    else:
+        if a.parallel is not None:
+            cfg["parallel"] = a.parallel if a.parallel >= 2 else 1
+        for line in poly_parallel_note(a.parallel, d, vram):
+            (ok if a.parallel is not None else say)(line if a.parallel is not None else "  " + line)
     poly_kv_whole(cfg)
     warm_start_into(cfg, a)
     write_setup_config(cfg_path, cfg, earlier)
@@ -12005,7 +12039,8 @@ def main() -> int:
                          "Qwen3.6-35B-A3B on strata-poly, groot = Groot 19B-A3B (experimental; docs/models/groot.md), "
                          "clover = Clover-35B-A3B-Preview, ornith = "
                          "Ornith 1.5, gemma4 = Gemma 4 26B-A4B, tiel = Tiel Coder 35B-A3B, minicpmv = MiniCPM-V 4.7 "
-                         "35B-A3B, ornith122 = Ornith 1.5 122B (docs/BACKENDS.md), qwen36-strata = Qwen3.6-35B-A3B on the Strata project's "
+                         "35B-A3B, ornith122 = Ornith 1.5 122B (docs/BACKENDS.md), inkling = Inkling 2 Mini (experimental, text "
+                         "only; docs/models/inkling.md), qwen36-strata = Qwen3.6-35B-A3B on the Strata project's "
                          "own engine (UD-Q4_K_XL and up, 32 GB of RAM or more; pictures with --vision, several "
                          "requests at once with --parallel; docs/QWEN36.md)")
     ap.add_argument("--model", type=model_alias, choices=list(dict.fromkeys(

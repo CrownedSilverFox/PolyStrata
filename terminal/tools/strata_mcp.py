@@ -164,6 +164,14 @@ FALLBACK_FAMILIES = {
                                         "download_gb": 21.9, "ram_gb": 27, "arena_gb": 20.9},
                          "Q8_0": {"about": "8-bit throughout: the closest to the model as trained",
                                   "download_gb": 25.5, "ram_gb": 31, "arena_gb": 24.4}}},
+    "inkling": {"title": "Inkling 2 Mini",
+                "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux, text only so far; "
+                         "a 17.6 GB file, or 13.6 GB",
+                "tag": "inkling-", "engine": "poly", "vision": False, "experimental": True,
+                "models": {"UD-Q4_K_XL": {"about": "4-bit experts (NVFP4, Unsloth Dynamic), 8-bit where they write",
+                                          "download_gb": 17.6, "ram_gb": 21, "arena_gb": 15.797846016},
+                           "UD-Q3_K_XL": {"about": "3-bit i-quant and 4-bit experts mixed",
+                                          "download_gb": 13.6, "ram_gb": 17, "arena_gb": 12.198739968}}},
     "flint": {"title": "Flint 40B-A2.5B", "about": "on the strata-poly engine: one NVIDIA card, Linux or Windows; a "
                                                     "25 GB file, ~29 GB of RAM beside an 8 GB card; three other sizes "
                                                     "too, no images",
