@@ -881,6 +881,12 @@ FAMILIES = {
     # "batch_gb": the VRAM the engine's prompt batch takes for a second 1,024 tokens, measured on the RTX 5090; a card
     # that holds every expert beside it reads with 2,048 (poly_batch()).  "batch_from_gb": the family reads with 2,048
     # on any card from this much VRAM (GiB) on, where the 8 GB laptop read faster that way and wrote no slower.
+    # Measured on the RTX 5090 (32 GB) with the engine of c3640e88d: one run reading 18,000 words, every expert in
+    # VRAM, --tail-skip 0, --prompt-batch 1024 and 2048 in turn.  Peak VRAM rose by 322 MiB (Clover Q3_K_M, MiniCPM-V
+    # Q4_K_M), 362 (Qwen3.6 UD-Q3_K_M, Tiel UD-Q3_K_XL, Ornith APEX-I-Compact), 402 (Flint), 420 (Kolibri Q2_K),
+    # 430 (LFM2.5) and 784 (Gemma 4 UD-Q3_K_M); "batch_gb" rounds that up.  The prompt was read faster by 23.5%
+    # (Flint), 19.9% (Clover), 18.3% (Tiel), 17.6% (Ornith), 16.6% (LFM2.5), 16.2% (MiniCPM-V, Kolibri), 12.8%
+    # (Qwen3.6) and 7.8% (Gemma 4).
     # LFM2.5 (llama.cpp's lfm2moe): no draft block and no image encoder.  QAD-Q4_0 is Liquid AI's own file, trained
     # for that quantization; the other sizes are Unsloth's.
     "lfm25": {"title": "LFM2.5-24B-A2B", "by": "Liquid AI; quantized by Unsloth and Liquid AI",
@@ -952,7 +958,7 @@ FAMILIES = {
                          "two other sizes too, no images",
                 "hf": hf("Hob-forge/Kolibri-1-GGUF"), "file": "Kolibri-1-{q}.gguf", "shards": 1,
                  "tag": "kolibri1-", "name": "kolibri-1", "engine": "poly", "vision": False, "experimental": True,
-                 "windows": True, "ran_on_gb": 12, "row_bytes": 20480,
+                 "windows": True, "ran_on_gb": 12, "row_bytes": 20480, "batch_gb": 0.5,
                  # its template writes a call as a JSON object inside the <tool_call> wrapper; the server reads that
                  # form with the recovery (the same path as a call written next to the template's form)
                  "tool_call_recovery": True,
@@ -1042,7 +1048,7 @@ FAMILIES = {
                         "beside an 8 GB card; a smaller and a larger size too, no images",
                "hf": hf("maternion/Clover-35B-A3B-Preview-GGUF"), "file": "Diffuspace-Clover-35B-A3B-Preview-{q}.gguf",
                "shards": 1, "tag": "clover-", "name": "clover-35b-a3b-preview", "engine": "poly", "vision": False,
-               "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 20480,
+               "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 20480, "batch_gb": 0.4,
                "template_hf": hf("Diffuspace/Clover-35B-A3B-Preview"),
                "template": ("chat_template.jinja", 7912,
                             "01094df7cd8905d1220ea8b31e4f1086dc9bedf0305d3c2fa6578b5fa33b6815"),
@@ -1066,7 +1072,7 @@ FAMILIES = {
                         "a smaller and a larger size too",
                "hf": hf("mudler/Ornith-1.5-35B-A3B-APEX-MTP-GGUF"), "file": "Ornith-1.5-35B-A3B-{q}.gguf",
                "shards": 1, "tag": "ornith-", "name": "ornith-1.5-35b-a3b", "engine": "poly", "vision": True,
-               "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 26624,
+               "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 26624, "batch_gb": 0.5,
                "mmproj_hf": hf("mudler/Ornith-1.5-35B-A3B-APEX-MTP-GGUF"), "mmproj": "mmproj.gguf", "vision_gb": 0.9,
                "vision_vram_gb": 1.6,
                "models": {"APEX-I-COMPACT": {"about": "3- and 4-bit K-quant experts (APEX), its draft block in the file",
@@ -1094,7 +1100,7 @@ FAMILIES = {
                         "larger size too",
                "hf": hf("unsloth/gemma-4-26B-A4B-it-GGUF"), "file": "gemma-4-26B-A4B-it-{q}.gguf", "shards": 1,
                "tag": "gemma4-", "name": "gemma-4-26b-a4b", "engine": "poly", "vision": True, "experimental": True,
-               "windows": True, "ran_on_gb": 8,
+               "windows": True, "ran_on_gb": 8, "batch_gb": 0.9,
                "row_bytes": 28672, "mmproj_hf": hf("unsloth/gemma-4-26B-A4B-it-GGUF"), "mmproj": "mmproj-F16.gguf",
                "vision_gb": 1.2, "vision_vram_gb": 2.4, "vision_most": 1024,
                "models": {"UD-Q3_K_M": {"about": "3-bit experts (Unsloth Dynamic), and Google's draft model for it",
@@ -1141,7 +1147,7 @@ FAMILIES = {
                       "beside an 8 GB card; a smaller and a larger size too",
              "hf": hf("peculiar-ragdoll/Tiel-Coder-35B-A3B-GGUF-MTP"), "file": "Tiel-Coder-35B-A3B-MTP-{q}.gguf",
              "shards": 1, "tag": "tiel-", "name": "tiel-coder-35b-a3b", "engine": "poly", "vision": True,
-             "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 26624,
+             "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 26624, "batch_gb": 0.5,
              "mmproj_hf": hf("peculiar-ragdoll/Tiel-Coder-35B-A3B-GGUF-MTP"), "mmproj": "mmproj-BF16.gguf",
              "vision_gb": 0.9, "vision_vram_gb": 1.6,
              "models": {"UD-Q3_K_XL": {"about": "3-bit i-quant experts, 4-bit where they write; its draft block in "
@@ -1172,7 +1178,7 @@ FAMILIES = {
                          "file, ~25 GB of RAM beside an 8 GB card; a smaller and a larger size too",
                  "hf": hf("openbmb/MiniCPM-V-4.7-35B-A3B-gguf"), "file": "MiniCPM-V-4_7-35B-A3B-{q}.gguf",
                  "shards": 1, "tag": "minicpmv-", "name": "minicpm-v-4.7-35b-a3b", "engine": "poly", "vision": True,
-                 "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 26624,
+                 "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 26624, "batch_gb": 0.4,
                  "mmproj_hf": hf("openbmb/MiniCPM-V-4.7-35B-A3B-gguf"), "mmproj": "mmproj-model-f16.gguf",
                  "vision_gb": 1.1, "vision_vram_gb": 2.0,
                  "models": {"Q4_K_M": {"about": "4-bit experts (K-quant), 5- and 6-bit where they write",
@@ -9989,10 +9995,11 @@ def poly_parallel_note(asked: int | None, d, vram_gb) -> list[str]:
 
 def poly_batch(fam, d, vram_gb, ctx) -> bool:
     """Whether setup's config reads a prompt 2,048 tokens at a time instead of the engine's 1,024: on a card that holds
-    every expert of a size beside the larger batch and the context's rows past 32K, with a GiB to spare, llama.cpp's
-    matrix kernels get twice the rows of each expert and a long prompt is read 14% (Qwen3.6) to 30% (LFM2.5) faster;
-    on a smaller card the experts outside VRAM are copied to it half as often.  A family without "batch_gb" keeps
-    1,024, one with "batch_from_gb" takes 2,048 on any card from that size on."""
+    every expert of a size beside the larger batch and the context's rows past 32K, with a GiB to spare, the
+    engine's matrix kernels get twice the rows of each expert and a long prompt is read 8% (Gemma 4) to 24% (Flint)
+    faster on the RTX 5090 (see "batch_gb" at FAMILIES); on a smaller card the experts outside VRAM are copied to it
+    half as often.  A family without "batch_gb" keeps 1,024, one with "batch_from_gb" takes 2,048 on any card from
+    that size on."""
     if fam.get("batch_from_gb") and vram_gb >= fam["batch_from_gb"]:
         return True
     if not fam.get("batch_gb"):

@@ -36,8 +36,13 @@ class Pins(unittest.TestCase):
             self.assertLess(d["arena_gb"], d["download_gb"])
             self.assertEqual(d["ram_gb"], round(setup.poly_ram_need(d, 8.0)), size)
             self.assertNotIn("hf", d)
-        # the engine's prompt batch, not a figure of this family's
-        self.assertFalse(setup.poly_batch(FAM, FAM["models"]["Q4_K_M"], 31.8, 32768))
+        # Q2_K reads with 2,048 on the RTX 5090: setup counts 4.1 GB beside the experts, 0.5 for the batch and 1 to
+        # spare, 30.7 GiB in all, where the engine peaked at 29,614 MiB (2.4 GiB of the card left).  A card a GiB
+        # smaller keeps 1,024, and the other sizes do not fit the 5090 whole.
+        self.assertTrue(setup.poly_batch(FAM, FAM["models"]["Q2_K"], 32607 / 1024, 32768))
+        self.assertFalse(setup.poly_batch(FAM, FAM["models"]["Q2_K"], 30.5, 32768))
+        self.assertFalse(setup.poly_batch(FAM, FAM["models"]["Q4_K_M"], 32607 / 1024, 32768))
+        self.assertFalse(setup.poly_batch(FAM, FAM["models"]["Q3_K_M"], 32607 / 1024, 32768))
 
     def test_the_about_line_says_the_first_size(self):
         n = setup.poly_ram_need(FAM["models"]["Q4_K_M"], 8.0)
