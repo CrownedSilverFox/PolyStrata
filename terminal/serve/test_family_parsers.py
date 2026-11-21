@@ -3,7 +3,7 @@
 The server takes the parser class from the chat template's tool-call form (frontend.parser_for_template: JsonOutputParser for a
 template that documents JSON calls, else OutputParser) and the call format from the tokenizer's pre-tokenizer
 (Service._read_tokenizer: GLM's, Gemma's, DeepSeek's, LFM2's or the Qwen form), and builds the parser with both on every request
-(Service.run).  0.2.16's merge gave JsonOutputParser upstream's arguments and the call site PolyStrata's: Flint and Kolibri, whose
+(Service.run).  Inkling 2 is the exception: its replies are typed blocks, so its pre-tokenizer picks the parser class as well.  0.2.16's merge gave JsonOutputParser upstream's arguments and the call site PolyStrata's: Flint and Kolibri, whose
 templates read as JSON, failed every request with a TypeError (call_format).
 
 fixtures/family_templates.json.gz holds, for each family, the template and pre-tokenizer the server is given: tokenizer.chat_template
@@ -24,7 +24,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from serve.frontend import ChatTemplate, JsonOutputParser, OutputParser, parser_for_template
+from serve.frontend import ChatTemplate, InklingOutputParser, JsonOutputParser, OutputParser, parser_for_template
 from serve.server import ByteTokenizer, MockEngine, Service, serve
 from serve import toolformat
 
@@ -47,6 +47,7 @@ MATRIX = {
     "minicpmv": ("xml", OutputParser, "function"),
     "ornith122": ("xml", OutputParser, "function"),
     "groot": ("xml", OutputParser, "function"),
+    "inkling": ("other", InklingOutputParser, "inkling"),
 }
 
 TOOL = {"type": "function", "function": {"name": "get_weather", "description": "The weather in a city.",
@@ -61,6 +62,8 @@ CALLS = {
     "dsml": (f'<{D}tool_calls>\n<{D}invoke name="get_weather">\n<{D}parameter name="city" string="true">Paris</{D}parameter>\n'
              f"</{D}invoke>\n</{D}tool_calls>", "<｜end▁of▁sentence｜>"),
     "lfm2": ("<|tool_call_start|>[get_weather(city='Paris')]<|tool_call_end|>", "<|im_end|>"),
+    "inkling": ('<|message_model|>get_weather<|content_invoke_tool_json|>{"name":"get_weather","args":{"city":"Paris"}}'
+                "<|end_message|>", "<|content_model_end_sampling|>"),
 }
 JSON_CALL = '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Paris"}}\n</tool_call>'
 
@@ -82,6 +85,9 @@ class Tokens(ByteTokenizer):
                      {"tokenizer.ggml.bos_token_id": 256, "tokenizer.ggml.eos_token_id": 257}),
             "lfm2": (["<|startoftext|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|tool_call_start|>",
                       "<|tool_call_end|>"], {"tokenizer.ggml.bos_token_id": 256, "tokenizer.ggml.eos_token_id": 259}),
+            "inkling": (["<|message_system|>", "<|message_user|>", "<|message_tool|>", "<|message_model|>",
+                         "<|content_text|>", "<|content_thinking|>", "<|content_invoke_tool_json|>", "<|end_message|>",
+                         "<|content_model_end_sampling|>"], {"tokenizer.ggml.eos_token_id": 264}),
         }[call_format]
 
 
@@ -99,6 +105,11 @@ def reply(svc: Service, ids: list[int], thinking: bool) -> str:
         call, end = JSON_CALL, "<|im_end|>"
     else:
         call, end = CALLS[svc.call_format]
+    if svc.call_format == "inkling":       # blocks: the text block a prompt opened is ended first, a thought is a block
+        if svc.text_open_ids and ids[-len(svc.text_open_ids):] == svc.text_open_ids:
+            return "<|end_message|>" + call + end
+        think = "<|message_model|><|content_thinking|>the user wants the weather<|end_message|>" if thinking else ""
+        return think + call + end
     if not thinking:
         return call + end
     opened = bool(svc.think_open_ids) and ids[-len(svc.think_open_ids):] == svc.think_open_ids
@@ -125,7 +136,8 @@ class EveryFamily(unittest.TestCase):
             with self.subTest(family):
                 svc, _ = service(family, Path(self.dir.name))
                 self.assertEqual(toolformat.tool_format(FAMILIES[family]["chat_template"]), form)
-                self.assertIs(parser_for_template(FAMILIES[family]["chat_template"]), cls)
+                if call_format != "inkling":      # (its parser is its pre-tokenizer's, not its template's)
+                    self.assertIs(parser_for_template(FAMILIES[family]["chat_template"]), cls)
                 self.assertIs(svc.parser_cls, cls)
                 self.assertEqual(svc.call_format, call_format)
 

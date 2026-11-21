@@ -101,7 +101,11 @@ def main():
         owner, rest = d["hf"].split("huggingface.co/")[1].split("/resolve/")
         rev = rest.split("/")[0]
         files = json.loads(get(f"{END}/api/models/{owner}/revision/{rev}?expand%5B%5D=siblings"))["siblings"]
-        path = next(s["rfilename"] for s in files if s["rfilename"].split("/")[-1] == first)
+        # a family whose files are in a folder of the repository, or under another name there ("remote_suffix"),
+        # is read from that very path: Inkling 2's repository has a file of the same name in another layout
+        there = rest.split("/", 1)[1] + first + d.get("remote_suffix", "")
+        path = next(s["rfilename"] for s in files
+                    if s["rfilename"] == there or (there == first and s["rfilename"].split("/")[-1] == first))
         kv = header(f"{END}/{owner}/resolve/{rev}/{path}", {"tokenizer.ggml.model", "tokenizer.ggml.pre", "tokenizer.chat_template"})
         # the pack's pre-tokenizer, as tools/strata_tokenizer.py names it (Gemma 4's file has a tokenizer model and no pre)
         pre = ST.MODELS.get(kv.get("tokenizer.ggml.model")) or kv.get("tokenizer.ggml.pre", "qwen35")
