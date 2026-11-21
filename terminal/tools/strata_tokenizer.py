@@ -242,14 +242,19 @@ class Tokenizer:
         # naming a token that is not in the vocabulary, would make BPE silently produce different ids than the
         # model was trained with, so both are checked here rather than discovered as a bad answer later.
         self.ranks: dict[tuple[str, str], int] = {}
+        ids = self.ids
         for i, m in enumerate(merges):
             parts = m.split(" ")
             if len(parts) != 2:
                 raise ValueError("merge %d is not a pair: %r" % (i, m))
+            left, right = parts
+            a, b = ids.get(left), ids.get(right)
             # (a UTF-8 vocabulary's merges pass through pieces it does not keep, as llama.cpp accepts)
-            if not self.raw and (parts[0] not in self.ids or parts[1] not in self.ids):
+            if not self.raw and (a is None or b is None):
                 raise ValueError("merge %d names a token outside the vocabulary: %r" % (i, m))
-            self.ranks[(parts[0], parts[1])] = i
+            # the pair holds the vocabulary's own strings, not the split's copies of them: two more strings a merge
+            # were 27 MiB of a server's memory for Qwen3.6 (247,587 merges), 53 for Gemma 4
+            self.ranks[(left if a is None else tokens[a], right if b is None else tokens[b])] = i
         # (a deepseek type this file has no sequence of its own for takes the Strata project's)
         self.pre_sequence = PRE_SEQUENCES.get(pre) or (DEEPSEEK3_PATTERNS if pre_tokenizer_kind(pre) == "deepseek3" else None)
         self.pre_pattern = self.pre_sequence[-1] if self.pre_sequence else PRE_PATTERNS.get(pre, QWEN35_PATTERN)
