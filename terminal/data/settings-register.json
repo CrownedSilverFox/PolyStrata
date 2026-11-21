@@ -30708,7 +30708,7 @@
    "last_date": "2026-11-19",
    "status": "default",
    "owner": "poly",
-   "note": "[reviewed] the host mirror of the experts outside VRAM that the card reads (CUDA, unified addressing), on where it applies unless =0 (engine/src/poly/engine.cpp:5100)",
+   "note": "[reviewed] the host mirror of the experts outside VRAM that the card reads (CUDA, unified addressing), on where it applies unless =0; on Windows off unless =1 or --lock-experts (engine/src/poly/engine.cpp:5100)",
    "retire_after": "",
    "retired_in": ""
   },

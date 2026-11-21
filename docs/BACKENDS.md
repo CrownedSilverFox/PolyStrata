@@ -2186,7 +2186,8 @@ a request does not wait for the pinning. The start line says how many experts it
 thread's lines how much more it locked later.
 
 The engine makes no mirror on an AMD card or a Mac, with the layers split over cards, with `STRATA_POLY_MIRROR=0`,
-or when the experts outside VRAM and 4 GiB more do not fit in the free RAM. There it locks the experts' pages in the
+on Windows without `--lock-experts` unless `STRATA_POLY_MIRROR=1`, or when the experts outside VRAM and 4 GiB more do
+not fit in the free RAM. There it locks the experts' pages in the
 mapped file once the load has read them in, as up to 0.1.45-poly.10 (mlock under Linux, VirtualLock under Windows),
 and between requests unlocks the ones the cache has taken and locks the ones it has given up. Linux locks no more
 than `ulimit -l` allows; past it the engine says how much it locked, gives the limit and how to raise it, and the

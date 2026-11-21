@@ -5328,7 +5328,8 @@ GatherPiece* Engine::gather_slot() {
 //
 // An expert that leaves the card (shrink_cache(), a swap's outgoing one) is copied back into a spare slot, so that it
 // needs no read of the file; one that comes onto it gives its slot back.  64 spares, for the swaps; one a wider
-// staging buffer takes from the cache goes back to the mapping.  STRATA_POLY_MIRROR=0 makes none.
+// staging buffer takes from the cache goes back to the mapping.  STRATA_POLY_MIRROR=0 makes none; on Windows there is
+// none unless STRATA_POLY_MIRROR=1 or --lock-experts.
 //
 // Options::lock_experts takes the mirror as its copy of the experts outside VRAM: pinned pages are never paged out
 // or dropped, and the NVIDIA driver pins them past RLIMIT_MEMLOCK, which is 8 MiB on many Linux desktops and kept
@@ -5349,6 +5350,18 @@ void Engine::build_mirror() {
                                  "so their pages in the model file are locked\n");
         return;
     }
+#ifdef _WIN32
+    // None on Windows unless STRATA_POLY_MIRROR=1 asks or --lock-experts takes it: the copy is memory the process holds,
+    // where the mapping's pages are the file cache's.  On the RTX 4070 laptop Gemma 4 UD-Q3_K_M with its 7.2 GiB copy
+    // read 1,881 tokens/s and wrote 68.2 where poly.10, mapped, read 1,906 and wrote 76.6, and committed 17,227 MiB
+    // against 9,513.  Whether it was made turned on a few hundred MiB: the copy and 4 GiB beside it needed 11.2 GiB
+    // free, one start on that laptop found 11.0 and made none, another made it.
+    if (!(asked && asked[0] == '1') && !opt_.lock_experts) {
+        std::fprintf(stderr, "strata-poly: the experts outside VRAM stay in the mapped files: no pinned copy of them on "
+                             "Windows (STRATA_POLY_MIRROR=1 makes one)\n");
+        return;
+    }
+#endif
     const size_t ne = (size_t) n_expert_;
     struct Want {
         int il, e;
