@@ -173,12 +173,9 @@ MTP slots. Reference checks cover recurrent state updates and split-K attention.
 
 Earlier Mac builds of `strata-q36` gave 0 for every routed expert, so only the shared expert reached the output. With
 that fixed, the real UD-Q4_K_XL file writes the same tokens as `qwen36` on strata-poly (greedy, a 40-token prompt, 64
-tokens). It is experimental on a Mac and slow there. On an M5 Ultra, UD-Q4_K_XL wrote 60 tok/s (an 8-token prompt, 256
-tokens, no MTP) and read prompts at 19 tok/s in chunks of 8 tokens, which is what `--prefill auto` picks on Metal; the
-same model on strata-poly wrote 147 tok/s and read prompts at thousands of tokens a second. The warm-up before the first
-answer took 0.5 seconds, and the first start of a newly built engine takes about 20 seconds more while Metal compiles
-its shaders. For Qwen3.6 on a Mac, install the `qwen36` family (strata-poly), and do not use `qwen36-strata` for long
-prompts.
+tokens). It is experimental on a Mac. The warm-up before the first answer took 0.5 seconds, and the first start of a
+newly built engine takes about 20 seconds more while Metal compiles its shaders. For Qwen3.6 on a Mac the `qwen36`
+family (strata-poly) is the one to install.
 
 On the M1 Pro validation machine, GLM's generated in-file draft executes through the existing speculative
 protocol. DeepSeek's generated prompt crosses its 128-token compression boundary and restores a parked
@@ -424,7 +421,7 @@ The first request after a model loads also waits once while the engine builds it
 - **Families:** every installer choice is offered ([model coverage](#model-coverage)). On the original engine the original
   Qwen3.8-Flash-Next, Unsloth's UD-Q4/Q5/Q6_K_XL and agentionai's Gyro-S are measured; setup repacks Unsloth's shards into one
   file for the GPU, and a Gyro file is used as it is. Qwen3.6 and LFM2.5 run on strata-poly's Metal engine as a beta (measured
-  in [model coverage](#model-coverage)); Qwen3.6 also runs on `strata-q36` (`qwen36-strata`), experimental and slow
+  in [model coverage](#model-coverage)); Qwen3.6 also runs on `strata-q36` (`qwen36-strata`), experimental
   ([Additional Qwen and ready-pack choices](#additional-qwen-and-ready-pack-choices)). The other newly ported paths (Swift, Coder, NVFP4, GLM, DeepSeek and the rest) have
   not run on a Mac with their real weights.
 

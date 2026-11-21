@@ -569,8 +569,8 @@ def setup_q36(a, info: dict, data: Path, elsewhere: list) -> int:
     ctx = a.context or 8192
     if ctx <= 0:
         S.fail("--context must be positive")
-    S.warn("strata-q36 on Metal is experimental and slow (about 60 tok/s writing, 19 tok/s reading a prompt on an "
-           "M5 Ultra); for long prompts install the qwen36 family instead (docs/MAC.md)")
+    S.warn("strata-q36 on Metal is experimental; for Qwen3.6 on a Mac the qwen36 family (strata-poly) is the one to "
+           "install (docs/MAC.md)")
     tag = fam["tag"] + model
     root = Path(a.models_dir) if a.models_dir else data / "models"
     folder = Path(a.gguf_dir) if a.gguf_dir else root / tag

@@ -140,7 +140,7 @@ More numbers are in [History](#history--older-measurements).
 - A slot that stopped being alone goes back to the solo path only through the server's own hand-over. The MTP block's
   cache has holes for the tokens a slot decoded in batch windows, so the drafts of a later solo stretch are a little
   worse. The text is not affected.
-- Intel Arc (SYCL) does not run this family; on a Mac it is experimental and slow ([MAC.md](MAC.md#additional-qwen-and-ready-pack-choices)).
+- Intel Arc (SYCL) does not run this family; on a Mac it is experimental ([MAC.md](MAC.md#additional-qwen-and-ready-pack-choices)).
 
 ## Testing
 
