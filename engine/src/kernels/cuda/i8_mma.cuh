@@ -65,8 +65,11 @@ struct I8mSmem {
     static constexpr int GW = !i8_gg_type(T) && i8_grid_words(T) > 4 ? (i8_grid_words(T) + 3) / 4 * 4 : 0;
     static constexpr int SG = i8_sign_type(T) ? 512 : 0;
     static constexpr int NS = i8m_two(T) ? 16 : 8;                               // scales of a weight row a stage
-    static constexpr int LDS = NS + 1, LDB = 9;                                  // odd strides: no two of a warp's reads in one bank
     static constexpr int MN = i8_min_type(T) ? 1 : 0;
+    // A type with a minimum per 32 values keeps {scale, minimum} of a sub-block together (PK): those of two sub-blocks
+    // are one 16-byte read
+    static constexpr bool PK = MN && !i8m_two(T);
+    static constexpr int LDS = PK ? 2 * NS + 4 : NS + 1, LDB = 9;               // strides: no two of a warp's reads in one bank
     static constexpr int M16 = i8m_min16(T) ? 1 : 0, LDM = 17;                   // Q2_K: [WR][LDM] minimums, one per 16 values
     // The activation rows' scales of a stage, by 32-value block: the rows in pairs, {d of the even row, d of the odd one}
     // and for a type with a minimum {scale * sum of both}, so that a thread reads the two rows of its products at once.
@@ -75,7 +78,7 @@ struct I8mSmem {
     static constexpr int XSTR = MT / 2 * XQ + 4;                                 // floats a block: +4 spreads the blocks over the banks
     static constexpr int S16 = MT + 4;
     static constexpr int o_sg = GW, o_w = o_sg + SG, o_x = o_w + WR * I8M_LD, o_ws = o_x + MT * I8M_LD, o_wm = o_ws + WR * LDS,
-                         o_xq = (o_wm + MN * WR * LDB + M16 * WR * LDM + 3) / 4 * 4, o_x16 = o_xq + 8 * XSTR,
+                         o_xq = (o_wm + (MN && !PK) * WR * LDB + M16 * WR * LDM + 3) / 4 * 4, o_x16 = o_xq + 8 * XSTR,
                          o_id = o_x16 + M16 * 16 * S16, o_raw = (o_id + MT + 3) / 4 * 4,
                          RW = !RAW ? 0 : i8m_raw_bytes(T) % 16 == 0 ? i8m_raw_bytes(T) / 4 : ((i8m_raw_bytes(T) + 15) / 16 + 1) * 4,
                          total = o_raw + WR * RW;
@@ -515,9 +518,10 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                 s_ws[wr * LDS + 2 * ib] = f0;
                 s_ws[wr * LDS + 2 * ib + 1] = f1;
             } else {
-                s_ws[wr * LDS + ib] = f0;
+                s_ws[wr * LDS + (SM::PK ? 2 * ib : ib)] = f0;
             }
-            if constexpr (HAS_MIN) s_wm[wr * LDB + ib] = mn;
+            if constexpr (SM::PK) s_ws[wr * LDS + 2 * ib + 1] = mn;
+            else if constexpr (HAS_MIN) s_wm[wr * LDB + ib] = mn;
             if constexpr (MIN16) {
                 s_m16[wr * LDM + 2 * ib] = mn;
                 s_m16[wr * LDM + 2 * ib + 1] = mn1;
@@ -620,17 +624,28 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
             for (int kb = 0; kb < 8; kb += 2) {
                 uint32_t A[2][NA][4];   // [block kb + h][tile]: a0 .. a3
                 float w0[2][NA], w1[2][NA], m0[2][NA], m1[2][NA];
+                if constexpr (SM::PK) {
+#pragma unroll
+                    for (int a = 0; a < NA; ++a) {
+                        const float4 v0 = *(const float4*) (sa + 16 * a * LDS + 2 * kb);
+                        const float4 v1 = *(const float4*) (sa + (16 * a + 8) * LDS + 2 * kb);
+                        w0[0][a] = v0.x; m0[0][a] = v0.y; w0[1][a] = v0.z; m0[1][a] = v0.w;
+                        w1[0][a] = v1.x; m1[0][a] = v1.y; w1[1][a] = v1.z; m1[1][a] = v1.w;
+                    }
+                }
 #pragma unroll
                 for (int h = 0; h < 2; ++h)
 #pragma unroll
                     for (int a = 0; a < NA; ++a) {
                         i8m_ldsm4(A[h][a], a_row + 16 * a * I8M_LD + (kb + h) * 8);
-                        w0[h][a] = sa[16 * a * LDS + kb + h];
-                        w1[h][a] = sa[(16 * a + 8) * LDS + kb + h];
-                        m0[h][a] = m1[h][a] = 0.0f;
-                        if constexpr (HAS_MIN) {
-                            m0[h][a] = sm[16 * a * LDB + kb + h];
-                            m1[h][a] = sm[(16 * a + 8) * LDB + kb + h];
+                        if constexpr (!SM::PK) {
+                            m0[h][a] = m1[h][a] = 0.0f;
+                            w0[h][a] = sa[16 * a * LDS + kb + h];
+                            w1[h][a] = sa[(16 * a + 8) * LDS + kb + h];
+                            if constexpr (HAS_MIN) {
+                                m0[h][a] = sm[16 * a * LDB + kb + h];
+                                m1[h][a] = sm[(16 * a + 8) * LDB + kb + h];
+                            }
                         }
                     }
 #pragma unroll
