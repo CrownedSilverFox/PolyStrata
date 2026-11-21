@@ -84,10 +84,4 @@ void ink_attend(const InkAttn& a, void* stream);
 /// The floats of scratch ink_attend() needs for a token that reads up to `keys` keys.
 size_t ink_attend_floats(int n_head, int n_kv, int dim, int64_t keys);
 
-/// The SiTU activation of rows that each hold n gate values and then n up values:
-/// out = beta * tanh(gate / beta) * sigmoid(gate) * lb * tanh(up / lb).  With scales, each row's gate and up
-/// values are multiplied by its expert's first, as swiglu_clamp_rows() does.
-void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream,
-               const ExpertScales* scales = nullptr);
-
 }  // namespace strata::poly

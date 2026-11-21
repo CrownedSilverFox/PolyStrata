@@ -36,6 +36,9 @@ bool fdec_f16(const float*, const uint16_t*, const uint16_t*, int64_t, int, cons
     return false;
 }
 
+// Inkling 2's activation: Engine::open() has no such family on Metal, so no engine there sets situ_beta_
+void situ_rows(const float*, float*, int, int, float, float, void*, const ExpertScales*) { unported("SiTU activation"); }
+
 // Qwen35's --kv q4_0 and --kv-resident (Engine::open() turns both down on Metal)
 void store_q4(const float*, block_q4_0*, int, int64_t, int, void*) { unported("q4_0 attention cache (--kv q4_0)"); }
 void store_q4_at(const float*, block_q4_0*, int, const long long*, int, int, void*) {
