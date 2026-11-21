@@ -196,6 +196,21 @@ void native_mmvq(int ggml_type, const void* weights, const void* x_q8_1, float* 
 /// 2-8 columns only).
 bool native_mmvq_pair(int ggml_type, const void* w1, const void* w2, const void* x_q8_1, float* y1, float* y2,
                       int n_in, int n_out, int ncols, void* stream, int n_out2 = 0);
+/// native_mmvq() of 1 to 8 matrices of one type and width, one column each, every one on a q8_1 input of its own, in
+/// ONE launch: each row's block is native_small_mmvq_kernel's for it, the same bits.  Q8_0 only.
+struct NativeMmvqMany {
+    const void* w[8];
+    const void* x_q8_1[8];
+    float* y[8];
+    int n_out[8];
+    int count;
+};
+/// Whether native_mmvq_many() takes these: false where one of the single calls would run another kernel (another
+/// type, the small-K layout, a packed tensor, the wave layout).
+bool native_mmvq_many_fits(int ggml_type, const NativeMmvqMany& m, int n_in);
+void native_mmvq_many(int ggml_type, const NativeMmvqMany& m, int n_in, void* stream);
+/// native_quantize_q8_1() of 1 to 3 vectors of n_in values in one launch: the same bytes.
+void native_quantize_q8_1_many(const float* const* x, void* const* x_q8_1, int count, int n_in, void* stream);
 
 // Fork F4 (Eddoursul): 2..4 columns also INTERLEAVED, so one 16-byte load reads a position of every column: CP = 2 (2
 // columns) or 4 (3-4), zero-padded; nb = n_in / 32 blocks; int32 bm[nb][8][CP] (block-major), int32 pm[8][nb][CP]

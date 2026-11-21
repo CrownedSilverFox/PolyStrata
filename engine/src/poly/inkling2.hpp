@@ -96,6 +96,7 @@ private:
     InkStates streams_of(int blocks, size_t at) const;
     void control(const float* cur, const float* msg, const Ctrl& c, float* out, int n);
     bool control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n);
+    bool project(const Block& B, const float* const* x, int n);
     void copy_rows(const float* from, float* to, int n);
     template <class F> void window_runs(int64_t pos, F&& f) const;
 
@@ -119,6 +120,7 @@ private:
     float* msg_[kCtrl] = {};
     float *cat_ = nullptr, *ch_ = nullptr, *gain_ = nullptr, *forget_ = nullptr, *mixf_ = nullptr;
     float *cat3_[3] = {}, *ch3_[3] = {}, *gain3_[3] = {}, *forget3_[3] = {};   ///< control3()'s, kStageRows rows
+    void* xq3_[3] = {};   ///< project()'s quantized inputs, a token's
     float *q_ = nullptr, *kraw_ = nullptr, *k_ = nullptr, *vraw_ = nullptr, *v_ = nullptr, *rr_ = nullptr,
           *sink_ = nullptr, *gate_ = nullptr, *kdyn_ = nullptr, *vdyn_ = nullptr, *att_ = nullptr, *aoraw_ = nullptr,
           *fc_ = nullptr, *score_ = nullptr, *zeros_ = nullptr, *awork_ = nullptr;

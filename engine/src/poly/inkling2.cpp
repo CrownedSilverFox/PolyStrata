@@ -212,6 +212,7 @@ void Inkling2::assign_scratch() {
         ch3_[j] = fbuf(few * rank_);
         gain3_[j] = fbuf(few * n_embd_);
         forget3_[j] = fbuf(few * n_embd_);
+        xq3_[j] = fbuf((kernels::native_q8_1_bytes(n_embd_) + sizeof(float) - 1) / sizeof(float));
     }
     mixf_ = fbuf(e);
     q_ = fbuf(heads);
@@ -253,6 +254,44 @@ void Inkling2::control(const float* cur, const float* msg, const Ctrl& c, float*
     lin(c.down, cat_, ch_, n);
     lin_pair(c.gain, c.forget, ch_, gain_, forget_, n, nullptr);
     ink_gate(cur, msg, gain_, forget_, out, (size_t) n * n_embd_, st_);
+}
+
+// A token's Q, K, V, relative positions' and gate's products: each distinct input quantized once, the three in one
+// launch, and the five Q8_0 matrices in one launch, every output the bits lin() gives it.  A window layer's three
+// inputs are one buffer until a later pass's controllers make them differ.  False, with nothing launched, where
+// lin() does them: more tokens, or matrices native_mmvq_many() does not take.
+bool Inkling2::project(const Block& B, const float* const* x, int n) {
+    if (n != 1) return false;
+    const Dev* w[5] = {&B.wq, &B.wk, &B.wv, &B.rel, &B.gate};
+    float* y[5] = {q_, kraw_, vraw_, rr_, gate_};
+    const int from[5] = {0, 1, 2, 0, 0};
+    for (const Dev* d : w)
+        if (d->type != w[0]->type || d->n_in != n_embd_ || d->scale != 1.0f) return false;
+    const float* xs[3];
+    void* qs[3];
+    int nx = 0, slot[3];
+    for (int j = 0; j < 3; ++j) {
+        int k = 0;
+        while (k < nx && xs[k] != x[j]) ++k;
+        if (k == nx) {
+            xs[nx] = x[j];
+            qs[nx] = xq3_[nx];
+            ++nx;
+        }
+        slot[j] = k;
+    }
+    kernels::NativeMmvqMany m{};
+    for (int i = 0; i < 5; ++i) {
+        m.w[i] = w[i]->p;
+        m.x_q8_1[i] = qs[slot[from[i]]];
+        m.y[i] = y[i];
+        m.n_out[i] = w[i]->n_out;
+    }
+    m.count = 5;
+    if (!kernels::native_mmvq_many_fits((int) w[0]->type, m, n_embd_)) return false;
+    kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
+    kernels::native_mmvq_many((int) w[0]->type, m, n_embd_, st_);
+    return true;
 }
 
 // The three controllers of a later pass's attention inputs for a few tokens, each step one launch for the three
@@ -353,12 +392,14 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     }
     dbg("attn_in", il, xin_[0], n_embd_);
 
-    lin(B.wq, x[0], q_, n);
-    lin(B.wk, x[1], kraw_, n);
-    lin(B.wv, x[2], vraw_, n);
-    lin(B.rel, x[0], rr_, n);
+    if (!project(B, x, n)) {
+        lin(B.wq, x[0], q_, n);
+        lin(B.wk, x[1], kraw_, n);
+        lin(B.wv, x[2], vraw_, n);
+        lin(B.rel, x[0], rr_, n);
+        lin(B.gate, x[0], gate_, n);
+    }
     lin(B.sink, x[0], sink_, n);
-    lin(B.gate, x[0], gate_, n);
     const float *kd = nullptr, *vd = nullptr;
     if (!B.swa) {
         lin(B.k_dyn, x[1], kdyn_, n);

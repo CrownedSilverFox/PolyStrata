@@ -186,6 +186,29 @@ __global__ void native_quantize_q8_1_kernel(const float* x_, Q81Block* y_, int n
     if (i % Q8K == 0) y[i / Q8K].ds = q8_1_ds(d, sum);
 }
 
+// native_quantize_q8_1_kernel of up to 3 vectors, blockIdx.y the vector: the same bytes.
+struct QuantMany {
+    const float* x[3];
+    Q81Block* y[3];
+};
+
+__launch_bounds__(QUANT_THREADS, 1)
+__global__ void native_quantize_q8_1_many_kernel(QuantMany m, int n_in) {
+    const float* STRATA_PDL_RESTRICT x = m.x[blockIdx.y];
+    Q81Block* STRATA_PDL_RESTRICT y = m.y[blockIdx.y];
+    pdl_trigger();
+    pdl_wait();
+    const int i = int(blockIdx.x) * QUANT_THREADS + int(threadIdx.x);
+    if (i >= n_in) return; // n_in is a multiple of 32: only whole warps return.
+    const float xi = x[i];
+    const float amax = warp_max(fabsf(xi));
+    const float sum = warp_sum(xi);
+    const float d = q8_1_finite(amax / 127.0f);
+    const int8_t q = q8_1_quant(xi, d, amax);
+    y[i / Q8K].qs[i % Q8K] = q;
+    if (i % Q8K == 0) y[i / Q8K].ds = q8_1_ds(d, sum);
+}
+
 __launch_bounds__(QUANT_THREADS, 1)
 __global__ void native_swiglu_quantize_q8_1_kernel(const float* __restrict__ gate,
                                                    const float* __restrict__ up,
@@ -1028,6 +1051,43 @@ __global__ void native_small_mmvq_kernel(const Weight* __restrict__ w,
         tmp[i] = warp_sum(tmp[i]);
         if (threadIdx.x == i && row0 + i < n_out) y[row0 + i] = tmp[i];
     }
+}
+
+// native_small_mmvq_kernel<Weight, Qi, false> of up to 8 matrices of one width, each on an input of its own, in one
+// launch: a row a block, matrix m's rows the launch's [first[m], first[m + 1]).  Each row's sum is that kernel's, term
+// for term and in the same order.
+struct MmvqMany {
+    const void* w[8];
+    const Q81Block* x[8];
+    float* y[8];
+    int first[9];
+};
+
+template<typename Weight, int Qi>
+__launch_bounds__(WARPS * WARP, 1)
+__global__ void native_small_mmvq_many_kernel(MmvqMany a, int n_in) {
+    constexpr int BLOCKS_PER_ITER = 2 * WARPS * WARP / Qi;
+    int m = 0;
+    while (int(blockIdx.x) >= a.first[m + 1]) ++m;
+    const Weight* __restrict__ w = static_cast<const Weight*>(a.w[m]);
+    const Q81Block* __restrict__ x = a.x[m];
+    const int tid = WARP * int(threadIdx.y) + int(threadIdx.x);
+    const int row0 = int(blockIdx.x) - a.first[m];
+    const int blocks_per_row = n_in / 32;
+    float tmp = 0.0f;
+    for (int kbx = tid / (Qi / 2); kbx < blocks_per_row; kbx += BLOCKS_PER_ITER) {
+        const int kqs = 2 * (tid % (Qi / 2));
+        const std::size_t block = std::size_t(row0) * blocks_per_row + kbx;
+        tmp += small_q8_dot(w + block, x + kbx, kqs);
+    }
+    __shared__ float partial[WARPS - 1][WARP];
+    if (threadIdx.y > 0) partial[threadIdx.y - 1][threadIdx.x] = tmp;
+    __syncthreads();
+    if (threadIdx.y > 0) return;
+#pragma unroll
+    for (int l = 0; l < WARPS - 1; ++l) tmp += partial[l][threadIdx.x];
+    tmp = warp_sum(tmp);
+    if (threadIdx.x == 0) a.y[m][row0] = tmp;
 }
 
 // ============================ plan v0.3 P3: ncols = 2..8 (speculative verify, small batches) ============================
@@ -3407,6 +3467,23 @@ void native_quantize_q8_1(const float* x, void* x_q8_1, int n_in, int ncols, voi
     launch_check();
 }
 
+void native_quantize_q8_1_many(const float* const* x, void* const* x_q8_1, int count, int n_in, void* stream) {
+    validate_shape(n_in, 1);
+    if (count < 1 || count > 3) throw std::invalid_argument("native_quantize_q8_1_many requires 1 to 3 vectors");
+    validate_stream(stream);
+    QuantMany m{};
+    for (int j = 0; j < count; ++j) {
+        validate_pointer(x[j]);
+        validate_pointer(x_q8_1[j]);
+        m.x[j] = x[j];
+        m.y[j] = static_cast<Q81Block*>(x_q8_1[j]);
+    }
+    const unsigned blocks = unsigned((std::size_t(n_in) + QUANT_THREADS - 1) / QUANT_THREADS);
+    launch_pdl(native_quantize_q8_1_many_kernel, dim3(blocks, unsigned(count)), dim3(QUANT_THREADS), 0,
+               static_cast<cudaStream_t>(stream), m, n_in);
+    launch_check();
+}
+
 void native_swiglu_quantize_q8_1(const float* gate, const float* up, void* x_q8_1,
                                  int n_in, int ncols, void* stream) {
     validate_shape(n_in, ncols);
@@ -4073,6 +4150,35 @@ bool native_mmvq_pair(int ggml_type, const void* w1, const void* w2, const void*
     }
     launch_check();
     return true;
+}
+
+bool native_mmvq_many_fits(int ggml_type, const NativeMmvqMany& m, int n_in) {
+    // where small_mmvq<Q80Block, 8> runs native_small_mmvq_kernel<Q80Block, 8, false> for one column
+    if (ggml_type != 8 || m.count < 1 || m.count > 8 || n_in <= 0 || n_in % 32 != 0 || n_in / 32 < 2 * WARPS * WARP / 8)
+        return false;
+#if defined(STRATA_HIP_GFX906)
+    if (!g_wave_off) return false;
+#endif
+    const auto& reg = q8_packed_registry();
+    for (int j = 0; j < m.count; ++j)
+        if (!m.w[j] || !m.x_q8_1[j] || !m.y[j] || m.n_out[j] <= 0 || reg.count(m.w[j])) return false;
+    return true;
+}
+
+void native_mmvq_many(int ggml_type, const NativeMmvqMany& m, int n_in, void* stream) {
+    if (!native_mmvq_many_fits(ggml_type, m, n_in)) throw std::invalid_argument("native_mmvq_many: not these matrices");
+    validate_stream(stream);
+    MmvqMany a{};
+    for (int j = 0; j < m.count; ++j) {
+        a.w[j] = m.w[j];
+        a.x[j] = static_cast<const Q81Block*>(m.x_q8_1[j]);
+        a.y[j] = m.y[j];
+        a.first[j + 1] = a.first[j] + m.n_out[j];
+    }
+    for (int j = m.count; j < 8; ++j) a.first[j + 1] = a.first[m.count];
+    native_small_mmvq_many_kernel<Q80Block, 8><<<unsigned(a.first[m.count]), dim3(WARP, WARPS), 0,
+                                                 static_cast<cudaStream_t>(stream)>>>(a, n_in);
+    launch_check();
 }
 
 void native_q8_0_mmvq(const void* weights, const void* x_q8_1, float* y,
