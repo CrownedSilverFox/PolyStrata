@@ -2339,13 +2339,14 @@ template <int ahead> __device__ __forceinline__ void flash_wait() {
 #endif
 
 // attend_batch() for heads of 64 values in groups of 4 (LFM2's), the way FlashAttention-2 goes: a launch block takes
-// FLASH_TOKENS tokens of a group, 128 rows of queries with a token's 4 heads side by side, a warp 16 of them, and walks
+// FLASH_TOKENS tokens of a group, 64 rows of queries with a token's 4 heads side by side, a warp 16 of them, and walks
 // the keys FLASH_KEYS at a time on the tensor cores, keeping each row's softmax as it goes, so no score leaves the
 // registers.  The queries and the weights are rounded to halves and the products sum floats, as with the cuBLAS
 // products.  Fragment layouts are PTX's for mma.m16n8k16: a thread holds rows gid and gid + 8, columns 2 tig and
 // 2 tig + 1 of each block of 8.  The next block of keys and values is copied in while one is worked on, two buffers
-// in turn.
-constexpr int FLASH_TOKENS = 32;
+// in turn.  32 tokens a block (8 warps) was 5-9% faster on an RTX PRO 6000 and 6-8% slower on an RTX 5090, whose
+// tensor cores sum FP32 at half the rate and are the bound there (178 TFLOPS of the causal products at 16 tokens).
+constexpr int FLASH_TOKENS = 16;
 __global__ void __launch_bounds__(FLASH_TOKENS / 4 * WARP)
 attn_flash64_kernel(const float* __restrict__ q, const half* __restrict__ kcache, const half* __restrict__ vcache,
                     float* __restrict__ out, int rows, int n_head, int kv_heads, long long pos, float scale_log2) {
