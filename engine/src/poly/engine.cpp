@@ -3210,11 +3210,26 @@ void Engine::load(const Options& o) {
 #endif
         opt_.ram_experts_mib = -1;
         if (avail && !opt_.lock_experts && outside_bytes_ + kRamHeadroom > avail) {
-            const size_t budget = std::min(avail > kRamHeadroom ? avail - kRamHeadroom : 0, outside_bytes_);
-            opt_.ram_experts_mib = std::max<int64_t>(1024, (int64_t) (budget >> 20));
+            size_t budget = std::min(avail > kRamHeadroom ? avail - kRamHeadroom : 0, outside_bytes_);
             std::fprintf(stderr, "strata-poly: %.1f GiB of RAM free for %.1f GiB of experts outside VRAM: they do not fit, "
                                  "so the ones used most stay in RAM (--ram-experts-mib -1 maps them all)\n",
                          (double) avail / (1 << 30), (double) outside_bytes_ / (1 << 30));
+#ifdef _WIN32
+            // No more than the experts that take kCover of the profile's uses outside VRAM, and no less than three
+            // quarters of the budget.  On the RTX 4070 laptop, with the profiles its runs had written, Qwen3.6
+            // UD-Q3_K_M wrote as fast with 75% of the budget (96.3% of those uses) and 10% slower with 50% (83.0%);
+            // LFM2.5 UD-Q4_K_XL, whose few experts are all used, needs more than its whole budget for 96% and wrote
+            // 26% slower at 75% of it.  Where the experts fit, every one stays: Gemma 4 UD-Q3_K_M, put under a
+            // budget there, wrote 14-36% slower.
+            constexpr int kCover = 96;
+            const size_t most = std::max(covering(kCover), budget / 4 * 3);
+            if (most < budget) {
+                budget = most;
+                std::fprintf(stderr, "strata-poly: %zu MiB of RAM for the experts that take %d%% of the use outside "
+                                     "VRAM, or three quarters of the budget\n", most >> 20, kCover);
+            }
+#endif
+            opt_.ram_experts_mib = std::max<int64_t>(1024, (int64_t) (budget >> 20));
         }
     }
     // Under a budget the experts swapped into VRAM come from the pool or the disk, as the CPU's own do, and the one
@@ -3921,6 +3936,35 @@ size_t Engine::cached_file_bytes() const {
             expert_runs(L, n_expert_, [&](int e) { return L.slot[(size_t) e] != nullptr; },
                         [&](const uint8_t*, size_t b) { n += b; });
     return n + (next_ ? next_->cached_file_bytes() : 0);
+}
+
+// The bytes of the experts outside VRAM that take pct% of their uses in the profile (prior_), the most used first;
+// all of them where there is no profile.
+size_t Engine::covering(int pct) const {
+    std::vector<std::pair<int64_t, size_t>> outs;   // uses, bytes
+    int64_t all = 0;
+    for (size_t il = 0; il < layers_.size(); ++il) {
+        const Layer& L = layers_[il];
+        if (!L.moe) continue;
+        for (int e = 0; e < n_expert_; ++e) {
+            if (L.slot[(size_t) e]) continue;
+            const int64_t u = prior_.empty() ? 0 : prior_[il * (size_t) n_expert_ + (size_t) e];
+            size_t b = 0;
+            expert_bytes(L, e, e + 1, [&](const uint8_t*, size_t n) { b += n; });
+            outs.push_back({u, b});
+            all += u;
+        }
+    }
+    if (all <= 0) return outside_bytes_;
+    std::sort(outs.begin(), outs.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    size_t bytes = 0;
+    int64_t got = 0;
+    for (const auto& [u, b] : outs) {
+        if (got * 100 >= all * pct) break;
+        got += u;
+        bytes += b;
+    }
+    return bytes;
 }
 
 void Engine::trim() {
