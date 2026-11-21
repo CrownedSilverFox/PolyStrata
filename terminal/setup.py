@@ -886,7 +886,10 @@ FAMILIES = {
     # Q4_K_M), 362 (Qwen3.6 UD-Q3_K_M, Tiel UD-Q3_K_XL, Ornith APEX-I-Compact), 402 (Flint), 420 (Kolibri Q2_K),
     # 430 (LFM2.5) and 784 (Gemma 4 UD-Q3_K_M); "batch_gb" rounds that up.  The prompt was read faster by 23.5%
     # (Flint), 19.9% (Clover), 18.3% (Tiel), 17.6% (Ornith), 16.6% (LFM2.5), 16.2% (MiniCPM-V, Kolibri), 12.8%
-    # (Qwen3.6) and 7.8% (Gemma 4).
+    # (Qwen3.6) and 7.8% (Gemma 4).  Groot Q4_K_M, with the engine of e0effc578 through the server's benchmark
+    # (--prompt-tokens 24000, a prompt of 31,957 words, two rounds each): read 13,055-13,142 -> 14,681-14,701 words/s
+    # (+12%), written 406-410 tokens/s both ways; its VRAM was not taken apart, so its "batch_gb" is Qwen3.6's, the
+    # same architecture (qwen35moe).
     # LFM2.5 (llama.cpp's lfm2moe): no draft block and no image encoder.  QAD-Q4_0 is Liquid AI's own file, trained
     # for that quantization; the other sizes are Unsloth's.
     "lfm25": {"title": "LFM2.5-24B-A2B", "by": "Liquid AI; quantized by Unsloth and Liquid AI",
@@ -894,7 +897,7 @@ FAMILIES = {
                        "beside an 8 GB card; four other sizes too, no images",
               "hf": hf("unsloth/LFM2.5-24B-A2B-GGUF"), "file": "LFM2.5-24B-A2B-{q}.gguf", "shards": 1,
               "tag": "lfm25-", "name": "lfm2.5-24b-a2b", "engine": "poly", "vision": False, "experimental": True,
-              "windows": True, "ran_on_gb": 8, "row_bytes": 20480, "batch_gb": 0.4, "batch_from_gb": 7.5,
+              "windows": True, "ran_on_gb": 8, "row_bytes": 20480, "batch_gb": 0.5, "batch_from_gb": 7.5,
               "laptop_tps": {32768: "69-74", 65536: "54-55", 131072: "35-37"},
               "models": {"UD-Q4_K_XL": {"about": "4-bit experts (Unsloth Dynamic), 5- and 6-bit where they write",
                                         "download_gb": 14.9, "ram_gb": 20, "arena_gb": 14.0, "vram_beside_gb": 4.1},
@@ -985,7 +988,7 @@ FAMILIES = {
               "shards": 1, "tag": "groot-", "name": "groot-19b-a3b-261023", "engine": "poly",
               "pack_tag": "groot-bartowski-",
               "vision": True, "experimental": True, "windows": True, "ran_on_gb": 8, "row_bytes": 22528,
-              "laptop_tps": {32768: "95-97"},
+              "batch_gb": 0.5, "laptop_tps": {32768: "95-97"},
               "mmproj_hf": hf("bartowski/GrootTeam_Groot-19B-A3B-261023-GGUF"),
               "mmproj": "mmproj-GrootTeam_Groot-19B-A3B-261023-bf16.gguf", "vision_gb": 0.9, "vision_vram_gb": 1.6,
               # Expert bytes come from each pinned tensor directory. Q4_K_M's VRAM/RAM figures are measured peaks on

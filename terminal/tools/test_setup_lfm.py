@@ -70,7 +70,7 @@ class Batch(unittest.TestCase):
                 "ornith": ["APEX-I-COMPACT", "APEX-I-MINI", "APEX-I-QUALITY"],
                 "minicpmv": ["Q4_K_M", "mix_q3gud_im", "Q6_K"],
                 "gemma4": ["UD-Q3_K_M", "UD-Q2_K_XL", "UD-Q4_K_M", "QAT-UD-Q4_K_XL"],
-                "kolibri": ["Q2_K"]}
+                "kolibri": ["Q2_K"], "groot": ["Q4_K_M", "Q6_K", "Q8_0"]}
         for family, sizes in want.items():
             fam = setup.FAMILIES[family]
             self.assertIn("batch_gb", fam, family)
