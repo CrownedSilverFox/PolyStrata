@@ -400,6 +400,43 @@ __global__ void hc_mix_kernel(const float* __restrict__ r, const float* __restri
     if (threadIdx.x == 0) mix[o] = acc;
 }
 
+// hc_mix_kernel for a batch, a block a row: a thread reads its values of the row once for all the row's mixes, where
+// hc_mix_kernel read the row once for each of its n_mix + 1 sums (DeepSeek V4 Flash: 25 times 64 KiB).  A thread's
+// sum of a mix takes its values in the order hc_mix_kernel's did, with as many threads, and the block's sum of those
+// goes the same way, so each mix is hc_mix_kernel's to the bit.
+constexpr int MIX_MOST = 24;
+
+__global__ void __launch_bounds__(1024) hc_mix_rows_kernel(const float* __restrict__ r, const float* __restrict__ fn,
+                                                           float* __restrict__ mix, int n, int n_mix) {
+    __shared__ float part[32];
+    r += size_t(blockIdx.x) * n;
+    mix += size_t(blockIdx.x) * (n_mix + 1);
+    float acc[MIX_MOST + 1];
+#pragma unroll
+    for (int o = 0; o <= MIX_MOST; ++o) acc[o] = 0.0f;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        const float v = r[i];
+#pragma unroll
+        for (int o = 0; o < MIX_MOST; ++o)
+            if (o < n_mix) acc[o] += fn[size_t(o) * n + i] * v;
+        acc[MIX_MOST] += v * v;
+    }
+#pragma unroll
+    for (int o = 0; o <= MIX_MOST; ++o)
+        if (o < n_mix || o == MIX_MOST) {
+            const float s = block_sum(acc[o], part);
+            if (threadIdx.x == 0) mix[o < n_mix ? o : n_mix] = s;
+        }
+}
+
+// mix for rows rows: hc_mix_rows_kernel from two
+void hc_mix(const float* r, const float* fn, float* mix, int n, int n_mix, int rows, cudaStream_t s) {
+    if (rows >= 2 && n_mix <= MIX_MOST && sum_threads(n) == 1024)
+        hc_mix_rows_kernel<<<rows, 1024, 0, s>>>(r, fn, mix, n, n_mix);
+    else
+        hc_mix_kernel<<<dim3(n_mix + 1, rows), sum_threads(n), 0, s>>>(r, fn, mix, n, n_mix);
+}
+
 __device__ void comb_norm_cols(float* comb, float eps) {
     for (int dst = 0; dst < HC; ++dst) {
         float sum = eps;
@@ -3415,7 +3452,7 @@ void layer_norm(const float* x, const float* w, const float* b, float* y, int n,
 void hc_pre(const float* r, const float* fn, const float* scale, const float* base, float* mix, float* hcw,
             float* cur, int n_embd, int rows, float norm_eps, float hc_eps, int sinkhorn_iters, void* stream) {
     const int n_mix = HC * (2 + HC);
-    hc_mix_kernel<<<dim3(n_mix + 1, rows), sum_threads(HC * n_embd), 0, cs(stream)>>>(r, fn, mix, HC * n_embd, n_mix);
+    hc_mix(r, fn, mix, HC * n_embd, n_mix, rows, cs(stream));
     hc_read_kernel<<<dim3(grid(n_embd, 256), rows), 256, 0, cs(stream)>>>(r, mix, scale, base, hcw, cur, n_embd,
                                                                          norm_eps, hc_eps, sinkhorn_iters);
 }
@@ -3430,7 +3467,7 @@ void hc_mean(const float* r, float* y, int n_embd, int rows, void* stream) {
 
 void hc_head(const float* r, const float* fn, const float* scale, const float* base, float* mix, float* y,
              int n_embd, int rows, float norm_eps, float hc_eps, void* stream) {
-    hc_mix_kernel<<<dim3(HC + 1, rows), sum_threads(HC * n_embd), 0, cs(stream)>>>(r, fn, mix, HC * n_embd, HC);
+    hc_mix(r, fn, mix, HC * n_embd, HC, rows, cs(stream));
     hc_head_kernel<<<dim3(grid(n_embd, 256), rows), 256, 0, cs(stream)>>>(r, mix, scale, base, y, n_embd, norm_eps,
                                                                          hc_eps);
 }
