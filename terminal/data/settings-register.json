@@ -1685,7 +1685,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4993,
+     "line": 5029,
      "value": "\"1\""
     }
    ],
@@ -2465,7 +2465,7 @@
    "reads": [
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1852,
+     "line": 1865,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -2894,7 +2894,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3099,
+     "line": 3144,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -2908,7 +2908,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/BACKENDS.md:1281"
+    "docs/BACKENDS.md:1303"
    ],
    "first_commit": null,
    "first_date": null,
@@ -3693,6 +3693,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_COVER_DUMP",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 3214,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "off",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "df0f8b6f12",
+   "first_date": "2026-11-20",
+   "since": null,
+   "last_commit": "df0f8b6f12",
+   "last_date": "2026-11-20",
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] measuring only: =1 prints, at the start, how many MiB of the experts outside VRAM cover 70 to 99% of their use (engine/src/poly/engine.cpp, Engine::load)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_CPU_IQ_ALL_EXACT1",
    "backends": [
     "cpu"
@@ -3846,7 +3879,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4991,
+     "line": 5027,
      "value": "\"1\""
     }
    ],
@@ -4446,7 +4479,7 @@
    "launch_reads": [
     {
      "file": "terminal/setup.py",
-     "line": 9641
+     "line": 9677
     }
    ],
    "doc_mentions": [
@@ -7419,7 +7452,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6368,
+     "line": 6365,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7643,7 +7676,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6640,
+     "line": 6637,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7672,7 +7705,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4994,
+     "line": 5030,
      "value": "\"1\""
     }
    ],
@@ -7702,7 +7735,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6658,
+     "line": 6655,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7723,7 +7756,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/QUANTS.md:37",
-    "docs/QWEN36.md:121"
+    "docs/QWEN36.md:122"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -8523,7 +8556,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3012,
+     "line": 3057,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -9331,7 +9364,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4990,
+     "line": 5026,
      "value": "\"1\""
     }
    ],
@@ -9474,7 +9507,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4990,
+     "line": 5026,
      "value": "\"1\""
     }
    ],
@@ -9558,7 +9591,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/BACKENDS.md:34",
+    "docs/BACKENDS.md:35",
     "docs/DETAILS.md:2022",
     "docs/DETAILS.md:2039",
     "docs/bench-results/2026-10-24-community-rtx3060-polystrata-poly2-poly3/README.md:39"
@@ -9618,7 +9651,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4990,
+     "line": 5026,
      "value": "\"1\""
     }
    ],
@@ -9757,7 +9790,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4990,
+     "line": 5026,
      "value": "\"2\""
     }
    ],
@@ -9923,7 +9956,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4994,
+     "line": 5030,
      "value": "\"1\""
     }
    ],
@@ -12943,7 +12976,7 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4507,
+     "line": 4906,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -13165,13 +13198,13 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 3608,
+     "line": 3957,
      "backend": "hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 3617,
+     "line": 3966,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -13211,7 +13244,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6821,
+     "line": 6818,
      "backend": "hip",
      "fn": "env_on"
     },
@@ -13250,7 +13283,7 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 3692,
+     "line": 4041,
      "backend": "hip",
      "fn": "getenv"
     },
@@ -13573,7 +13606,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6560,
+     "line": 6557,
      "backend": "cuda-hip",
      "fn": "i8_env_int"
     }
@@ -13674,7 +13707,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6466,
+     "line": 6463,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -13812,7 +13845,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6560,
+     "line": 6557,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -13858,7 +13891,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6401,
+     "line": 6398,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -13945,7 +13978,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6535,
+     "line": 6532,
      "backend": "cuda-hip",
      "fn": "i8_env_int"
     }
@@ -16852,13 +16885,13 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4216,
+     "line": 4600,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4298,
+     "line": 4682,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -16945,13 +16978,13 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4228,
+     "line": 4612,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4310,
+     "line": 4694,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -17497,7 +17530,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4994,
+     "line": 5030,
      "value": "\"1\""
     }
    ],
@@ -20422,7 +20455,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 11936,
+     "line": 11980,
      "value": "\"1\" if stream else \"0\""
     }
    ],
@@ -20916,7 +20949,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5274,
+     "line": 5310,
      "value": "\"1\""
     }
    ],
@@ -21136,7 +21169,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4993,
+     "line": 5029,
      "value": "\"1\""
     }
    ],
@@ -24333,7 +24366,7 @@
    "launch_reads": [
     {
      "file": "terminal/setup.py",
-     "line": 9640
+     "line": 9676
     }
    ],
    "doc_mentions": [
@@ -27483,7 +27516,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/i8_mma.cuh",
-     "line": 423,
+     "line": 732,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -27797,7 +27830,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4991,
+     "line": 5027,
      "value": "\"1\""
     }
    ],
@@ -28691,7 +28724,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 7393,
+     "line": 7390,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -28852,8 +28885,8 @@
     "docs/bench-results/README.md:153",
     "docs/bench-results/2026-10-11-community-rtx3090-5600x-arena-pin-by-need/README.md:1",
     "docs/bench-results/2026-10-11-community-rtx3090-5600x-arena-pin-by-need/README.md:8",
-    "README.md:292",
-    "README.md:298"
+    "README.md:299",
+    "README.md:305"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -30323,7 +30356,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4995,
+     "line": 5031,
      "value": "\"1\""
     }
    ],
@@ -30588,7 +30621,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 5470,
+     "line": 5620,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -30621,7 +30654,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 1844,
+     "line": 1868,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30654,7 +30687,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 5410,
+     "line": 5560,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -30667,7 +30700,9 @@
    "launch_files": [],
    "launch_sets": [],
    "launch_reads": [],
-   "doc_mentions": [],
+   "doc_mentions": [
+    "docs/BACKENDS.md:2236"
+   ],
    "first_commit": "6e06e475e5",
    "first_date": "2026-11-19",
    "since": null,
@@ -30687,7 +30722,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 5225,
+     "line": 5360,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -30700,12 +30735,15 @@
    "launch_files": [],
    "launch_sets": [],
    "launch_reads": [],
-   "doc_mentions": [],
+   "doc_mentions": [
+    "docs/BACKENDS.md:2210",
+    "docs/BACKENDS.md:2211"
+   ],
    "first_commit": "7317a5fbd7",
    "first_date": "2026-11-19",
    "since": null,
-   "last_commit": "7317a5fbd7",
-   "last_date": "2026-11-19",
+   "last_commit": "522942af25",
+   "last_date": "2026-11-20",
    "status": "default",
    "owner": "poly",
    "note": "[reviewed] the host mirror of the experts outside VRAM that the card reads (CUDA, unified addressing), on where it applies unless =0; on Windows off unless =1 or --lock-experts (engine/src/poly/engine.cpp:5100)",
@@ -30726,7 +30764,7 @@
     },
     {
      "file": "engine/src/poly/mmq_paths_test.cu",
-     "line": 65,
+     "line": 67,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30759,7 +30797,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 2986,
+     "line": 3031,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30795,7 +30833,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 6403,
+     "line": 6615,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30828,7 +30866,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 2951,
+     "line": 2996,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -34590,7 +34628,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/QWEN36.md:112"
+    "docs/QWEN36.md:113"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -34664,7 +34702,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/QWEN36.md:93"
+    "docs/QWEN36.md:94"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -34870,7 +34908,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/QWEN36.md:120"
+    "docs/QWEN36.md:121"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -34938,8 +34976,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/QWEN36.md:69",
-    "docs/QWEN36.md:227"
+    "docs/QWEN36.md:70",
+    "docs/QWEN36.md:228"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -35040,7 +35078,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/QWEN36.md:119"
+    "docs/QWEN36.md:120"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -35246,7 +35284,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4993,
+     "line": 5029,
      "value": "\"1\""
     }
    ],
@@ -35430,7 +35468,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4993,
+     "line": 5029,
      "value": "\"1\""
     }
    ],
@@ -35586,7 +35624,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4995,
+     "line": 5031,
      "value": "\"1\""
     }
    ],
@@ -36670,7 +36708,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4522,
+     "line": 4558,
      "value": "base.get(\"ramKeep\""
     }
    ],
@@ -37024,7 +37062,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 9615,
+     "line": 9651,
      "value": "6"
     }
    ],
@@ -37103,7 +37141,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 8193,
+     "line": 8229,
      "value": "frozenset({\"0\""
     }
    ],
@@ -37723,7 +37761,7 @@
     },
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1873,
+     "line": 1886,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -37753,17 +37791,17 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 329,
+     "line": 330,
      "value": "7"
     },
     {
      "file": "terminal/setup.py",
-     "line": 5275,
+     "line": 5311,
      "value": "\"0\""
     },
     {
      "file": "terminal/setup.py",
-     "line": 10383,
+     "line": 10420,
      "value": "0"
     },
     {
@@ -37774,8 +37812,8 @@
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/BACKENDS.md:1861",
-    "docs/BACKENDS.md:1902",
+    "docs/BACKENDS.md:1883",
+    "docs/BACKENDS.md:1924",
     "docs/DETAILS.md:1351",
     "docs/DETAILS.md:1359",
     "docs/DETAILS.md:1363",
@@ -39142,7 +39180,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4995,
+     "line": 5031,
      "value": "\"1\""
     }
    ],
@@ -39297,7 +39335,7 @@
     },
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1729,
+     "line": 1742,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -39308,11 +39346,11 @@
    "engine_sets": [
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1731
+     "line": 1744
     },
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1733
+     "line": 1746
     }
    ],
    "engine_defaults": [],
@@ -45144,13 +45182,13 @@
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6643,
+     "line": 6640,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6682,
+     "line": 6679,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -45216,7 +45254,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4994,
+     "line": 5030,
      "value": "\"1\""
     }
    ],
@@ -46634,7 +46672,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 1000,
+     "line": 1010,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
