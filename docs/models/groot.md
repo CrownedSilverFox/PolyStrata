@@ -96,6 +96,19 @@ reasoning separate, and a tool request returned `get_weather({"city":"Paris"})` 
 The raw run is in
 [docs/bench-results/2026-11-02-groot-q4_k_m-rtx5060-laptop](../bench-results/2026-11-02-groot-q4_k_m-rtx5060-laptop/README.md).
 
+## Measured on an RTX 4070 Laptop 8 GB
+
+`python polystrata.py benchmark --model groot-19b-a3b-261023-q4_k_m` on 2026-11-21 with this version's engine, Q4_K_M,
+32,768-token context, Windows 11, Core i7-14700HX (13 threads for the experts outside VRAM), 32 GB of RAM. Three runs:
+
+| Prompt, tokens | Prefill, tokens/s | Decode, tokens/s | Peak VRAM | Peak RAM |
+| --- | ---: | ---: | ---: | ---: |
+| 21 | 59.6-64.0 | 71.8-79.4 | 7.71-7.73 GiB | 20.9-21.0 GiB |
+| 31,957 | 2,318-2,348 | 81.9-83.4 | 7.61-7.73 GiB | 21.9-22.1 GiB |
+
+As above, VRAM and RAM are the whole machine's. 2,193 of 5,248 routed experts started in VRAM (3.8 GiB) and the file
+loaded in 2.7 s. The long prompt's first token came after 13.7 to 13.8 seconds.
+
 ## Hardware and shared engine features
 
 Groot uses the same `strata-poly` path as Tiel Coder and Qwen3.6, not an RTX 5060-specific engine.
