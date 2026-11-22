@@ -566,6 +566,9 @@ protected:
     /// The same for a layer's tail, whose recording is one for every size unless the architecture has several (a
     /// layer that runs more than once a token, each time with a state of its own).
     virtual int tail_key(int il, int n) const { (void) il, (void) n; return 0; }
+    /// Above 0: a call's whole pass (run()) is recorded as two graphs, the first of this many layers' runs, so that
+    /// the card starts on it while the host launches the second.
+    virtual int whole_first_layers() const { return 0; }
     /// layer_head() takes step()'s rows in one call: the products for every row at once, and each row's recurrent
     /// state and attention rows from its own sequence (rows_of_, seq_state(), seq_buf()), its position from at_.
     /// Otherwise step() runs the head a row at a time, with the row's sequence bound.

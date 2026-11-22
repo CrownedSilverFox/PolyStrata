@@ -33,6 +33,7 @@
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -6457,24 +6458,37 @@ void Engine::run(const int32_t* tokens, int n) {
     if (whole) {
         std::vector<int> key{block_pass_ ? -n : n};
         for (int il = lo_; il < hi_; ++il) key.push_back(head_key(il, n));
+        // Two recordings where the family asks for it: the card starts on the first few layers while this thread
+        // still hands it the rest (a launch takes this thread about 0.1 us a kernel).
+        const int first = whole_first_layers();
+        std::vector<int> rest_key = key;
+        rest_key.push_back(INT_MIN);
         void*& pass = passes_[key];
-        if (!pass)
-            pass = record([&] {
-                struct Whole {
-                    bool& on;
-                    ~Whole() { on = false; }
-                } whole_rec{whole_rec_};
-                whole_rec_ = true;
-                for (int il = lo_; il < hi_; il = next_layer(il)) {
-                    Layer& L = layers_[(size_t) il];
-                    layer_head(L, il, n);
-                    if (!L.moe) continue;
-                    moe_shared(L, il, n);
-                    moe_card(L, il, n);
-                    layer_tail(L, il, n);
-                }
-            });
+        void** rest = first > 0 ? &passes_[rest_key] : nullptr;
+        if (!pass || (rest && !*rest)) {
+            int il = lo_;
+            const auto layers = [&](int count) {
+                return [&, count] {
+                    struct Whole {
+                        bool& on;
+                        ~Whole() { on = false; }
+                    } whole_rec{whole_rec_};
+                    whole_rec_ = true;
+                    for (int done = 0; il < hi_ && done < count; il = next_layer(il), ++done) {
+                        Layer& L = layers_[(size_t) il];
+                        layer_head(L, il, n);
+                        if (!L.moe) continue;
+                        moe_shared(L, il, n);
+                        moe_card(L, il, n);
+                        layer_tail(L, il, n);
+                    }
+                };
+            };
+            pass = record(layers(rest ? first : INT_MAX));
+            if (rest) *rest = record(layers(INT_MAX));
+        }
         ck(cudaGraphLaunch((cudaGraphExec_t) pass, cs(st_)), "layer graph");
+        if (rest) ck(cudaGraphLaunch((cudaGraphExec_t) *rest, cs(st_)), "layer graph");
         for (int il = lo_; il < hi_; ++il) stats_.gpu_experts += layers_[(size_t) il].moe ? n * n_used_ : 0;
         return;
     }

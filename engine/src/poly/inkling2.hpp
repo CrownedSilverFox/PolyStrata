@@ -39,6 +39,8 @@ protected:
     void layer_head(Layer& L, int il, int n) override;
     void layer_tail(Layer& L, int il, int n) override;
     int next_layer(int il) override;
+    // a layer is some 20 launches: the card has 4 layers' work while the host launches the other 44
+    int whole_first_layers() const override { return 4; }
     int head_key(int il, int n) const override;
     int tail_key(int il, int n) const override;
     bool reads_by_layer() const override { return false; }
