@@ -70,6 +70,17 @@
 namespace strata::poly {
 namespace {
 
+// pdl_scope() for a whole pass's recording: CUDA's and HIP's (verify_kernels.cu); the Metal build has no PDL launches
+// and does not build that file, so there it is a flag nothing reads
+bool& whole_pdl_scope() {
+#if defined(STRATA_GPU_METAL)
+    static thread_local bool off = false;
+    return off;
+#else
+    return kernels::pdl_scope();
+#endif
+}
+
 void drop_file_pages(const void* p, size_t n) {
 #if defined(__APPLE__)
     constexpr uintptr_t kPage = 16384;
@@ -6490,10 +6501,10 @@ void Engine::run(const int32_t* tokens, int n) {
                     struct Whole {
                         bool& on;
                         bool pdl;
-                        ~Whole() { on = false, kernels::pdl_scope() = pdl; }
-                    } whole_rec{whole_rec_, kernels::pdl_scope()};
+                        ~Whole() { on = false, whole_pdl_scope() = pdl; }
+                    } whole_rec{whole_rec_, whole_pdl_scope()};
                     whole_rec_ = true;
-                    kernels::pdl_scope() = whole_pdl();
+                    whole_pdl_scope() = whole_pdl();
                     for (int done = 0; il < hi_ && done < count; il = next_layer(il), ++done) {
                         Layer& L = layers_[(size_t) il];
                         layer_head(L, il, n);
