@@ -276,8 +276,14 @@ bool Inkling2::control_ffn(const float* msg, const Ctrl& c, const Block& B) {
     if (c.gain.type != kTypeF32 || c.forget.type != kTypeF32 || c.gain.scale != 1.0f || c.forget.scale != 1.0f ||
         sum_threads(n_embd_) != 1024)
         return false;
-    ink_cat_norm(mixf_, msg, cat_, n_embd_, 1, st_);
-    lin(c.down, cat_, ch_, 1);
+    const float* cur = mixf_;
+    const float* down = fp(c.down);
+    float* ch = ch_;
+    if (c.down.type != kTypeF32 || c.down.scale != 1.0f ||
+        !ink_ctrl_down(&cur, &msg, &down, &ch, 1, n_embd_, rank_, 1, st_)) {   // the norms and lin()'s gemv_kernel
+        ink_cat_norm(mixf_, msg, cat_, n_embd_, 1, st_);
+        lin(c.down, cat_, ch_, 1);
+    }
     const float* w[2] = {fp(c.gain), fp(c.forget)};
     const float* x[2] = {ch_, ch_};
     float* y[2] = {gain_, forget_};
@@ -335,7 +341,6 @@ bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* 
         for (const Dev* d : {&c[j].down, &c[j].gain, &c[j].forget})
             if (d->type != kTypeF32 || d->scale != 1.0f) return false;
     const float* m[3] = {msg[0], msg[1], msg[2]};
-    ink_cat_norm_set(cur, m, cat3_, 3, n_embd_, n, st_);
     const float* w[6];
     const float* x[6];
     float* y[6];
@@ -346,7 +351,10 @@ bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* 
         y[j] = ch3_[j];
         outs[j] = rank_;
     }
-    gemv_set(w, x, y, outs, 3, 2 * n_embd_, n, st_);
+    if (!ink_ctrl_down(cur, m, w, y, 3, n_embd_, rank_, n, st_)) {   // the norms and the down products in one launch
+        ink_cat_norm_set(cur, m, cat3_, 3, n_embd_, n, st_);
+        gemv_set(w, x, y, outs, 3, 2 * n_embd_, n, st_);
+    }
     if (n == 1 && rank_ < 128) {   // the gain and forget products and the gates in one launch
         const float* ch[3] = {ch3_[0], ch3_[1], ch3_[2]};
         const float* gw[3] = {fp(c[0].gain), fp(c[1].gain), fp(c[2].gain)};

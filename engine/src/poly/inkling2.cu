@@ -244,25 +244,93 @@ struct CatNormSet {
     float* out[kSet];
 };
 
+constexpr int kCatThreads = 256;   // ink_cat_norm_kernel's block
+
+// Thread tid's shares of the squares of a row of cur and of msg, in ink_cat_norm_kernel's block: every
+// kCatThreads-th value from tid.
+__device__ __forceinline__ void cat_squares(const float* __restrict__ cur, const float* __restrict__ msg, int n_embd,
+                                            int tid, float& a, float& b) {
+    a = 0.0f, b = 0.0f;
+    for (int i = tid; i < n_embd; i += kCatThreads) {
+        a += cur[i] * cur[i];
+        b += msg[i] * msg[i];
+    }
+}
+
+__device__ __forceinline__ float cat_scale(float sum, int n_embd) { return 1.0f / sqrtf(sum / (float) n_embd + 1e-6f); }
+
 // A token's pair a block, blockIdx.y the pair.
 __global__ void ink_cat_norm_kernel(CatNormSet s, int n_embd) {
-    __shared__ float part[256 / WARP];
+    __shared__ float part[kCatThreads / WARP];
     const float* __restrict__ cur = s.cur[blockIdx.y];
     const float* __restrict__ msg = s.msg[blockIdx.y];
     float* __restrict__ out = s.out[blockIdx.y];
     const size_t row = size_t(blockIdx.x) * n_embd;
     const int tid = threadIdx.x;
-    float a = 0.0f, b = 0.0f;
-    for (int i = tid; i < n_embd; i += blockDim.x) {
-        a += cur[row + i] * cur[row + i];
-        b += msg[row + i] * msg[row + i];
-    }
-    const float ia = 1.0f / sqrtf(block_sum(a, part) / (float) n_embd + 1e-6f);
-    const float ib = 1.0f / sqrtf(block_sum(b, part) / (float) n_embd + 1e-6f);
+    float a, b;
+    cat_squares(cur + row, msg + row, n_embd, tid, a, b);
+    const float ia = cat_scale(block_sum(a, part), n_embd);
+    const float ib = cat_scale(block_sum(b, part), n_embd);
     float* o = out + 2 * row;
     for (int i = tid; i < n_embd; i += blockDim.x) {
         o[i] = cur[row + i] * ia;
         o[n_embd + i] = msg[row + i] * ib;
+    }
+}
+
+struct CtrlDown {
+    const float* cur[kSet];
+    const float* msg[kSet];
+    const float* w[kSet];   // [2 * n_embd] an output
+    float* y[kSet];
+};
+
+constexpr int kDownThreads = 512;   // ink_ctrl_down_kernel's block: half of gemv_set_kernel's
+
+// ink_cat_norm_kernel and then gemv_set_kernel's product with the controller's down matrix in one launch: output o
+// of controller j (blockIdx.x = j * rank + o) of token blockIdx.y.  Its first kCatThreads threads make the two norms
+// as ink_cat_norm_kernel's block does, and the product takes each normed value as that kernel writes it.  The
+// product is gemv_set_kernel's block of 1024 threads (2 * n_embd values) in kDownThreads: thread t has the sums of
+// its threads t and t + 512, warps w and w + 16, and the 32 warps' sums are added in their order.  The same bits,
+// and with half the threads a block, a launch's 3 * 64 blocks are one wave on the card.
+__global__ void __launch_bounds__(kDownThreads) ink_ctrl_down_kernel(CtrlDown d, int n_embd, int rank) {
+    __shared__ float pa[kCatThreads / WARP], pb[kCatThreads / WARP], part[32];
+    const int j = blockIdx.x / rank, o = blockIdx.x % rank, tid = threadIdx.x;
+    const size_t row = size_t(blockIdx.y) * n_embd;
+    const float* __restrict__ cur = d.cur[j] + row;
+    const float* __restrict__ msg = d.msg[j] + row;
+    if (tid < kCatThreads) {
+        float a, b;
+        cat_squares(cur, msg, n_embd, tid, a, b);
+        a = warp_sum(a);
+        b = warp_sum(b);
+        if ((tid & 31) == 0) pa[tid >> 5] = a, pb[tid >> 5] = b;
+    }
+    __syncthreads();
+    float sa = 0.0f, sb = 0.0f;
+    for (int k = 0; k < kCatThreads / WARP; ++k) sa += pa[k];
+    for (int k = 0; k < kCatThreads / WARP; ++k) sb += pb[k];
+    const float ia = cat_scale(sa, n_embd), ib = cat_scale(sb, n_embd);
+    const float* __restrict__ wr = d.w[j] + size_t(o) * 2 * n_embd;
+    const int n_in = 2 * n_embd;
+    float acc0 = 0.0f, acc1 = 0.0f;   // gemv_set_kernel's threads tid and tid + kDownThreads
+    for (int i = tid; i < n_in; i += 2 * kDownThreads) {
+        const float x0 = i < n_embd ? cur[i] * ia : msg[i - n_embd] * ib;
+        acc0 += wr[i] * x0;
+        const int i1 = i + kDownThreads;
+        if (i1 < n_in) {
+            const float x1 = i1 < n_embd ? cur[i1] * ia : msg[i1 - n_embd] * ib;
+            acc1 += wr[i1] * x1;
+        }
+    }
+    acc0 = warp_sum(acc0);
+    acc1 = warp_sum(acc1);
+    if ((tid & 31) == 0) part[tid >> 5] = acc0, part[(tid >> 5) + kDownThreads / WARP] = acc1;
+    __syncthreads();
+    if (tid == 0) {
+        float sum = 0.0f;
+        for (int k = 0; k < 2 * kDownThreads / WARP; ++k) sum += part[k];
+        d.y[j][size_t(blockIdx.y) * rank + o] = sum;
     }
 }
 
@@ -808,6 +876,23 @@ void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* c
 
 void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream) {
     ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
+}
+
+bool ink_ctrl_down(const float* const* cur, const float* const* msg, const float* const* down, float* const* ch,
+                   int count, int n_embd, int rank, int rows, void* stream) {
+    if (count < 1 || count > kSet) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
+    if (sum_threads(2 * n_embd) != 1024) return false;   // gemv_set_kernel's block is another
+    if (rows <= 0) return true;
+    CtrlDown d{};
+    for (int j = 0; j < count; ++j) {
+        d.cur[j] = cur[j];
+        d.msg[j] = msg[j];
+        d.w[j] = down[j];
+        d.y[j] = ch[j];
+    }
+    ink_ctrl_down_kernel<<<dim3(count * rank, rows), kDownThreads, 0, cs(stream)>>>(d, n_embd, rank);
+    launched("ink_ctrl_down");
+    return true;
 }
 
 void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,

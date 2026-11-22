@@ -44,6 +44,11 @@ void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, in
 /// ink_cat_norm() of 1 to 3 pairs in one launch.
 void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* const* out, int count, int n_embd,
                       int rows, void* stream);
+/// ink_cat_norm_set() and then gemv_set() of each pair with its controller's F32 down matrix (rank outputs of
+/// 2 * n_embd values) into ch[j], in one launch with the same bits.  False, with nothing launched, where gemv_set()
+/// would run another block.
+bool ink_ctrl_down(const float* const* cur, const float* const* msg, const float* const* down, float* const* ch,
+                   int count, int n_embd, int rank, int rows, void* stream);
 
 /// ink_gate() of 1 to 3 controllers in one launch.  Every cur is read before any out is written, so an out may be
 /// any of the cur.
