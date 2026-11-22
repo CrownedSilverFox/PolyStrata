@@ -10,11 +10,16 @@
 // rows by index (Mmq::reads_by_index()), the experts' product from rows quantized once and read by index is the one
 // from the same rows gathered by ids, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
 // (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.
+// MXFP4 takes the int8 tiles only where an engine asks for them (gemm_iq_i8_allow(), as Inkling 2 does), so the test
+// asks; where it then takes them, its product is also made on the FP16 kernel (the path it had before) and the two
+// are compared.  STRATA_MMQ_TEST_BLOCKS=DIR: a type's weights are the bytes of DIR/<type name>.bin where that file is
+// long enough (whole blocks cut from a model's tensor), in place of ggml's quantization of random weights.
 //
 // usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference, and an int8 product within
 // 1e-5 RMS of its own numbers; 77: no card)
 #include "mmq.hpp"
 #include "ggml.h"
+#include "strata/kernels/iq_kernels.hpp"
 
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -25,7 +30,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <random>
+#include <string>
 #include <vector>
 
 using strata::poly::Mmq;
@@ -70,8 +77,11 @@ int main() {
     }
     const char* forced = std::getenv("STRATA_POLY_PROMPT_BLAS");
     std::printf("path: %s\n", forced && forced[0] == '1' ? "BLAS (STRATA_POLY_PROMPT_BLAS=1)" : "the card's");
-    // the 32-value types, the K-quants, the i-quants, NVFP4
-    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 20, 21, 22, 23, 29, 40};
+    // the 32-value types, the K-quants, the i-quants, MXFP4, NVFP4
+    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 20, 21, 22, 23, 29, 39, 40};
+    const int asked[] = {39};   // the types the int8 tiles take only when asked
+    for (int t : asked) strata::kernels::gemm_iq_i8_allow(t, true);
+    const char* blocks_dir = std::getenv("STRATA_MMQ_TEST_BLOCKS");
     constexpr int64_t kOut = 512, kIn = 2048, kTokens = 256, kExperts = 4;
     std::mt19937 rng(99);
     std::normal_distribution<float> normal(0.f, 1.f);
@@ -126,6 +136,14 @@ int main() {
         for (auto& v : imp) v = 0.5f + std::fabs(normal(rng));
         std::vector<uint8_t> wq(mat * kExperts);
         ggml_quantize_chunk(ty, wf.data(), wq.data(), 0, kExperts * kOut, kIn, imp.data());
+        if (blocks_dir) {   // a model's own blocks, where there are enough of them
+            std::ifstream f(std::string(blocks_dir) + "/" + ggml_type_name(ty) + ".bin", std::ios::binary);
+            std::vector<uint8_t> real(wq.size());
+            if (f && f.read((char*) real.data(), (std::streamsize) real.size())) {
+                wq = real;
+                std::printf("%-8s the model's blocks\n", ggml_type_name(ty));
+            }
+        }
         std::vector<float> wd(wf.size());
         ggml_get_type_traits(ty)->to_float(wq.data(), wd.data(), (int64_t) wd.size());
         uint8_t* dw = upload(wq);
@@ -177,6 +195,33 @@ int main() {
             std::printf("   int8 numbers: RMS error %.2e / %.2e, largest %.2e / %.2e", dense8.rms, experts8.rms, dense8.top,
                         experts8.top);
         std::printf("  %s\n", fine ? "ok" : "WRONG");
+
+        if (int8 && std::find(std::begin(asked), std::end(asked), t) != std::end(asked)) {
+            // the same products on the FP16 kernel, as before the type was asked for: both against the reference, and
+            // the int8 products against them
+            strata::kernels::gemm_iq_i8_allow(t, false);
+            std::vector<float> yh(y.size());
+            if (Mmq::int8(t, kIn) || !Mmq::fits(t, kOut, kIn)) {
+                std::printf("%-8s FP16 path: not taken\n", ggml_type_name(ty));
+                fine = false;
+            } else {
+                Mmq::quantize(dx, nullptr, xq, t, kIn, kIn, kTokens, nullptr);
+                mmq.mul(dw, t, kOut, kIn, mat, kExperts, xq, dbounds, dperm, kTokens, 149, dy, kOut, nullptr);
+                if (!ok(cudaMemcpy(yh.data(), dy, yh.size() * sizeof(float), cudaMemcpyDeviceToHost), "FP16 product")) return 1;
+                std::vector<float> backh((size_t) (kTokens * kOut));
+                std::vector<double> b8((size_t) (kTokens * kOut));
+                for (int64_t r = 0; r < kTokens; ++r) {
+                    std::copy_n(&yh[(size_t) perm[(size_t) r] * kOut], kOut, &backh[(size_t) (r * kOut)]);
+                    for (int64_t o = 0; o < kOut; ++o) b8[(size_t) (r * kOut + o)] = back[(size_t) (r * kOut + o)];
+                }
+                const Err half = compare(backh, ref, kTokens, kOut, kOut), apart = compare(backh, b8, kTokens, kOut, kOut);
+                const bool near = half.rms < 0.02 && apart.rms < 0.02;
+                std::printf("%-8s FP16 path: RMS error %.2e, largest %.2e   int8 against it: RMS %.2e, largest %.2e  %s\n",
+                            ggml_type_name(ty), half.rms, half.top, apart.rms, apart.top, near ? "ok" : "WRONG");
+                fine = fine && near;
+            }
+            strata::kernels::gemm_iq_i8_allow(t, true);
+        }
 
         if (Mmq::reads_by_index(t, kIn)) {
             // routed row i is token src[i]: its rows gathered and quantized a row each, against the tokens' rows

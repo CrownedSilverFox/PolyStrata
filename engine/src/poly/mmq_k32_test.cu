@@ -2,10 +2,13 @@
 // end inside a stage of 256 values (Gemma 4 26B's down: 704 values), against the same matrix with each row padded to
 // the next whole stage by blocks of zeros (scale 0), times rows padded with zeros: the padding adds nothing, so the two
 // must agree to the bit.  The unpadded matrices are allocated to their last byte, so that a read past them shows
-// under compute-sanitizer.  Q4_0's products are checked against its weights' values as well.
+// under compute-sanitizer.  Q4_0's products are checked against its weights' values as well.  MXFP4 (17-byte blocks,
+// which start at any byte; Inkling 2 Mini's down: 1,152 values) takes the int8 product only where an engine asks for
+// it (gemm_iq_i8_allow()), so the test asks.
 //
 // usage: poly_mmq_k32_test   (exit 0: every case agrees; 77: no card, or no int8 product on it)
 #include "mmq.hpp"
+#include "strata/kernels/iq_kernels.hpp"
 
 #include <cuda_runtime.h>
 
@@ -22,7 +25,8 @@ using strata::poly::Mmq;
 namespace {
 
 struct Quant { const char* name; int type; int block; };   // ggml_type, bytes of a block of 32 values
-constexpr Quant kQuants[] = {{"Q4_0", 2, 18}, {"Q5_0", 6, 22}, {"Q5_1", 7, 24}, {"Q8_0", 8, 34}, {"IQ4_NL", 20, 18}};
+constexpr Quant kQuants[] = {{"Q4_0", 2, 18}, {"Q5_0", 6, 22}, {"Q5_1", 7, 24}, {"Q8_0", 8, 34}, {"IQ4_NL", 20, 18},
+                             {"MXFP4", 39, 17}};
 constexpr int kRows = 200;   // weight rows a matrix: not a whole number of the kernel's tiles of 64
 
 bool ok(cudaError_t e, const char* what) {
@@ -69,6 +73,7 @@ int run_case(const Quant& q, int k, int n, const std::vector<int>& rows, std::mt
     for (auto& b : w) b = (uint8_t) rng();
     for (size_t b = 0; b < w.size() / q.block; ++b) {   // finite scales (and Q5_1's minimum): halves of about 2^-3
         uint8_t* p = &w[b * q.block];
+        if (q.type == 39) { p[0] = (uint8_t) (120 + rng() % 16); continue; }   // MXFP4: an E8M0 scale of 2^-8 to 2^7
         p[0] = (uint8_t) rng(); p[1] = 0x30;
         if (q.type == 7) { p[2] = (uint8_t) rng(); p[3] = 0x30; }
     }
@@ -122,6 +127,7 @@ int run_case(const Quant& q, int k, int n, const std::vector<int>& rows, std::mt
 }  // namespace
 
 int main() {
+    strata::kernels::gemm_iq_i8_allow(39, true);
     int devices = 0;
     if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
         std::printf("no card: skipped\n");
@@ -130,7 +136,8 @@ int main() {
     std::mt19937 rng(11);
     int failures = 0, cases = 0, ran = 0;
     for (const Quant& q : kQuants) {
-        for (int k : {704, 288, 32, 512}) {   // Gemma 4's down; a stage and a block; one block; whole stages
+        // Gemma 4's down; a stage and a block; one block; whole stages (and for MXFP4 Inkling 2's down)
+        for (int k : q.type == 39 ? std::vector<int>{1152, 704, 288, 32, 512} : std::vector<int>{704, 288, 32, 512}) {
             if (!Mmq::reads_by_index(q.type, k)) {   // the int8 product's own test (mmq_own.cu: int8_rows())
                 std::printf("%s K=%d: no int8 product on this card, not checked\n", q.name, k);
                 continue;
