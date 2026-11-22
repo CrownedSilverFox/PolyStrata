@@ -17,6 +17,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 namespace strata::poly {
 namespace {
@@ -226,7 +227,143 @@ __device__ __forceinline__ void mix_row(const MixArgs& a, int n_embd) {
     }
 }
 
-__global__ void ink_mix_kernel(MixArgs a, int n_embd) { mix_row(a, n_embd); }
+constexpr int kMixHeld = 3;   // the values of a row a thread of mix_held() holds: rows of up to 3 * kMixThreads
+
+// mix_row() for NS states and NQ queries, a row of up to kMixHeld * kMixThreads values: a thread keeps the states'
+// values it reads, and the outputs it writes, for what comes after (the outputs and the norm) instead of reading
+// them again.  Every sum is mix_row()'s, term for term and in its order.
+template <int NS, int NQ>
+__device__ __forceinline__ void mix_held(const MixArgs& a, int n_embd) {
+    __shared__ float part[InkStates::kMax * kMixSums][kMixThreads / WARP];
+    __shared__ float whole[InkStates::kMax * kMixSums];
+    __shared__ float coef[InkStates::kMax * kQueries];
+    const size_t row = size_t(blockIdx.x) * n_embd;
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    float x[kMixHeld][NS];
+    float sum[NS][1 + NQ];
+#pragma unroll
+    for (int s = 0; s < NS; ++s) {
+#pragma unroll
+        for (int k = 0; k <= NQ; ++k) sum[s][k] = 0.0f;
+    }
+#pragma unroll
+    for (int h = 0; h < kMixHeld; ++h) {
+        const int i = tid + h * kMixThreads;
+        if (i < n_embd) {
+            float q[NQ];
+#pragma unroll
+            for (int j = 0; j < NQ; ++j) q[j] = a.query[size_t(j) * n_embd + i];
+#pragma unroll
+            for (int s = 0; s < NS; ++s) {
+                const float v = a.s[s][row + i];
+                x[h][s] = v;
+                sum[s][0] += v * v;
+#pragma unroll
+                for (int j = 0; j < NQ; ++j) sum[s][1 + j] += v * q[j];
+            }
+        }
+    }
+#pragma unroll
+    for (int s = 0; s < NS; ++s) {
+#pragma unroll
+        for (int k = 0; k <= NQ; ++k) {
+            const float w = warp_sum(sum[s][k]);
+            if (lane == 0) part[s * kMixSums + k][warp] = w;
+        }
+    }
+    __syncthreads();
+    if (tid < NS * kMixSums && tid % kMixSums <= NQ) {
+        float t = 0.0f;
+        for (int w = 0; w < kMixThreads / WARP; ++w) t += part[tid][w];
+        whole[tid] = t;
+    }
+    __syncthreads();
+    if (tid < NQ) {
+        const int j = tid;
+        const float sc = 1.0f / sqrtf((float) n_embd);
+        float v[NS], inv[NS];
+        float m = -INFINITY;
+        for (int s = 0; s < NS; ++s) {
+            inv[s] = 1.0f / sqrtf(whole[s * kMixSums] / (float) n_embd + 1e-6f);
+            v[s] = whole[s * kMixSums + 1 + j] * inv[s] * sc;
+            m = fmaxf(m, v[s]);
+        }
+        float total = 0.0f;
+        for (int s = 0; s < NS; ++s) {
+            v[s] = expf(v[s] - m);
+            total += v[s];
+        }
+        for (int s = 0; s < NS; ++s) coef[s * kQueries + j] = v[s] / total * inv[s];
+    }
+    __syncthreads();
+    float out0[kMixHeld];
+#pragma unroll
+    for (int h = 0; h < kMixHeld; ++h) {
+        const int i = tid + h * kMixThreads;
+        if (i < n_embd) {
+#pragma unroll
+            for (int j = 0; j < NQ; ++j) {
+                float acc = 0.0f;
+#pragma unroll
+                for (int s = 0; s < NS; ++s) acc += coef[s * kQueries + j] * x[h][s];
+                a.out[j][row + i] = acc;
+                if (j == 0) out0[h] = acc;
+            }
+        }
+    }
+    if (!a.norm_out) return;
+    __shared__ float npart[kMixThreads / WARP];
+    if (a.ffn) {   // add_rms_q8()'s arithmetic on the values written
+        float ss = 0.0f;
+#pragma unroll
+        for (int h = 0; h < kMixHeld; ++h)
+            if (tid + h * kMixThreads < n_embd) ss = __fmaf_rn(out0[h], out0[h], ss);
+        ss = warp_sum(ss);
+        if (lane == 0) npart[warp] = ss;
+        __syncthreads();
+        float total = 0.0f;
+        for (int k = 0; k < kMixThreads / WARP; ++k) total = __fadd_rn(total, npart[k]);
+        const float scale = __fdiv_rn(1.0f, __fsqrt_rn(__fadd_rn(__fdiv_rn(total, float(n_embd)), a.eps)));
+        QB* q = a.q8 + size_t(blockIdx.x) * (n_embd / 32);
+#pragma unroll
+        for (int h = 0; h < kMixHeld; ++h) {
+            const int i = tid + h * kMixThreads;
+            if (i < n_embd) {
+                const float xi = __fmul_rn(__fmul_rn(out0[h], scale), a.norm_w[i]);
+                a.norm_out[row + i] = xi;
+                q8_put(q, i, xi);
+            }
+        }
+        return;
+    }
+    // rms_norm_kernel's arithmetic, a thread over the values it wrote
+    float ss = 0.0f;
+#pragma unroll
+    for (int h = 0; h < kMixHeld; ++h)
+        if (tid + h * kMixThreads < n_embd) ss += out0[h] * out0[h];
+    ss = block_sum(ss, npart);
+    const float scale = 1.0f / sqrtf(ss / float(n_embd) + a.eps);
+#pragma unroll
+    for (int h = 0; h < kMixHeld; ++h) {
+        const int i = tid + h * kMixThreads;
+        if (i < n_embd) {
+            const float v = out0[h];
+            const float y = a.norm_w ? v * scale * a.norm_w[i] : v * scale;
+            a.norm_out[row + i] = y;
+            if (a.q8) q8_put(a.q8 + size_t(blockIdx.x) * (n_embd / 32), i, y);
+        }
+    }
+}
+
+// mix_held() where it takes the row, else mix_row()
+template <int NS, int NQ>
+__device__ __forceinline__ void mix_any(const MixArgs& a, int n_embd) {
+    if (n_embd <= kMixHeld * kMixThreads) mix_held<NS, NQ>(a, n_embd);
+    else mix_row(a, n_embd);
+}
+
+template <int NS, int NQ>
+__global__ void __launch_bounds__(kMixThreads) ink_mix_kernel(MixArgs a, int n_embd) { mix_any<NS, NQ>(a, n_embd); }
 
 constexpr int kMixJobs = 12;
 struct MixMany {
@@ -234,7 +371,46 @@ struct MixMany {
 };
 
 // blockIdx.y the job
-__global__ void ink_mix_many_kernel(MixMany m, int n_embd) { mix_row(m.j[blockIdx.y], n_embd); }
+template <int NS, int NQ>
+__global__ void __launch_bounds__(kMixThreads) ink_mix_many_kernel(MixMany m, int n_embd) {
+    mix_any<NS, NQ>(m.j[blockIdx.y], n_embd);
+}
+
+// kernel<NS, NQ> for a call's n states and nq queries
+template <template <int, int> class K, class... Args>
+void launch_mix(int n, int nq, dim3 grid, cudaStream_t s, Args... args) {
+    const auto go = [&](auto ns_c) {
+        constexpr int NS = decltype(ns_c)::value;
+        switch (nq) {
+            case 1: K<NS, 1>::launch(grid, s, args...); break;
+            case 2: K<NS, 2>::launch(grid, s, args...); break;
+            case 3: K<NS, 3>::launch(grid, s, args...); break;
+            default: K<NS, 4>::launch(grid, s, args...); break;
+        }
+    };
+    switch (n) {
+        case 1: go(std::integral_constant<int, 1>{}); break;
+        case 2: go(std::integral_constant<int, 2>{}); break;
+        case 3: go(std::integral_constant<int, 3>{}); break;
+        case 4: go(std::integral_constant<int, 4>{}); break;
+        case 5: go(std::integral_constant<int, 5>{}); break;
+        default: go(std::integral_constant<int, 6>{}); break;
+    }
+}
+
+template <int NS, int NQ>
+struct MixOne {
+    static void launch(dim3 grid, cudaStream_t s, const MixArgs& a, int n_embd) {
+        ink_mix_kernel<NS, NQ><<<grid, kMixThreads, 0, s>>>(a, n_embd);
+    }
+};
+
+template <int NS, int NQ>
+struct MixJobs {
+    static void launch(dim3 grid, cudaStream_t s, const MixMany& m, int n_embd) {
+        ink_mix_many_kernel<NS, NQ><<<grid, kMixThreads, 0, s>>>(m, n_embd);
+    }
+};
 
 constexpr int kSet = 3;   // the controllers one launch takes
 
@@ -853,7 +1029,7 @@ void ink_mix_norm(const InkStates& states, const float* query, int n_query, floa
     a.ffn = ffn;
     if ((q8 || ffn) && (rows != 1 || !norm_out || (ffn && (!q8 || !norm_w))))
         throw std::invalid_argument("ink_mix_norm: a quantized norm is one row's");
-    ink_mix_kernel<<<rows, kMixThreads, 0, cs(stream)>>>(a, n_embd);
+    launch_mix<MixOne>(a.n, a.nq, dim3(rows), cs(stream), a, n_embd);
     launched("ink_mix");
 }
 
@@ -870,7 +1046,7 @@ void ink_mix_many(const InkStates& states, const float* const* query, int n_quer
         a.nq = n_query;
         for (int j = 0; j < n_query; ++j) a.out[j] = out[k * n_query + j];
     }
-    ink_mix_many_kernel<<<dim3(1, jobs), kMixThreads, 0, cs(stream)>>>(m, n_embd);
+    launch_mix<MixJobs>(states.n, n_query, dim3(1, jobs), cs(stream), m, n_embd);
     launched("ink_mix_many");
 }
 
