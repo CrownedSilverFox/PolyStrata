@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, 
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens par seconde pendant l'écriture d'une réponse : Qwen3.6-35B-A3B écrit 98 sur un portable à carte 8 Go et 512 sur une RTX 5090"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens par seconde pendant l'écriture d'une réponse : Qwen3.6-35B-A3B écrit 98 sur un portable à carte 8 Go et 536 sur une RTX 5090"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Claude Code dans un terminal à côté de l'API Monitor de PolyStrata"><br>
 <sub>Claude Code avec Qwen3.6-35B-A3B UD-Q3_K_M sur le portable à carte de 8 Go, en temps réel : il ajoute une option <code>--json</code> à un petit programme, écrit un test et lance les tests. Le serveur avait lu le prompt système de Claude Code à son démarrage (<code>"warm_start": true</code>).</sub></p>
@@ -77,19 +77,19 @@ Le tableau donne la taille que l'installeur prend pour chaque modèle, en tokens
 
 | Modèle | Portable avec une carte de 8 Go<br>écrit / lit | RTX 5090<br>écrit / lit | Toutes les tailles |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 87 / 3,955 | 492 / 25,160 | [LFM2.5](docs/models/lfm25.fr.md) |
-| Flint 40B-A2.5B | 66 / 2,648 | 261 / 14,851 | [Flint](docs/models/flint.fr.md) |
-| Qwen3.6-35B-A3B | 98 / 2,445 | 512 / 14,842 | [Qwen3.6](docs/models/qwen36.fr.md) |
-| Clover-35B-A3B-Preview | 77 / 2,266 | 308 / 13,814 | [Clover](docs/models/clover.fr.md) |
-| Ornith 1.5 | 89 / 2,298 | 358 / 14,133 | [Ornith](docs/models/ornith.fr.md) |
-| Gemma 4 26B-A4B | 96 / 2,174 | 363 / 11,478 | [Gemma 4](docs/models/gemma4.fr.md) |
-| Tiel Coder 35B-A3B | 91 / 2,455 | 437 / 15,079 | [Tiel Coder](docs/models/tiel.fr.md) |
-| MiniCPM-V 4.7 35B-A3B | 79 / 2,288 | 331 / 14,305 | [MiniCPM-V](docs/models/minicpmv.fr.md) |
-| Kolibri 1 | 63 / 843 | 207 / 6,009 | [Kolibri 1](docs/models/kolibri.fr.md) |
-| GLM 5.3 Flash | ne tourne pas : il faut une carte de 32 Go | 52 / 855 | [GLM](docs/models/glm.fr.md) |
-| DeepSeek V4 Flash | ne tourne pas : il faut une carte de 32 Go | 50 / 1,895 | [DeepSeek](docs/models/deepseek.fr.md) |
-| Inkling 2 Mini | 56 / 887 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
-| Groot 19B-A3B 261023 | 91 / 2,789 | 450 / 15,204 | [Groot](docs/models/groot.md) |
+| LFM2.5-24B-A2B | 87 / 3,955 | 492 / 25,275 | [LFM2.5](docs/models/lfm25.fr.md) |
+| Flint 40B-A2.5B | 66 / 2,648 | 261 / 15,033 | [Flint](docs/models/flint.fr.md) |
+| Qwen3.6-35B-A3B | 98 / 2,445 | 536 / 15,319 | [Qwen3.6](docs/models/qwen36.fr.md) |
+| Clover-35B-A3B-Preview | 77 / 2,266 | 308 / 13,918 | [Clover](docs/models/clover.fr.md) |
+| Ornith 1.5 | 89 / 2,298 | 366 / 14,438 | [Ornith](docs/models/ornith.fr.md) |
+| Gemma 4 26B-A4B | 96 / 2,174 | 370 / 11,478 | [Gemma 4](docs/models/gemma4.fr.md) |
+| Tiel Coder 35B-A3B | 91 / 2,455 | 440 / 15,109 | [Tiel Coder](docs/models/tiel.fr.md) |
+| MiniCPM-V 4.7 35B-A3B | 79 / 2,288 | 331 / 14,615 | [MiniCPM-V](docs/models/minicpmv.fr.md) |
+| Kolibri 1 | 63 / 843 | 207 / 6,133 | [Kolibri 1](docs/models/kolibri.fr.md) |
+| GLM 5.3 Flash | ne tourne pas : il faut une carte de 32 Go | 52 / 863 | [GLM](docs/models/glm.fr.md) |
+| DeepSeek V4 Flash | ne tourne pas : il faut une carte de 32 Go | 54 / 1,926 | [DeepSeek](docs/models/deepseek.fr.md) |
+| Inkling 2 Mini | 56 / 887 | 196 / 6,706 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | 91 / 2,789 | 458 / 15,634 | [Groot](docs/models/groot.md) |
 | Hy4-Flash | ne tourne pas : il faut 64 Go de RAM | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
 
 Portable : RTX 4070 Laptop (8 Go), Core i7-14700HX, 32 Go de RAM. Station de travail : RTX 5090 (32 Go), Xeon Platinum 8470Q (25 vCPU), 90 à 120 Go de RAM. Flint est en UD-Q3_K_XL sur le portable, la taille que l'installeur prend avec 32 Go de RAM, et en UD-Q4_K_XL sur la station de travail. Kolibri 1 est en Q2_K sur les deux ; sur la station de travail, l'installeur prend Q4_K_M, qui n'a pas été mesuré.
