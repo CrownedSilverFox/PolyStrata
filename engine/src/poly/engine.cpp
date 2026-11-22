@@ -1197,9 +1197,9 @@ void Engine::metal_invalidate_graphs() {
     }
     passes_.clear();
     step_passes_.clear();
-    tail_ = nullptr;
+    tail_ = tail_picks_ = nullptr;
     for (Seq& q : seqs_) {
-        q.heads.clear(); q.passes.clear(); q.tail = nullptr;
+        q.heads.clear(); q.passes.clear(); q.tail = q.tail_picks = nullptr;
     }
     recorded_ = false;
     // Force the next GPU-routed call to upload fresh expert addresses, including indirect dependencies.
@@ -1391,6 +1391,7 @@ void Engine::park_bound() {
     for (size_t il = 0; il < layers_.size(); ++il) q.heads[il] = std::exchange(layers_[il].heads, {});
     q.passes = std::exchange(passes_, {});
     q.tail = std::exchange(tail_, nullptr);
+    q.tail_picks = std::exchange(tail_picks_, nullptr);
     // The fp16 twin of the int8 caches is the sequence's too (Gemma 4's --kv int8).
     q.twin_k = std::exchange(twin_k_, {});
     q.twin_v = std::exchange(twin_v_, {});
@@ -1415,6 +1416,7 @@ void Engine::take_bound(int s) {
     for (size_t il = 0; il < layers_.size() && il < q.heads.size(); ++il) layers_[il].heads = std::exchange(q.heads[il], {});
     passes_ = std::exchange(q.passes, {});
     tail_ = std::exchange(q.tail, nullptr);
+    tail_picks_ = std::exchange(q.tail_picks, nullptr);
     // The fp16 twin of the int8 caches (Gemma 4's --kv int8) comes back with the sequence it belongs to.
     twin_k_ = std::exchange(q.twin_k, {});
     twin_v_ = std::exchange(q.twin_v, {});
@@ -3507,10 +3509,8 @@ void Engine::alloc() {
     const size_t logit_rows = (size_t) std::max(opt_.window, (opt_.batch_mtp ? 2 : 1) * (opt_.batch + 1));
     wlogits_ = (float*) dmalloc(logit_rows * n_vocab_ * sizeof(float), "scratch");
     h_wlogits_ = (float*) hmalloc(logit_rows * n_vocab_ * sizeof(float), "pinned memory");
-    if (opt_.batch > 0) {
-        d_picks_ = (Likeliest*) dmalloc(logit_rows * sizeof(Likeliest), "scratch");
-        h_picks_ = (Likeliest*) hmalloc(logit_rows * sizeof(Likeliest), "pinned memory");
-    }
+    d_picks_ = (Likeliest*) dmalloc(logit_rows * sizeof(Likeliest), "scratch");   // step_picks(), eval_picks()
+    h_picks_ = (Likeliest*) hmalloc(logit_rows * sizeof(Likeliest), "pinned memory");
     alloc_caches();
     cover(1);   // a short conversation's rows, before the expert cache is sized
     // --batch: the other sequences, each with a state and caches of its own (bind())
@@ -7043,6 +7043,8 @@ void Engine::eval(const int32_t* tokens, int n, bool want_logits) {
         return;
     }
     // The model's output: the last token's for the logits, and every token's for the draft block.
+    const bool picks = std::exchange(eval_picks_, false) && want_logits && n == 1 && d_picks_;
+    picks_ = picks;
     if (want_logits || draft_) {
         const bool replay = opt_.graphs && n == 1 && want_logits && !opt_.dump && !prompt_scratch_;
         const int m = draft_ ? n : 1;
@@ -7053,13 +7055,19 @@ void Engine::eval(const int32_t* tokens, int n, bool want_logits) {
             if (!want_logits) return;
             lin(output_, h + (size_t) (m - 1) * n_embd_, logits_, 1);
             finish_logits(logits_, 1);
+            if (picks) {   // the lowest id of the largest score, as most_likely() picks it
+                likeliest(logits_, n_vocab_, d_picks_, st_);
+                ck(cudaMemcpyAsync(h_picks_, d_picks_, sizeof(Likeliest), cudaMemcpyDeviceToHost, cs(st_)), "logits");
+                return;
+            }
             ck(cudaMemcpyAsync(h_logits_, logits_, (size_t) n_vocab_ * sizeof(float), cudaMemcpyDeviceToHost,
                                cs(st_)),
                "logits");
         };
         if (replay) {
-            if (!tail_) tail_ = record(tail);
-            ck(cudaGraphLaunch((cudaGraphExec_t) tail_, cs(st_)), "logits graph");
+            void*& graph = picks ? tail_picks_ : tail_;
+            if (!graph) graph = record(tail);
+            ck(cudaGraphLaunch((cudaGraphExec_t) graph, cs(st_)), "logits graph");
         } else {
             tail();
         }

@@ -106,6 +106,9 @@ struct Sampling {
 // llama.cpp's sampler chain in its default order: penalties, top-k, top-p, min-p, temperature, then the draw.
 class Sampler {
 public:
+    /// pick() is most_likely() of the logits as they are: no temperature and no penalty.
+    static bool greedy(const Sampling& s) { return s.temperature <= 0.f && !penalizes(s); }
+
     int pick(const float* logits, int n_vocab, const Sampling& s, const std::vector<int32_t>& history,
              std::mt19937_64& rng) {
         if (penalizes(s)) {
@@ -368,6 +371,7 @@ struct Session {
     std::mt19937_64 rng{std::random_device{}()};
     const std::vector<int32_t>* follow = nullptr;   // --follow: the answer's tokens, taken in place of the picks
     const float* picked_from = nullptr;             // the logits of the last token picked
+    bool reads_logits = false;                      // something reads picked_from (--top-probs)
     long long asked = 0, reused = 0;   // prompt tokens of every request, and those of them not read again
     // Guesses at the tokens to come, checked a window at a time (Engine::window).  They come from the block some
     // files carry for it (Engine::draft), and from the conversation: when the last tokens repeat an earlier stretch
@@ -540,6 +544,9 @@ struct Session {
             else return r.produced < max_new;
             return false;
         };
+        // a greedy pick that nothing else reads the logits for: a token at a time the card picks it.  Not with a
+        // draft block: Qwen3.6 with its MTP block wrote 0.4% slower after a short prompt (RTX 5090, UD-Q3_K_M).
+        const bool card_picks = Sampler::greedy(s) && !follow && !reads_logits && !engine.drafts();
         if (max_new > 0) {
             int32_t w[strata::spec::DraftPolicy::kMaxT], d[strata::spec::DraftPolicy::kMaxT];
             const int block_window = engine.guesses_at_once() ? most : kBlockWindow;
@@ -573,9 +580,10 @@ struct Session {
                     use = policy.choose(1 + n_d, k, match);
                 }
                 if (use.t == 1) {
+                    if (card_picks) engine.eval_picks();
                     engine.eval(&t, 1, true);
                     kept.read(&t, 1);
-                    t = pick(engine.logits());
+                    t = card_picks ? engine.picked(0) : pick(engine.logits());
                     policy.observe(false, 1, 0, 0, count(1, 1));
                     continue;
                 }
@@ -1464,6 +1472,7 @@ int once(Session& ss, const std::vector<int32_t>& ids, const Pictures& pictures,
          const Sampling& s, int top_probs) {
     std::atomic<bool> stop{false};
     std::string out;
+    ss.reads_logits = top_probs > 0;
     const Session::Result r = ss.generate(
         ids, pictures, pad, -1, max_new, s, stop,
         [&](int32_t t) {

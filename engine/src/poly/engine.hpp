@@ -339,6 +339,9 @@ public:
     /// a step() takes it back.  picked() is the token either way.
     void step_picks() { step_picks_ = !next_; }
     int32_t picked(int i) const;
+    /// The same for the next eval() of one token with its logits: picked(0) is its most likely token, and logits()
+    /// are not copied to the host (Inkling 2's 201,024 scores are 0.8 MB to copy and to search a token).
+    void eval_picks() { eval_picks_ = !next_; }
     void keep(int n);
 
     /// Some files carry a block that guesses ahead: one layer that takes a token and the model's output for the
@@ -872,6 +875,7 @@ protected:
     /// step()'s layers and logits recorded as one: by its rows, each row's sequence, guess and head_key()s
     std::map<std::vector<int>, void*> step_passes_;
     void* tail_ = nullptr;        ///< one token's launches from the last layer to the logits, recorded
+    void* tail_picks_ = nullptr;  ///< the same, the most likely token in place of the logits (eval_picks())
     // A recorded launch cannot be given the position as an argument: it reads it here when it runs.  eval() writes
     // the token's place in the sequence and its rotary position before it replays the layers.
     long long* at_ = nullptr;     ///< on the card: {pos(), turn(pos())}, and the same for a window's later tokens
@@ -967,6 +971,7 @@ protected:
         std::vector<std::vector<void*>> heads;   ///< Layer::heads, by layer
         std::map<std::vector<int>, void*> passes;
         void* tail = nullptr;
+        void* tail_picks = nullptr;
         // A sequence's own fp16 twin of its int8 caches (Gemma 4's --kv int8), and the halves of it that have
         // VRAM behind them.  The twin is a sequence's: a batch gives every row its own sequence, and the twin is
         // where that sequence's prompt batch reads, so the twin belongs with the sequence's other members.
@@ -1015,6 +1020,7 @@ protected:
     Likeliest* h_guesses_ = nullptr;    ///< draft_many()'s guesses, pinned
     Likeliest *d_picks_ = nullptr, *h_picks_ = nullptr;   ///< step_picks()'s, on the card and pinned
     bool step_picks_ = false, picks_ = false;            ///< asked for the next step(); what the last one left
+    bool eval_picks_ = false;                            ///< asked for the next eval()
     void draft_rows_of(const Row* rows, const int32_t* tokens, int n, Likeliest* out);
     std::vector<int> step_seqs_, step_rows_;   ///< the sequences of the step, and how many rows each had
     std::vector<int32_t> step_tok_;            ///< each sequence's token and guess, two places a sequence
