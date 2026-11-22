@@ -139,8 +139,10 @@ The strata-poly engine reads NVFP4 GGUFs, llama.cpp's NVFP4 type, including file
 checkpoints that keep a global scale beside each matrix. Setup doesn't offer one yet. On an RTX PRO 6000, Qwen3.6's
 NVFP4 file ran about as fast as UD-Q4_K_M with the whole model in VRAM, and nobody has measured its quality next to
 the Unsloth files. To try one, give strata-poly its path with `--model`. On an RTX 50 card,
-`STRATA_PREFILL_NVFP4=w4a4` reads the prompt on the FP4 tensor cores: 10% faster on LFM2.5, no faster on Qwen3.6, and
-further from the exact result, so it is off by default. The numbers are in [NVFP4.md](NVFP4.md).
+`STRATA_PREFILL_NVFP4=w4a4x2` reads a prompt's NVFP4 matrices on the FP4 tensor cores, with the activations as two FP4
+terms: Inkling 2 Mini read prompts 1.5 to 1.7 times as fast on an RTX 5090, but its greedy answers part from the
+default's after a few dozen tokens, so it is off by default ([inkling.md](models/inkling.md)). The older `w4a4` mode
+is only in an engine built with `-DSTRATA_POLY_MMQ=ON`; its numbers are in [NVFP4.md](NVFP4.md).
 
 For GLM, NVFP4 would make the model around 204 GB, which doesn't fit in RAM on a normal PC; the 2- and 3-bit GGUFs
 (79 to 114 GB) are what lets the experts stay in RAM.
