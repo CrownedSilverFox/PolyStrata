@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -92,15 +91,12 @@ void Inkling2::load_geometry() {
     joined_scales_ = true;
     clamp_exp_.assign((size_t) n_layer_ + 1, INFINITY);
     clamp_shexp_ = clamp_exp_;
-    // STRATA_INK_ATTN=q4_0, q5_0 or iq4_nl: the attention's six matrices quantized again to that type at load
-    // (kGuessMat), fewer bytes a token than their Q8_0
-    if (const char* v = std::getenv("STRATA_INK_ATTN")) {
-        const std::string a = v;
-        attn_type_ = a == "q4_0" ? 2 : a == "q5_0" ? 6 : a == "iq4_nl" ? 20 : 0;
-        if (attn_type_) guess_type_ = attn_type_;
-    }
-    // STRATA_INK_CTRL=bf16: the loop controllers' matrices as BF16, half the bytes of their F32
-    if (const char* v = std::getenv("STRATA_INK_CTRL")) ctrl_bf16_ = std::string(v) == "bf16";
+    // --attn-requant: the attention's six matrices quantized again to that type at load (kGuessMat), fewer bytes a
+    // token than their Q8_0.  --loop-bf16: the loop controllers' matrices as BF16, half the bytes of their F32.
+    const std::string& a = opt_.attn_requant;
+    attn_type_ = a == "q4_0" ? 2 : a == "q5_0" ? 6 : a == "iq4_nl" ? 20 : 0;
+    if (attn_type_) guess_type_ = attn_type_;
+    ctrl_bf16_ = opt_.loop_bf16;
 
     const MetaValue* pattern = find("attention.sliding_window_pattern");
     need(pattern && pattern->type == MetaType::ARRAY && (int) pattern->items.size() >= n_layer_,
@@ -784,7 +780,7 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
 // with nothing launched, where control() does it: a prompt batch, or matrices gemv_set() does not take.
 bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n) {
     if (n >= kStageRows) return false;
-    const bool bf = c[0].down.type == kTypeBF16;   // STRATA_INK_CTRL=bf16: a token's only, control() the others
+    const bool bf = c[0].down.type == kTypeBF16;   // --loop-bf16: a token's only, control() the others
     if (bf && !(n == 1 && rank_ < 128)) return false;
     for (int j = 0; j < 3; ++j)
         for (const Dev* d : {&c[j].down, &c[j].gain, &c[j].forget})

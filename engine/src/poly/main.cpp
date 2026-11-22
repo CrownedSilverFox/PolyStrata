@@ -1712,6 +1712,10 @@ void usage() {
                  "                         little (default 0 = none is; setup gives Qwen3.6 6)\n"
                  "  --route-top N          a token's experts from place N+1 on are left out, in VRAM or not, where\n"
                  "                         the host routes (default 0 = none is)\n"
+                 "  --attn-requant TYPE    Inkling 2: its attention's matrices quantized again to TYPE (q5_0, q4_0\n"
+                 "                         or iq4_nl) at load: fewer bytes a token, and the answers move a little\n"
+                 "                         (default: the file's types; setup gives an 8 GB card q5_0)\n"
+                 "  --loop-bf16            Inkling 2: its loop controllers' matrices in BF16, not F32\n"
                  "  --skip-weight F        in place of --tail-skip: an expert outside VRAM that every token of a\n"
                  "                         window weighs under F of its experts' weight is left out (default 0 = off)\n"
                  "  --cache-bias F         qwen35moe: a token's router scores get F added for each expert in VRAM\n"
@@ -1836,6 +1840,8 @@ int main(int argc, char** argv) {
         else if (a == "--ram-experts-mib") o.ram_experts_mib = std::atoll(val());
         else if (a == "--tail-skip") o.tail_skip = std::atoi(val());
         else if (a == "--route-top") o.route_top = std::atoi(val());
+        else if (a == "--attn-requant") o.attn_requant = val();
+        else if (a == "--loop-bf16") o.loop_bf16 = true;
         else if (a == "--skip-weight") o.skip_weight = (float) std::atof(val());
         else if (a == "--cache-bias") o.cache_bias = (float) std::atof(val());
         else if (a == "--layer-split") o.layer_split = val();

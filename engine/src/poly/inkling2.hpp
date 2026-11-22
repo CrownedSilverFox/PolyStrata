@@ -141,8 +141,8 @@ private:
     int n_unpadded_ = 0;
     float qk_clip_ = 0, rel_clip_ = 0, log_alpha_ = 0, log_floor_ = 1, softcap_ = 0;
     float w_scale_ = 0;
-    uint32_t attn_type_ = 0;   ///< STRATA_INK_ATTN's type for the attention's matrices; 0: the file's
-    bool ctrl_bf16_ = false;   ///< STRATA_INK_CTRL=bf16: the loop controllers' matrices in BF16
+    uint32_t attn_type_ = 0;   ///< --attn-requant's type for the attention's matrices; 0: the file's
+    bool ctrl_bf16_ = false;   ///< --loop-bf16: the loop controllers' matrices in BF16
     int pass_ = 0;   ///< the core's pass the call under way is in
     // The DSpark drafter (--draft-model, a file of architecture dflash): three dense layers over a block of the
     // anchor token and mask rows, reading keys and values made from four of the target's features of every position

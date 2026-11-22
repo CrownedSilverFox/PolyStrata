@@ -50,7 +50,7 @@ __device__ __forceinline__ float warp_max(float x) {
     return x;
 }
 
-// A controller's weight: F32, or BF16 (STRATA_INK_CTRL=bf16) widened as bf16_to_f32() does it.
+// A controller's weight: F32, or BF16 (--loop-bf16) widened as bf16_to_f32() does it.
 __device__ __forceinline__ float wval(const float* w, size_t i) { return w[i]; }
 __device__ __forceinline__ float wval(const uint16_t* w, size_t i) { return __uint_as_float(uint32_t(w[i]) << 16); }
 

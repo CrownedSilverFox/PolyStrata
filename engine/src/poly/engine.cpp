@@ -1874,6 +1874,10 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     // moe() weighs the picks as a softmax of their scores, which is how only this architecture's router does
     if (o.cache_bias > 0.f && !qwen35)
         throw std::runtime_error("--cache-bias is supported for qwen35moe models; this is a '" + name + "' model");
+    if ((!o.attn_requant.empty() || o.loop_bf16) && name != "inkling2_loop")
+        throw std::runtime_error("--attn-requant and --loop-bf16 are Inkling 2's; this is a '" + name + "' model");
+    if (!o.attn_requant.empty() && o.attn_requant != "q4_0" && o.attn_requant != "q5_0" && o.attn_requant != "iq4_nl")
+        throw std::runtime_error("--attn-requant takes q4_0, q5_0 or iq4_nl");
     const auto make = [&]() -> std::unique_ptr<Engine> {
         if (name == "glm5-next" || name == "glm5next") return std::make_unique<Glm5Next>();   // Unsloth: no hyphen
         if (qwen35) return std::make_unique<Qwen35>();

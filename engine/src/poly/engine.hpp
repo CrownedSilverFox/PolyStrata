@@ -127,6 +127,9 @@ struct Options {
     float skip_weight = 0;        ///< in place of tail_skip: a routed expert outside VRAM whose router weight is under
                                   ///< this share of its token's experts' weight, for every token of the call, is left
                                   ///< out (--skip-weight); 0: tail_skip decides
+    std::string attn_requant;     ///< Inkling 2: its attention's six matrices quantized again to this type at load
+                                  ///< (q4_0, q5_0 or iq4_nl; --attn-requant); empty: the file's types
+    bool loop_bf16 = false;       ///< Inkling 2: its loop controllers' matrices in BF16, not the file's F32 (--loop-bf16)
     float cache_bias = 0;         ///< a token's few-at-a-time routing adds this to the score of each expert in VRAM
                                   ///< before it picks its experts; their weights stay the softmax of the scores the
                                   ///< router gave (--cache-bias, qwen35moe only); 0: the router's own picks
@@ -620,8 +623,8 @@ protected:
     void hand_on(int64_t pos, int n, float* h);
     float* pass_rows(int n);
     /// kGuessMat: quantized again to guess_type_ (Q4_0, Q5_0 or IQ4_NL), for a matrix only guesses are made with: a
-    /// guess is checked, so a less exact one costs a wrong guess now and then and no token.  (Inkling 2 also reads
-    /// its attention's matrices so on a small card: inkling2.cpp.)
+    /// guess is checked, so a less exact one costs a wrong guess now and then and no token.  (Inkling 2 reads its
+    /// attention's matrices so with --attn-requant: inkling2.cpp.)
     enum Want { kF32, kFloatMat, kAnyMat, kGuessMat };
     uint32_t guess_type_ = 2;   ///< kTypeQ4_0
     Dev upload(const TensorInfo* t, const std::string& name, int64_t n_in, int64_t n_out, Want want,

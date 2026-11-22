@@ -46,7 +46,7 @@ void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* c
                       int rows, void* stream);
 /// ink_cat_norm_set() and then gemv_set() of each pair with its controller's F32 down matrix (rank outputs of
 /// 2 * n_embd values) into ch[j], in one launch with the same bits.  False, with nothing launched, where gemv_set()
-/// would run another block.  With bf16 the matrices are BF16 (STRATA_INK_CTRL=bf16).
+/// would run another block.  With bf16 the matrices are BF16 (--loop-bf16).
 bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
                    int count, int n_embd, int rank, int rows, void* stream, bool bf16 = false);
 
