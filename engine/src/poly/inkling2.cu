@@ -89,6 +89,35 @@ __device__ __forceinline__ void add_rms_q8(const float* x, const float* __restri
     }
 }
 
+constexpr int kNormHeld = 4;   // the values a thread of a norm keeps: sum_threads() gives it at most 4 below 4,096
+
+// add_rms_q8() of the H values a thread holds (value h is the row's threadIdx.x + h * blockDim.x), the same arithmetic
+template <int H>
+__device__ __forceinline__ void add_rms_q8_held(const float (&v)[H], const float* __restrict__ w, float* y, QB* q,
+                                                int n, float eps, float* part) {
+    const int tid = threadIdx.x;
+    float ss = 0.0f;
+#pragma unroll
+    for (int h = 0; h < H; ++h)
+        if (tid + h * int(blockDim.x) < n) ss = __fmaf_rn(v[h], v[h], ss);
+    ss = warp_sum(ss);
+    if ((tid & 31) == 0) part[tid >> 5] = ss;
+    __syncthreads();
+    float sum = 0.0f;
+    for (int k = 0; k < int(blockDim.x) / WARP; ++k) sum = __fadd_rn(sum, part[k]);
+    __syncthreads();
+    const float scale = __fdiv_rn(1.0f, __fsqrt_rn(__fadd_rn(__fdiv_rn(sum, float(n)), eps)));
+#pragma unroll
+    for (int h = 0; h < H; ++h) {
+        const int i = tid + h * int(blockDim.x);
+        if (i < n) {
+            const float xi = __fmul_rn(__fmul_rn(v[h], scale), w[i]);
+            y[i] = xi;
+            q8_put(q, i, xi);
+        }
+    }
+}
+
 // The block's sum of x, the same in every thread: the warps' sums added in their order.  blockDim.x is a multiple
 // of 32, and `part` has a float a warp.
 __device__ __forceinline__ float block_sum(float x, float* part) {
@@ -994,6 +1023,30 @@ __global__ void ink_norm_many_q8_kernel(NormMany m, int n, float eps) {
     const float* xr = m.x[blockIdx.y];
     const float* __restrict__ w = m.w[blockIdx.y];
     float* yr = m.y[blockIdx.y];
+    if (n <= kNormHeld * int(blockDim.x)) {   // the values read once and kept for the norm
+        float v[kNormHeld];
+        float ss = 0.0f;
+#pragma unroll
+        for (int h = 0; h < kNormHeld; ++h) {
+            const int i = threadIdx.x + h * blockDim.x;
+            if (i < n) {
+                v[h] = xr[i];
+                ss += v[h] * v[h];
+            }
+        }
+        ss = block_sum(ss, part);
+        const float scale = 1.0f / sqrtf(ss / float(n) + eps);
+#pragma unroll
+        for (int h = 0; h < kNormHeld; ++h) {
+            const int i = threadIdx.x + h * blockDim.x;
+            if (i < n) {
+                const float y = w ? v[h] * scale * w[i] : v[h] * scale;
+                yr[i] = y;
+                q8_put(m.q[blockIdx.y], i, y);
+            }
+        }
+        return;
+    }
     float ss = 0.0f;
     for (int i = threadIdx.x; i < n; i += blockDim.x) ss += xr[i] * xr[i];
     ss = block_sum(ss, part);
@@ -1012,6 +1065,20 @@ __global__ void ink_gate_norm_q8_kernel(const float* cur, const float* msg, cons
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
     __shared__ float part[32];
+    if (n <= kNormHeld * int(blockDim.x)) {   // the gated values kept for the norm
+        float o[kNormHeld];
+#pragma unroll
+        for (int h = 0; h < kNormHeld; ++h) {
+            const int i = threadIdx.x + h * blockDim.x;
+            if (i < n) {
+                const float c = cur[i];
+                o[h] = c - tanhf(forget[i]) * c + tanhf(gain[i]) * msg[i];
+                out[i] = o[h];
+            }
+        }
+        add_rms_q8_held(o, w, y, q, n, eps, part);
+        return;
+    }
     for (int i = threadIdx.x; i < n; i += blockDim.x) {
         const float c = cur[i];
         out[i] = c - tanhf(forget[i]) * c + tanhf(gain[i]) * msg[i];
