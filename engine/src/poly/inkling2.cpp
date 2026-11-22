@@ -785,8 +785,8 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
 #else
     constexpr bool kOneType = true;
 #endif
-#if !defined(STRATA_GPU_METAL)
-    // one launch of several types: a token's, on CUDA (native_mmvq_mixed() takes no other)
+#if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+    // one launch of several types: a token's, on CUDA (native_mmvq_mixed() takes no other; HIP keeps its launches)
     static const bool mixed_on = [] {
         const char* v = std::getenv("STRATA_INK_PROJECT_MIXED");
         return v == nullptr || v[0] != '0';
