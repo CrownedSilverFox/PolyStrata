@@ -34,6 +34,22 @@ The two start with the same tokens. For UD-Q4_K_XL the first 13 after the short 
 long one are the same, and they part at a step whose two leading candidates are nearly as likely (0.35 against 0.34,
 and 0.028 against 0.028). For UD-Q3_K_XL the first 13 and the first 40 are the same.
 
+`STRATA_PREFILL_NVFP4=w4a4x2` made the RTX 5090 above read a prompt 1.5 to 1.7 times as fast. Both sizes keep
+most of their experts in NVFP4, and the setting multiplies those on the FP4 tensor cores of an RTX 50 card, with the
+prompt's numbers rounded to about 8 bits instead of 11. It is off because it changes the answers: on five prompts of
+49 to 10,081 tokens, nine of the ten answers parted from the default ones after 6 to 30 tokens (the tenth kept all
+256), each at a step whose two likeliest tokens were close. A card that holds only part of the experts was not
+measured. Three runs each, 32 tokens written after the prompt:
+
+| Size | Prompt | Default | With `w4a4x2` |
+| --- | ---: | ---: | ---: |
+| **UD-Q4_K_XL** | 2,664 tokens | 2,450-2,490 tokens/s | 3,800-3,840 tokens/s |
+| | 10,081 tokens | 3,200-3,220 tokens/s | 5,390-5,410 tokens/s |
+| | 20,162 tokens | 3,250-3,260 tokens/s | 5,500-5,510 tokens/s |
+| **UD-Q3_K_XL** | 2,664 tokens | 2,570-2,600 tokens/s | 3,750-3,880 tokens/s |
+| | 10,081 tokens | 3,340-3,360 tokens/s | 5,360-5,400 tokens/s |
+| | 20,162 tokens | 3,390-3,400 tokens/s | 5,480-5,510 tokens/s |
+
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,075 of
 its 3,072 experts on the card and the rest are computed on the CPU. Three runs of the README's benchmark:
 
