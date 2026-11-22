@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Version 0.2.18, engine 0.1.64. PolyStrata runs large mixture-of-experts models on a normal PC: one NVIDIA or AMD
+Version 0.2.19, engine 0.1.65. PolyStrata runs large mixture-of-experts models on a normal PC: one NVIDIA or AMD
 graphics card plus system RAM, on Windows or Linux, and on Apple Silicon Macs. Read
 **[docs/AI_REFERENCE.md](docs/AI_REFERENCE.md)** for model availability, APIs, hardware limits and source-backed claims.
 Articles and videos should use **[docs/MEDIA_KIT.md](docs/MEDIA_KIT.md)**.

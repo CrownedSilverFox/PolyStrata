@@ -316,7 +316,8 @@ def literal_tags(controls) -> dict[str, str]:
     written inside a message - a file an agent reads, a pasted chat template - opened or ended a turn there.  Longest
     first, as the tokenizer matches them: a literal inside a longer one is not marked before it."""
     tags = {**LITERAL_TAGS, **{c: chr(CONTROL_MARK0 + k) for k, c in enumerate(c for c in controls
-                                                                                if c not in LITERAL_TAGS)}}
+                                                                                if c not in LITERAL_TAGS)
+                               if CONTROL_MARK0 + k < 0x10FFFE}}
     return dict(sorted(tags.items(), key=lambda t: -len(t[0])))
 
 

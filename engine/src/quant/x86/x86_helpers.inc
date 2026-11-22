@@ -53,7 +53,8 @@ static inline __m256i mul_add_epi8(const __m256i x, const __m256i y) {
     return _mm256_maddubs_epi16(ax, sy);
 }
 
-// Strata: madd(mul_add_epi8(x, y), 1), x times y summed in fours as int32, for the 4-bit grid formats (IQ4_NL, MXFP4, NVFP4).
+// Strata: madd(mul_add_epi8(x, y), 1), x times y summed in fours as int32, for the 4-bit grid formats IQ4_NL and MXFP4 (NVFP4 takes
+// ggml's mul_sum_i8_pairs_float since Strata 0.2.19, which gives the same sums).
 // Under AVX-VNNI one VPDPBUSD gives the same sums: after the sign trick |x| <= 128, so maddubs's pairs never saturate.
 static inline __m256i mul_sum_i8_quads(const __m256i x, const __m256i y) {
 #if defined(__AVXVNNI__) && !defined(__AVX512VNNI__)

@@ -1560,6 +1560,14 @@ def _urlopen(req, timeout=None):
     (strata_control/acquisition.py), only an explicit setup, update or install does."""
     acquisition.require("a download")
     try:
+        from strata_control import transfer as _tr
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        auth = _tr.hf_auth_headers(url)
+        if auth and isinstance(req, urllib.request.Request) and not req.has_header("Authorization"):
+            req.add_unredirected_header("Authorization", auth["Authorization"])
+    except Exception:                                  # noqa: BLE001 - optional HF_TOKEN helper never breaks a public download
+        pass
+    try:
         # strata_control/netpolicy.py: `timeout` bounds the connection phase (lookup, connect, TLS, the answer's headers); a read after
         # the answer that gets no byte for netpolicy.STALL_S ends the connection
         return netpolicy.urlopen(req, timeout=timeout)
@@ -5018,16 +5026,12 @@ ROCM_WIN_VERSION_OVERRIDE = os.environ.get("STRATA_ROCM_WIN_VERSION") or \
 ROCM_WIN_VERSION = ROCM_WIN_VERSION_OVERRIDE or ROCM_WIN_VERSION_DEFAULT
 ROCM_WIN_INDEX = "https://nightly.repo.amd.com/rocm/whl-next/"
 ROCM_WIN_VENV = ".rocm-win"
-# STRATA_EXPERIMENTAL_GFX1103=1 (opt-in, unsupported): the Radeon 780M / 760M / 740M iGPU (Ryzen 7040 / 8040, gfx1103) is taken
-# as a unified-memory AMD card like Strix Halo, with the native dot4 and gfx11 WMMA kernels, the gfx1103 exact speed switches
-# and a hipBLASLt table when one matches (measured on one machine: Ryzen 7 8745HS).  Unset: unchanged.
-GFX1103_OPT_IN = os.environ.get("STRATA_EXPERIMENTAL_GFX1103") == "1"
-# STRATA_EXPERIMENTAL_GFX1150=1 (opt-in, unvalidated): the Radeon 890M / 880M iGPU (Ryzen AI 300, Strix Point, gfx1150)
-# is taken as a unified-memory AMD card like Strix Halo.  The engine builds and runs for gfx1150 from 0.1.40.2 (#1217;
-# tools/hip/gfx1150-hipblaslt-100401.txt is calibrated on it), but no release ships a ready-made Windows engine for it:
-# build one with `STRATA_HIP_ARCHS=gfx1150 tools\hip\build_windows.bat` and start setup with `--prebuilt dist\`.
-# Unset: unchanged.
-GFX1150_OPT_IN = os.environ.get("STRATA_EXPERIMENTAL_GFX1150") == "1"
+# Radeon 780M / 760M / 740M iGPU (Ryzen 7040 / 8040, Phoenix / Hawk Point, gfx1103): first-class UMA AMD GPU by default
+# (STRATA_EXPERIMENTAL_GFX1103=0 disables). Uses native dot4 + Wave32 WMMA + coherent UMA GTT allocation + <=1.0s guards.
+GFX1103_OPT_IN = os.environ.get("STRATA_EXPERIMENTAL_GFX1103", "1") != "0"
+# Radeon 890M / 880M iGPU (Ryzen AI 300, Strix Point, gfx1150): first-class UMA AMD GPU by default
+# (STRATA_EXPERIMENTAL_GFX1150=0 disables). Uses Wave32 WMMA + coherent UMA GTT allocation + gfx1150 hipBLASLt table.
+GFX1150_OPT_IN = os.environ.get("STRATA_EXPERIMENTAL_GFX1150", "1") != "0"
 # STRATA_EXPERIMENTAL_GFX1012=1 (opt-in, unvalidated beyond one card): Navi 14 (RDNA1, gfx1012: RX 5500 XT, Radeon Pro
 # 5500M), with its native v_dot4_i32_i8 (include/strata/hip_compat/intrinsics.hpp).  On Windows strata-poly is compiled
 # here as for gfx1010 (the whl-next index has a gfx1012 device wheel).  docs/RADEON_PRO_5500M.md.  Unset: unchanged.
@@ -11444,8 +11448,8 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
         download(fam["hf"] + gguf.name, gguf)
         verify_sha256(gguf, *fam["sha256"][published], own=bool(a.gguf_dir))
     ok(f"model file: {gguf}")
-    mmproj = folder / fam["mmproj"]
-    if vision != "none":                               # the image encoder: Unsloth's mmproj, pinned, size + SHA-256 checked
+    if vision != "none" and fam.get("mmproj"):         # the image encoder: Unsloth's mmproj, pinned, size + SHA-256 checked
+        mmproj = folder / fam["mmproj"]
         if _sg and not mmproj.is_file():
             cands = list(folder.glob("*mmproj*"))     # user-supplied: accept any file with "mmproj" in the name
             if len(cands) == 1:

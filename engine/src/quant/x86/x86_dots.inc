@@ -619,9 +619,8 @@ void dot_nvfp4_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT
         const __m256i q4_01 = MM256_SET_M128I(_mm_unpackhi_epi64(q4_01_lo,q4_01_hi), _mm_unpacklo_epi64(q4_01_lo,q4_01_hi));
         const __m256i q4_23 = MM256_SET_M128I(_mm_unpackhi_epi64(q4_23_lo,q4_23_hi),_mm_unpacklo_epi64(q4_23_lo,q4_23_hi));
 
-        const __m256i p_1 = mul_sum_i8_quads(q4_01,q8_01);
-
-        const __m256i p_2 = mul_sum_i8_quads(q4_23,q8_23);
+        const __m256 p_1 = mul_sum_i8_pairs_float(q4_01, q8_01);
+        const __m256 p_2 = mul_sum_i8_pairs_float(q4_23, q8_23);
 
         const float dy0 = h2f(y[2*ib].d);
         const float dy1 = h2f(y[2*ib+1].d);
@@ -634,8 +633,8 @@ void dot_nvfp4_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT
         const __m256 scales01 = _mm256_set_m128(_mm_set1_ps(s1), _mm_set1_ps(s0));
         const __m256 scales23 = _mm256_set_m128(_mm_set1_ps(s3), _mm_set1_ps(s2));
 
-        accum = _mm256_fmadd_ps(scales01, _mm256_cvtepi32_ps(p_1), accum);
-        accum = _mm256_fmadd_ps(scales23, _mm256_cvtepi32_ps(p_2), accum);
+        accum = _mm256_fmadd_ps(scales01, p_1, accum);
+        accum = _mm256_fmadd_ps(scales23, p_2, accum);
     }
     sumf = hsum_float_8(accum);
 

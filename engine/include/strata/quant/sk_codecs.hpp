@@ -65,7 +65,7 @@ void gemm_sk_q8_1(
     size_t ncols,
     size_t m) noexcept;
 
-// Runtime ISA name ("avx512-vnni", "avx2", or "scalar")
+// Runtime ISA name ("avx512-vnni", "avx2", "neon-dotprod", or "scalar")
 const char* active_sk_isa() noexcept;
 
 }  // namespace strata::quant::sk

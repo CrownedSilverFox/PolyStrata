@@ -534,66 +534,68 @@ void gemm_sk_q8_1(
     const size_t row_bytes = n_sb * sb_b;
     const size_t x_stride = ncols / SUB_G;
 
-    // Decode each weight row once and dot against all m tokens (2x-8x weight reuse!)
-    for (size_t r = 0; r < nrows; ++r) {
-        const uint8_t* row = weights + r * row_bytes;
-        if (m == 1) {
-            out[r] = dot_sk_q8_1_row(row, code, xs, ncols);
-            continue;
-        }
-        float acc[16]{};
-        const size_t m_cap = std::min<size_t>(m, 16);
-        for (size_t s = 0; s < n_sb; ++s) {
-            const uint8_t* blk = row + s * sb_b;
-            uint16_t d_bits;
-            std::memcpy(&d_bits, blk, 2);
-            const float D = fp16_to_fp32(d_bits);
-            const uint8_t* u = blk + 2;
-            const uint8_t* pl = blk + 6;
+    // Decode each weight row once and dot against all m tokens (2x-16x weight reuse; tiled for m > 16)
+    for (size_t t0 = 0; t0 < m; t0 += 16) {
+        const size_t m_tile = std::min<size_t>(16, m - t0);
+        for (size_t r = 0; r < nrows; ++r) {
+            const uint8_t* row = weights + r * row_bytes;
+            if (m_tile == 1) {
+                out[t0 * nrows + r] = dot_sk_q8_1_row(row, code, xs + t0 * x_stride, ncols);
+                continue;
+            }
+            float acc[16]{};
+            for (size_t s = 0; s < n_sb; ++s) {
+                const uint8_t* blk = row + s * sb_b;
+                uint16_t d_bits;
+                std::memcpy(&d_bits, blk, 2);
+                const float D = fp16_to_fp32(d_bits);
+                const uint8_t* u = blk + 2;
+                const uint8_t* pl = blk + 6;
 
-            if (code == SkCode::S8_K) {
-                const int8_t* q = reinterpret_cast<const int8_t*>(pl);
-                for (int g = 0; g < NUM_SUB; ++g) {
-                    const float eff = D * (static_cast<float>(u[g]) / 255.0f);
-                    for (size_t t = 0; t < m_cap; ++t) {
-                        const auto& xb = xs[t * x_stride + s * NUM_SUB + g];
-                        acc[t] += eff * xb.d * static_cast<float>(dot_i8_i8_64(q + g * SUB_G, xb.qs));
+                if (code == SkCode::S8_K) {
+                    const int8_t* q = reinterpret_cast<const int8_t*>(pl);
+                    for (int g = 0; g < NUM_SUB; ++g) {
+                        const float eff = D * (static_cast<float>(u[g]) / 255.0f);
+                        for (size_t t = 0; t < m_tile; ++t) {
+                            const auto& xb = xs[(t0 + t) * x_stride + s * NUM_SUB + g];
+                            acc[t] += eff * xb.d * static_cast<float>(dot_i8_i8_64(q + g * SUB_G, xb.qs));
+                        }
                     }
-                }
-            } else if (code == SkCode::S1_5 || code == SkCode::S1_25) {
-                alignas(64) int8_t q[256];
-                float fine[4] = {1.f, 1.f, 1.f, 1.f};
-                if (code == SkCode::S1_5) unpack_s15_sb(pl, q);
-                else unpack_s125_sb(pl, q, fine);
-                for (int g = 0; g < NUM_SUB; ++g) {
-                    const float eff = D * (static_cast<float>(u[g]) / 255.0f) * fine[g];
-                    for (size_t t = 0; t < m_cap; ++t) {
-                        const auto& xb = xs[t * x_stride + s * NUM_SUB + g];
-                        acc[t] += eff * xb.d * static_cast<float>(dot_i8_i8_64(q + g * SUB_G, xb.qs));
+                } else if (code == SkCode::S1_5 || code == SkCode::S1_25) {
+                    alignas(64) int8_t q[256];
+                    float fine[4] = {1.f, 1.f, 1.f, 1.f};
+                    if (code == SkCode::S1_5) unpack_s15_sb(pl, q);
+                    else unpack_s125_sb(pl, q, fine);
+                    for (int g = 0; g < NUM_SUB; ++g) {
+                        const float eff = D * (static_cast<float>(u[g]) / 255.0f) * fine[g];
+                        for (size_t t = 0; t < m_tile; ++t) {
+                            const auto& xb = xs[(t0 + t) * x_stride + s * NUM_SUB + g];
+                            acc[t] += eff * xb.d * static_cast<float>(dot_i8_i8_64(q + g * SUB_G, xb.qs));
+                        }
                     }
-                }
-            } else {
-                alignas(64) uint8_t q[256];
-                float half = 0.0f;
-                switch (code) {
-                    case SkCode::S2_K: unpack_s2k_sb(pl, q); half = 1.5f;  break;
-                    case SkCode::S3_K: unpack_s3k_sb(pl, q); half = 3.5f;  break;
-                    case SkCode::S4_K: unpack_s4k_sb(pl, q); half = 7.5f;  break;
-                    case SkCode::S5_K: unpack_s5k_sb(pl, q); half = 15.5f; break;
-                    case SkCode::S6_K: unpack_s6k_sb(pl, q); half = 31.5f; break;
-                    default: break;
-                }
-                for (int g = 0; g < NUM_SUB; ++g) {
-                    const float eff = D * (static_cast<float>(u[g]) / 255.0f);
-                    for (size_t t = 0; t < m_cap; ++t) {
-                        const auto& xb = xs[t * x_stride + s * NUM_SUB + g];
-                        const int32_t isum = dot_u8_i8_64(q + g * SUB_G, xb.qs);
-                        acc[t] += eff * (xb.d * static_cast<float>(isum) - half * xb.s);
+                } else {
+                    alignas(64) uint8_t q[256];
+                    float half = 0.0f;
+                    switch (code) {
+                        case SkCode::S2_K: unpack_s2k_sb(pl, q); half = 1.5f;  break;
+                        case SkCode::S3_K: unpack_s3k_sb(pl, q); half = 3.5f;  break;
+                        case SkCode::S4_K: unpack_s4k_sb(pl, q); half = 7.5f;  break;
+                        case SkCode::S5_K: unpack_s5k_sb(pl, q); half = 15.5f; break;
+                        case SkCode::S6_K: unpack_s6k_sb(pl, q); half = 31.5f; break;
+                        default: break;
+                    }
+                    for (int g = 0; g < NUM_SUB; ++g) {
+                        const float eff = D * (static_cast<float>(u[g]) / 255.0f);
+                        for (size_t t = 0; t < m_tile; ++t) {
+                            const auto& xb = xs[(t0 + t) * x_stride + s * NUM_SUB + g];
+                            const int32_t isum = dot_u8_i8_64(q + g * SUB_G, xb.qs);
+                            acc[t] += eff * (xb.d * static_cast<float>(isum) - half * xb.s);
+                        }
                     }
                 }
             }
+            for (size_t t = 0; t < m_tile; ++t) out[(t0 + t) * nrows + r] = acc[t];
         }
-        for (size_t t = 0; t < m_cap; ++t) out[t * nrows + r] = acc[t];
     }
 }
 
