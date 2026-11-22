@@ -1,6 +1,6 @@
 # PolyStrata reference for AI tools and automated readers
 
-Last reviewed: 20 November 2026 against this checkout (PolyStrata on the Strata project's 0.2.17, engine 0.1.63). This page holds the
+Last reviewed: 20 November 2026 against this checkout (PolyStrata on the Strata project's 0.2.18, engine 0.1.64). This page holds the
 technical context behind the short [README](../README.md). Use [AI_SETUP.md](AI_SETUP.md) to install PolyStrata for a
 user, [AGENTS.md](../AGENTS.md) for repository work, and [MEDIA_KIT.md](MEDIA_KIT.md) for articles or videos.
 
