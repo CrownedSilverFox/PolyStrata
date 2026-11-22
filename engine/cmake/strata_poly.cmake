@@ -365,7 +365,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_link_libraries(poly_inkling2_test PRIVATE strata_kernels ${_strata_gpu_blas_target}
                                                    ${_strata_gpu_runtime_target})
   add_test(NAME poly_inkling2_test COMMAND poly_inkling2_test)
-  set_tests_properties(poly_inkling2_test PROPERTIES SKIP_RETURN_CODE 77)
+  set_tests_properties(poly_inkling2_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   # the pool of the CPU experts, without a model
   add_executable(poly_workers_test src/poly/workers_test.cpp src/poly/cpu_experts.cpp)
   target_link_libraries(poly_workers_test PRIVATE strata_quant Threads::Threads)
