@@ -1042,7 +1042,11 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     a.window = B.swa ? window_ : 0;
     a.ring = B.swa ? ring_ : 0;
     a.scale = 1.f / std::sqrt((float) head_dim_);
-    if (n >= kStageRows) {
+    a.gate = gate_;   // the output gate in the join's launch, or the flash kernel's
+    if (n >= kStageRows && ink_attend_batch(a, st_)) {
+        // a prompt batch on the tensor cores with no score written out: attend_batch()'s path below wrote 1.6e11
+        // scores of a 30,954-token read and read them back, 8.9 of its 16.8 s of attention on the RTX 4070 Laptop
+    } else if (n >= kStageRows) {
         // a prompt batch: the engine's products on the tensor cores, which round the queries and the softmax's
         // weights to halves; the sink's own term of the softmax has score 0 (zeros_)
         AttnBias bias;
@@ -1056,7 +1060,6 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
                      a.scale, st_, a.window, a.ring, false, {}, {}, nullptr, nullptr, 0, zeros_, nullptr, &bias);
         ink_mul_sigmoid(att_, gate_, (size_t) n * hq, st_);
     } else {
-        a.gate = gate_;   // the output gate in the join's launch
         if (n == 1) a.q8 = xqo_;   // and the output quantized for wo
         ink_attend(a, st_);
     }
