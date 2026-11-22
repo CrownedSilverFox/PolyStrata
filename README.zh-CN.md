@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next、Hy4-Flash、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Fl
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="写回答时每秒的 token 数，poly.10 和这一版：Qwen3.6-35B-A3B 在 8 GB 显存的笔记本上从 81 到 95，在 RTX 5090 上从 424 到 512"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="写回答时每秒的 token 数：Qwen3.6-35B-A3B 在 8 GB 显存的笔记本上写 95，在 RTX 5090 上写 512"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="终端里的 Claude Code，旁边是 PolyStrata 的 API Monitor"><br>
 <sub>Claude Code 接 Qwen3.6-35B-A3B UD-Q3_K_M，在 8 GB 显卡的笔记本上，原速：给一个小程序加 <code>--json</code> 选项，写测试，跑测试。服务器启动时已经读过 Claude Code 的系统提示词（<code>"warm_start": true</code>）。</sub></p>
@@ -61,22 +61,20 @@ PolyStrata 基于 Niko1221 的 [Strata](https://github.com/Niko1221/Strata)。
 
 | 模型 | 8 GB 显卡的笔记本<br>写回答 / 读提示 | RTX 5090<br>写回答 / 读提示 | 全部规格 |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 486 → 492 / 23,488 → 25,160 | [LFM2.5](docs/models/lfm25.zh-CN.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 250 → 261 / 12,723 → 14,851 | [Flint](docs/models/flint.zh-CN.md) |
-| Qwen3.6-35B-A3B | 81 → 95 / 1,751 → 2,110 | 424 → 512 / 11,148 → 14,842 | [Qwen3.6](docs/models/qwen36.zh-CN.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 284 → 308 / 9,312 → 13,814 | [Clover](docs/models/clover.zh-CN.md) |
-| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 322 → 358 / 9,433 → 14,133 | [Ornith](docs/models/ornith.zh-CN.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 354 → 363 / 8,676 → 11,478 | [Gemma 4](docs/models/gemma4.zh-CN.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 368 → 437 / 9,879 → 15,079 | [Tiel Coder](docs/models/tiel.zh-CN.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 306 → 331 / 9,632 → 14,305 | [MiniCPM-V](docs/models/minicpmv.zh-CN.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5,101 → 6,009 | [Kolibri 1](docs/models/kolibri.zh-CN.md) |
-| GLM 5.3 Flash | 跑不了，要 32 GB 显卡 | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.zh-CN.md) |
-| DeepSeek V4 Flash | 跑不了，要 32 GB 显卡 | 28 → 50 / 1,049 → 1,895 | [DeepSeek](docs/models/deepseek.zh-CN.md) |
+| LFM2.5-24B-A2B | 81 / 3,452 | 492 / 25,160 | [LFM2.5](docs/models/lfm25.zh-CN.md) |
+| Flint 40B-A2.5B | 56 / 2,273 | 261 / 14,851 | [Flint](docs/models/flint.zh-CN.md) |
+| Qwen3.6-35B-A3B | 95 / 2,110 | 512 / 14,842 | [Qwen3.6](docs/models/qwen36.zh-CN.md) |
+| Clover-35B-A3B-Preview | 62 / 1,973 | 308 / 13,814 | [Clover](docs/models/clover.zh-CN.md) |
+| Ornith 1.5 | 76 / 2,036 | 358 / 14,133 | [Ornith](docs/models/ornith.zh-CN.md) |
+| Gemma 4 26B-A4B | 76 / 1,896 | 363 / 11,478 | [Gemma 4](docs/models/gemma4.zh-CN.md) |
+| Tiel Coder 35B-A3B | 81 / 2,171 | 437 / 15,079 | [Tiel Coder](docs/models/tiel.zh-CN.md) |
+| MiniCPM-V 4.7 35B-A3B | 71 / 1,982 | 331 / 14,305 | [MiniCPM-V](docs/models/minicpmv.zh-CN.md) |
+| Kolibri 1 | 55 / 746 | 207 / 6,009 | [Kolibri 1](docs/models/kolibri.zh-CN.md) |
+| GLM 5.3 Flash | 跑不了，要 32 GB 显卡 | 52 / 855 | [GLM](docs/models/glm.zh-CN.md) |
+| DeepSeek V4 Flash | 跑不了，要 32 GB 显卡 | 50 / 1,895 | [DeepSeek](docs/models/deepseek.zh-CN.md) |
 | Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
 | Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
 | Hy4-Flash | 跑不了，要 64 GB 内存 | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
-
-每格是同一台电脑上 poly.10 → 这一版：两边交替各跑三次，取中位数。Inkling 2 Mini、Groot 和 Hy4-Flash 是这一版新加的。
 
 笔记本：RTX 4070 Laptop（8 GB）、Core i7-14700HX、32 GB 内存。工作站：RTX 5090（32 GB）、Xeon Platinum 8470Q（25 vCPU）、90-120 GB 内存。Flint 在笔记本上是 UD-Q3_K_XL（32 GB 内存时安装程序选的规格），在工作站上是 UD-Q4_K_XL。Kolibri 1 两台上都是 Q2_K；安装程序在工作站上会选 Q4_K_M，这个规格没测。
 

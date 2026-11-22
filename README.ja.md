@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next、Hy4-Flash、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Fl
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="回答を書く速さ（トークン/秒）、poly.10 とこのバージョン：Qwen3.6-35B-A3B は 8 GB のノート PC で 81 から 95、RTX 5090 で 424 から 512"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="回答を書く速さ（トークン/秒）：Qwen3.6-35B-A3B は 8 GB のノート PC で 95、RTX 5090 で 512"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="ターミナルの Claude Code と、その横の PolyStrata の API Monitor"><br>
 <sub>Claude Code と Qwen3.6-35B-A3B UD-Q3_K_M、8 GB のカードのノート PC で、実時間：小さなプログラムに <code>--json</code> オプションを足し、テストを書いて実行します。サーバーは起動時に Claude Code のシステムプロンプトを読んであります（<code>"warm_start": true</code>）。</sub></p>
@@ -64,22 +64,20 @@ PolyStrata は Niko1221 の [Strata](https://github.com/Niko1221/Strata) をも�
 
 | モデル | 8 GB のカードのノート PC<br>書き出し / 読み込み | RTX 5090<br>書き出し / 読み込み | 全サイズ |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 486 → 492 / 23,488 → 25,160 | [LFM2.5](docs/models/lfm25.ja.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 250 → 261 / 12,723 → 14,851 | [Flint](docs/models/flint.ja.md) |
-| Qwen3.6-35B-A3B | 81 → 95 / 1,751 → 2,110 | 424 → 512 / 11,148 → 14,842 | [Qwen3.6](docs/models/qwen36.ja.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 284 → 308 / 9,312 → 13,814 | [Clover](docs/models/clover.ja.md) |
-| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 322 → 358 / 9,433 → 14,133 | [Ornith](docs/models/ornith.ja.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 354 → 363 / 8,676 → 11,478 | [Gemma 4](docs/models/gemma4.ja.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 368 → 437 / 9,879 → 15,079 | [Tiel Coder](docs/models/tiel.ja.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 306 → 331 / 9,632 → 14,305 | [MiniCPM-V](docs/models/minicpmv.ja.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5,101 → 6,009 | [Kolibri 1](docs/models/kolibri.ja.md) |
-| GLM 5.3 Flash | 動きません（32 GB のカードが必要） | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.ja.md) |
-| DeepSeek V4 Flash | 動きません（32 GB のカードが必要） | 28 → 50 / 1,049 → 1,895 | [DeepSeek](docs/models/deepseek.ja.md) |
+| LFM2.5-24B-A2B | 81 / 3,452 | 492 / 25,160 | [LFM2.5](docs/models/lfm25.ja.md) |
+| Flint 40B-A2.5B | 56 / 2,273 | 261 / 14,851 | [Flint](docs/models/flint.ja.md) |
+| Qwen3.6-35B-A3B | 95 / 2,110 | 512 / 14,842 | [Qwen3.6](docs/models/qwen36.ja.md) |
+| Clover-35B-A3B-Preview | 62 / 1,973 | 308 / 13,814 | [Clover](docs/models/clover.ja.md) |
+| Ornith 1.5 | 76 / 2,036 | 358 / 14,133 | [Ornith](docs/models/ornith.ja.md) |
+| Gemma 4 26B-A4B | 76 / 1,896 | 363 / 11,478 | [Gemma 4](docs/models/gemma4.ja.md) |
+| Tiel Coder 35B-A3B | 81 / 2,171 | 437 / 15,079 | [Tiel Coder](docs/models/tiel.ja.md) |
+| MiniCPM-V 4.7 35B-A3B | 71 / 1,982 | 331 / 14,305 | [MiniCPM-V](docs/models/minicpmv.ja.md) |
+| Kolibri 1 | 55 / 746 | 207 / 6,009 | [Kolibri 1](docs/models/kolibri.ja.md) |
+| GLM 5.3 Flash | 動きません（32 GB のカードが必要） | 52 / 855 | [GLM](docs/models/glm.ja.md) |
+| DeepSeek V4 Flash | 動きません（32 GB のカードが必要） | 50 / 1,895 | [DeepSeek](docs/models/deepseek.ja.md) |
 | Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
 | Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
 | Hy4-Flash | 動きません（64 GB の RAM が必要） | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
-
-各セルは同じ PC での poly.10 → このバージョンです。交互に 3 回ずつ走らせた中央値です。Inkling 2 Mini、Groot、Hy4-Flash はこのバージョンで加わりました。
 
 ノート PC：RTX 4070 Laptop（8 GB）、Core i7-14700HX、RAM 32 GB。ワークステーション：RTX 5090（32 GB）、Xeon Platinum 8470Q（25 vCPU）、RAM 90〜120 GB。Flint はノート PC では UD-Q3_K_XL（RAM 32 GB でインストーラーが選ぶサイズ）、ワークステーションでは UD-Q4_K_XL です。Kolibri 1 はどちらも Q2_K です。ワークステーションでインストーラーが選ぶ Q4_K_M は測っていません。
 

@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, 
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens por segundo al escribir una respuesta, poly.10 y esta versión: Qwen3.6-35B-A3B pasa de 81 a 95 en un portátil con tarjeta de 8 GB y de 424 a 512 en una RTX 5090"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens por segundo al escribir una respuesta: Qwen3.6-35B-A3B escribe 95 en un portátil con tarjeta de 8 GB y 512 en una RTX 5090"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Claude Code en una terminal junto al API Monitor de PolyStrata"><br>
 <sub>Claude Code con Qwen3.6-35B-A3B UD-Q3_K_M en el portátil con la tarjeta de 8 GB, en tiempo real: añade una opción <code>--json</code> a un programa pequeño, escribe una prueba y ejecuta las pruebas. El servidor había leído el prompt de sistema de Claude Code al arrancar (<code>"warm_start": true</code>).</sub></p>
@@ -76,22 +76,20 @@ La tabla da el tamaño que el instalador elige para cada modelo, en tokens por s
 
 | Modelo | Portátil con tarjeta de 8 GB<br>escribe / lee | RTX 5090<br>escribe / lee | Todos los tamaños |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 486 → 492 / 23,488 → 25,160 | [LFM2.5](docs/models/lfm25.es.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 250 → 261 / 12,723 → 14,851 | [Flint](docs/models/flint.es.md) |
-| Qwen3.6-35B-A3B | 81 → 95 / 1,751 → 2,110 | 424 → 512 / 11,148 → 14,842 | [Qwen3.6](docs/models/qwen36.es.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 284 → 308 / 9,312 → 13,814 | [Clover](docs/models/clover.es.md) |
-| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 322 → 358 / 9,433 → 14,133 | [Ornith](docs/models/ornith.es.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 354 → 363 / 8,676 → 11,478 | [Gemma 4](docs/models/gemma4.es.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 368 → 437 / 9,879 → 15,079 | [Tiel Coder](docs/models/tiel.es.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 306 → 331 / 9,632 → 14,305 | [MiniCPM-V](docs/models/minicpmv.es.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5,101 → 6,009 | [Kolibri 1](docs/models/kolibri.es.md) |
-| GLM 5.3 Flash | no funciona: necesita una tarjeta de 32 GB | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.es.md) |
-| DeepSeek V4 Flash | no funciona: necesita una tarjeta de 32 GB | 28 → 50 / 1,049 → 1,895 | [DeepSeek](docs/models/deepseek.es.md) |
+| LFM2.5-24B-A2B | 81 / 3,452 | 492 / 25,160 | [LFM2.5](docs/models/lfm25.es.md) |
+| Flint 40B-A2.5B | 56 / 2,273 | 261 / 14,851 | [Flint](docs/models/flint.es.md) |
+| Qwen3.6-35B-A3B | 95 / 2,110 | 512 / 14,842 | [Qwen3.6](docs/models/qwen36.es.md) |
+| Clover-35B-A3B-Preview | 62 / 1,973 | 308 / 13,814 | [Clover](docs/models/clover.es.md) |
+| Ornith 1.5 | 76 / 2,036 | 358 / 14,133 | [Ornith](docs/models/ornith.es.md) |
+| Gemma 4 26B-A4B | 76 / 1,896 | 363 / 11,478 | [Gemma 4](docs/models/gemma4.es.md) |
+| Tiel Coder 35B-A3B | 81 / 2,171 | 437 / 15,079 | [Tiel Coder](docs/models/tiel.es.md) |
+| MiniCPM-V 4.7 35B-A3B | 71 / 1,982 | 331 / 14,305 | [MiniCPM-V](docs/models/minicpmv.es.md) |
+| Kolibri 1 | 55 / 746 | 207 / 6,009 | [Kolibri 1](docs/models/kolibri.es.md) |
+| GLM 5.3 Flash | no funciona: necesita una tarjeta de 32 GB | 52 / 855 | [GLM](docs/models/glm.es.md) |
+| DeepSeek V4 Flash | no funciona: necesita una tarjeta de 32 GB | 50 / 1,895 | [DeepSeek](docs/models/deepseek.es.md) |
 | Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
 | Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
 | Hy4-Flash | no funciona: necesita 64 GB de RAM | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
-
-Cada celda es poly.10 → esta versión en el mismo PC: la mediana de tres ejecuciones de cada una, alternadas. Inkling 2 Mini, Groot y Hy4-Flash son nuevos en esta versión.
 
 Portátil: RTX 4070 Laptop (8 GB), Core i7-14700HX, 32 GB de RAM. Estación de trabajo: RTX 5090 (32 GB), Xeon Platinum 8470Q (25 vCPU), de 90 a 120 GB de RAM. Flint es UD-Q3_K_XL en el portátil, el tamaño que el instalador elige con 32 GB de RAM, y UD-Q4_K_XL en la estación de trabajo. Kolibri 1 es Q2_K en los dos; en la estación de trabajo el instalador elige Q4_K_M, que no se midió.
 

@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, 
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Yanıt yazarken saniyede token, poly.10 ve bu sürüm: Qwen3.6-35B-A3B 8 GB kartlı bir dizüstünde 81'den 95'e, bir RTX 5090'da 424'ten 512'ye"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Yanıt yazarken saniyede token: Qwen3.6-35B-A3B 8 GB kartlı bir dizüstünde 95, bir RTX 5090'da 512 yazar"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Bir terminalde Claude Code ve yanında PolyStrata'nın API Monitor ekranı"><br>
 <sub>Claude Code, Qwen3.6-35B-A3B UD-Q3_K_M ile 8 GB kartlı dizüstünde, gerçek zamanlı: küçük bir programa <code>--json</code> seçeneği ekliyor, bunun için bir test yazıyor ve testleri çalıştırıyor. Sunucu, başlarken Claude Code'un sistem prompt'unu okumuştu (<code>"warm_start": true</code>).</sub></p>
@@ -80,22 +80,20 @@ Tablo, her model için yükleyicinin seçtiği boyutu, saniyede token olarak ver
 
 | Model | 8 GB kartlı dizüstü<br>yazma / okuma | RTX 5090<br>yazma / okuma | Tüm boyutlar |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3.617 → 3.452 | 486 → 492 / 23.488 → 25.160 | [LFM2.5](docs/models/lfm25.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2.112 → 2.273 | 250 → 261 / 12.723 → 14.851 | [Flint](docs/models/flint.md) |
-| Qwen3.6-35B-A3B | 81 → 95 / 1.751 → 2.110 | 424 → 512 / 11.148 → 14.842 | [Qwen3.6](docs/models/qwen36.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1.721 → 1.973 | 284 → 308 / 9.312 → 13.814 | [Clover](docs/models/clover.md) |
-| Ornith 1.5 | 70 → 76 / 1.758 → 2.036 | 322 → 358 / 9.433 → 14.133 | [Ornith](docs/models/ornith.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1.914 → 1.896 | 354 → 363 / 8.676 → 11.478 | [Gemma 4](docs/models/gemma4.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1.791 → 2.171 | 368 → 437 / 9.879 → 15.079 | [Tiel Coder](docs/models/tiel.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1.740 → 1.982 | 306 → 331 / 9.632 → 14.305 | [MiniCPM-V](docs/models/minicpmv.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5.101 → 6.009 | [Kolibri 1](docs/models/kolibri.md) |
-| GLM 5.3 Flash | çalışmaz: 32 GB kart gerekir | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.md) |
-| DeepSeek V4 Flash | çalışmaz: 32 GB kart gerekir | 28 → 50 / 1.049 → 1.895 | [DeepSeek](docs/models/deepseek.md) |
+| LFM2.5-24B-A2B | 81 / 3.452 | 492 / 25.160 | [LFM2.5](docs/models/lfm25.md) |
+| Flint 40B-A2.5B | 56 / 2.273 | 261 / 14.851 | [Flint](docs/models/flint.md) |
+| Qwen3.6-35B-A3B | 95 / 2.110 | 512 / 14.842 | [Qwen3.6](docs/models/qwen36.md) |
+| Clover-35B-A3B-Preview | 62 / 1.973 | 308 / 13.814 | [Clover](docs/models/clover.md) |
+| Ornith 1.5 | 76 / 2.036 | 358 / 14.133 | [Ornith](docs/models/ornith.md) |
+| Gemma 4 26B-A4B | 76 / 1.896 | 363 / 11.478 | [Gemma 4](docs/models/gemma4.md) |
+| Tiel Coder 35B-A3B | 81 / 2.171 | 437 / 15.079 | [Tiel Coder](docs/models/tiel.md) |
+| MiniCPM-V 4.7 35B-A3B | 71 / 1.982 | 331 / 14.305 | [MiniCPM-V](docs/models/minicpmv.md) |
+| Kolibri 1 | 55 / 746 | 207 / 6.009 | [Kolibri 1](docs/models/kolibri.md) |
+| GLM 5.3 Flash | çalışmaz: 32 GB kart gerekir | 52 / 855 | [GLM](docs/models/glm.md) |
+| DeepSeek V4 Flash | çalışmaz: 32 GB kart gerekir | 50 / 1.895 | [DeepSeek](docs/models/deepseek.md) |
 | Inkling 2 Mini | 40 / 426 | 196 / 5.422 | [Inkling 2 Mini](docs/models/inkling.md) |
 | Groot 19B-A3B 261023 | 75 / 2.339 | 450 / 15.204 | [Groot](docs/models/groot.md) |
 | Hy4-Flash | çalışmaz: 64 GB RAM gerekir | 90-111 / 1.694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
-
-Her hücre aynı bilgisayarda poly.10 → bu sürümdür: sırayla çalıştırılan üçer ölçümün ortancası. Inkling 2 Mini, Groot ve Hy4-Flash bu sürümde yeni.
 
 Dizüstü: RTX 4070 Laptop (8 GB), Core i7-14700HX, 32 GB RAM. İş istasyonu: RTX 5090 (32 GB), Xeon Platinum 8470Q (25 vCPU), 90 ila 120 GB RAM. Flint, dizüstünde UD-Q3_K_XL boyutuyla (yükleyicinin 32 GB RAM ile seçtiği boyut), iş istasyonunda UD-Q4_K_XL boyutuyla ölçüldü. Kolibri 1 ikisinde de Q2_K boyutuyla ölçüldü; iş istasyonunda yükleyici Q4_K_M boyutunu seçer, bu boyut ölçülmedi.
 
