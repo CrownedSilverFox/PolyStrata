@@ -39,6 +39,13 @@ void launched(const char* what) {
         throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(e));
 }
 
+#if defined(__HIPCC__)
+// HIP has __ldcs and __ldcg for halves only.  The DSpark screen's are cache hints (a copy's words read once, the
+// tiles' candidates from earlier launches), so on HIP they are plain loads.
+template <typename T> __device__ __forceinline__ T __ldcs(const T* p) { return *p; }
+template <typename T> __device__ __forceinline__ T __ldcg(const T* p) { return *p; }
+#endif
+
 constexpr int WARP = 32;   // the lanes a shuffle spans: a warp, or half of a 64-lane wavefront
 
 // The warp's sum of x, in every lane.
