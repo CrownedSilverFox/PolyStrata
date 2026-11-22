@@ -73,6 +73,22 @@ class Blocks(unittest.TestCase):
         evs = read(broken, 10_000, tools=SCHEMA)
         self.assertEqual(said(evs, "content"), broken[:-len(END)])
 
+    def test_the_block_end_in_a_string_argument_does_not_end_the_call(self):
+        # llama.cpp 29b52d398b reads this as the call; the tags' text can be in a string the model writes as text
+        tools = [{"name": "python", "parameters": {"properties": {"code": {"type": "string"}}}}]
+        call = '<|message_model|>python<|content_invoke_tool_json|>{"name":"python","args":{"code":"print(\'<|end_message|>\')"}}'
+        for step in (1, 4, 10_000):
+            with self.subTest(step=step):
+                evs = read(call + END + TEXT + STOP, step, tools=tools)
+                self.assertEqual([e.call.arguments for e in evs if e.kind == "tool_call"],
+                                 [{"code": "print('<|end_message|>')"}])
+                self.assertEqual(said(evs, "content"), "Rome")
+        # JSON that never closes: at the end, the block ends at its first tag and is the text it was written as
+        broken = '<|message_model|>python<|content_invoke_tool_json|>{"name":"python","args":{"code":"x' + END
+        evs = read(broken + TEXT, 3, tools=tools)
+        self.assertFalse([e for e in evs if e.kind == "tool_call"])
+        self.assertEqual(said(evs, "content"), broken[:-len(END)] + "Rome")
+
     def test_a_reply_whose_text_block_the_prompt_opened(self):
         evs = read("Rome" + END + STOP, 3, opened=True)
         self.assertEqual((said(evs, "reasoning"), said(evs, "content")), ("", "Rome"))
