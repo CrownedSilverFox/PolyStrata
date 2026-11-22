@@ -3,7 +3,8 @@
 Back to [README.md](../../README.md)
 
 **Inkling 2 Mini** by Thinking Machines: a file of 9 to 18 GB. It is experimental here. It has run on Linux with an
-RTX 5090 and on Windows with an 8 GB laptop card, one request at a time. It reads pictures too. Its 24 layers of weights run as 48: the twelve in the middle run three
+RTX 5090, on Windows with an 8 GB laptop card and on a Mac with an M5 Ultra (a beta there), one request at a time. It
+reads pictures too. Its 24 layers of weights run as 48: the twelve in the middle run three
 times for every token. Forty of the 48 look back 1,024 tokens only, so a long conversation takes little VRAM:
 32,768 bytes a token.
 
@@ -70,17 +71,31 @@ the bus once for the group instead of once for every call and every pass of the 
 `--kv fp8` keeps the attention caches in 8 bits instead of 16, which leaves about 0.7 GB more VRAM for the experts at
 a 32K context.
 
+On a Mac it runs on strata-poly's Metal engine, as a beta. Measured on an Apple M5 Ultra with 256 GB of unified memory,
+UD-Q3_K_XL, the README's two prompts given to the engine: 256 tokens written, the most likely one each time, the
+fastest of two runs. Other programs were using the GPU at the same time.
+
+| UD-Q3_K_XL | Writes in a short chat | Reads a 32,788-token prompt | Writes after it |
+| --- | ---: | ---: | ---: |
+| M5 Ultra | 74 tokens/s | 2,411 tokens/s | 61 tokens/s |
+
+Given the 128 tokens the CUDA engine wrote after a 4,526-token prompt (UD-Q3_K_XL), it picks the same most likely token
+at 126 of the 128 steps. UD-Q2_K_XL has run there too (73 tokens/s in the short chat). UD-Q4_K_XL has not been measured
+on a Mac. Pictures are read on the Mac's CPU, because the picture tower has no Metal kernels: a screenshot read as 984
+rows took 3.4 s.
+
 ## What you need
 
 | | |
 | --- | --- |
-| **Graphics card** | One **NVIDIA** card with **8 GB of VRAM or more**. It has run on an RTX 5090 (32 GB) and on an RTX 4070 Laptop (8 GB). About 3.7 GB are taken before any expert at a 32K context. |
-| **RAM** | About **21, 17 or 13 GB** beside an 8 GB card for UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, the installer's estimate. A 32 GB card holds any of them whole. |
+| **Graphics card** | One **NVIDIA** card with **8 GB of VRAM or more**. It has run on an RTX 5090 (32 GB) and on an RTX 4070 Laptop (8 GB). About 3.7 GB are taken before any expert at a 32K context. Or an **Apple Silicon Mac** (beta): it has run on an M5 Ultra. |
+| **RAM** | About **21, 17 or 13 GB** beside an 8 GB card for UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, the installer's estimate. A 32 GB card holds any of them whole. On a Mac, setup takes UD-Q3_K_XL from 32 GB of unified memory and UD-Q2_K_XL below that. |
 | **Disk** | 9.1 to 17.6 GB for the model file. |
-| **System** | Linux or Windows 10 / 11, and a current NVIDIA driver. |
+| **System** | Linux or Windows 10 / 11, and a current NVIDIA driver; or macOS 15 or newer. |
 
-Not run yet: an AMD card, a Mac, two cards (`--expert-gpu`, built but not run), and UD-Q4_K_XL on the 8 GB card.
-Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card. The draft file is an
+Not run yet: an AMD card, two cards (`--expert-gpu`, built but not run), UD-Q4_K_XL on the 8 GB card and UD-Q4_K_XL
+on a Mac. Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card; on a Mac, on
+the CPU. The draft file is an
 option (`--draft-model`). The engine takes one request at a time
 for this model, and the installer writes `"parallel": 1`. Its license is Apache 2.0.
 

@@ -37,6 +37,7 @@ These families use native Metal `strata-poly`:
 | `tiel` | Tiel Coder 35B-A3B |
 | `minicpmv` | MiniCPM-V 4.7 35B-A3B |
 | `lfm25` | LFM2.5-24B-A2B |
+| `inkling` | Inkling 2 Mini |
 
 List their quantizations and download sizes, or set up an existing LFM file without downloading model assets:
 
@@ -49,7 +50,9 @@ List their quantizations and download sizes, or set up an existing LFM file with
 `--no-download-models` requires complete local model, draft and (when requested) projector files. Python packages
 and build dependencies are separate. Files retain the shared installer's filenames and pinned checksums.
 `--family` selects the smaller engine; a setup without it keeps the existing Qwen3.8 choice and defaults.
-Within a smaller family, the default is its smallest download; `--model` keeps an explicit choice.
+Within a smaller family, the default is its smallest download; `--model` keeps an explicit choice. Inkling 2 Mini
+takes UD-Q3_K_XL from 32 GB of unified memory and UD-Q2_K_XL below that (UD-Q4_K_XL has not been measured on a Mac),
+and reads pictures on the CPU: its picture tower has no Metal kernels.
 
 This is **experimental**. LFM2.5 UD-Q3_K_XL has passed the real-weight smoke test below, and it and Qwen3.6
 UD-Q2_K_XL have answered prompts up to 7,000 tokens on an M5 Ultra; the other families and quantizations have not
@@ -420,8 +423,8 @@ The first request after a model loads also waits once while the engine builds it
 - **Streaming** is measured at 32 GB only.
 - **Families:** every installer choice is offered ([model coverage](#model-coverage)). On the original engine the original
   Qwen3.8-Flash-Next, Unsloth's UD-Q4/Q5/Q6_K_XL and agentionai's Gyro-S are measured; setup repacks Unsloth's shards into one
-  file for the GPU, and a Gyro file is used as it is. Qwen3.6 and LFM2.5 run on strata-poly's Metal engine as a beta (measured
-  in [model coverage](#model-coverage)); Qwen3.6 also runs on `strata-q36` (`qwen36-strata`), experimental
+  file for the GPU, and a Gyro file is used as it is. Qwen3.6, LFM2.5 and Inkling 2 Mini run on strata-poly's Metal engine as a beta (measured
+  in [model coverage](#model-coverage), Inkling 2 Mini in [its page](models/inkling.md)); Qwen3.6 also runs on `strata-q36` (`qwen36-strata`), experimental
   ([Additional Qwen and ready-pack choices](#additional-qwen-and-ready-pack-choices)). The other newly ported paths (Swift, Coder, NVFP4, GLM, DeepSeek and the rest) have
   not run on a Mac with their real weights.
 

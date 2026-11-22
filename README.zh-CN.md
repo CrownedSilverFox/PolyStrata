@@ -150,10 +150,10 @@ Qwen3.6-35B-A3B 读完 32,000 个 token 的提示后，0.1.45-poly.6 占 17.9 Gi
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.zh-CN.md) | 同上；AMD 是测试版 | 配 8 GB 显卡约 25 GB | 16-29 GB | Windows、Linux |
 | [Kolibri 1](docs/models/kolibri.zh-CN.md) | NVIDIA RTX 20 系列起，8 GB 起 | 配 8 GB 显卡约 33 GB | 29-48 GB | Windows、Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md)（实验性） | CUDA/HIP 共用的后端；Q4_K_M 的文字在 8 GB 的 RTX 5060 上跑过（实测峰值显存 7.05 GiB、内存 21.8 GiB） | Q4_K_M 配 8 GB 显卡约 17 GB，安装程序估的 | 12.5-20.2 GB；看图再加 0.9 GB | Windows、Linux；图片、Q6_K、Q8_0 没验证 |
-| [Inkling 2 Mini](docs/models/inkling.md)（实验性） | NVIDIA，8 GB 起；在 RTX 5090 和 RTX 4070 Laptop（8 GB，UD-Q3_K_XL）上跑过 | UD-Q4_K_XL 配 8 GB 显卡约 21 GB，安装程序估的 | 9-18 GB | Windows、Linux |
+| [Inkling 2 Mini](docs/models/inkling.md)（实验性） | NVIDIA，8 GB 起；在 RTX 5090 和 RTX 4070 Laptop（8 GB，UD-Q3_K_XL）上跑过 | UD-Q4_K_XL 配 8 GB 显卡约 21 GB，安装程序估的 | 9-18 GB | Windows、Linux、Mac（测试版） |
 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)（Strata 项目的引擎） | NVIDIA V100 到 RTX 50，8 GB 起；AMD RX 6000 到 9000 和 Strix Halo；Intel Arc | SQ-64 要 64 GB 起，SQ-96 要 96 GB，SQ-128 要 128 GB | 130-181 GB，放在 SSD 上 | Windows、Linux、Mac |
 
-内存是安装程序的估算；显卡越大，要的内存越少。其他的都由安装程序搞定：在 Windows 上它直接下载编译好的引擎，CPU 不支持 AVX2、在 AMD 显卡上运行 PolyStrata 自己的模型，或你这份代码的引擎比最新 release 新时，才在本机编译，缺工具会问你要不要装。两到三张显卡可以分担同一个模型（[多 GPU](docs/MULTI_GPU.md)）。较老的显卡、Intel Arc、Apple 芯片的 Mac（Qwen3.8-Flash-Next，测试版还有 Qwen3.6 和 LFM2.5）、Strix Halo、不支持 AVX2 的老处理器：[完整列表](docs/INSTALL.md#what-you-need)。每个模型的显卡、内存和各规格的细节在它自己的页面里。
+内存是安装程序的估算；显卡越大，要的内存越少。其他的都由安装程序搞定：在 Windows 上它直接下载编译好的引擎，CPU 不支持 AVX2、在 AMD 显卡上运行 PolyStrata 自己的模型，或你这份代码的引擎比最新 release 新时，才在本机编译，缺工具会问你要不要装。两到三张显卡可以分担同一个模型（[多 GPU](docs/MULTI_GPU.md)）。较老的显卡、Intel Arc、Apple 芯片的 Mac（Qwen3.8-Flash-Next，测试版还有 Qwen3.6、LFM2.5 和 Inkling 2 Mini）、Strix Halo、不支持 AVX2 的老处理器：[完整列表](docs/INSTALL.md#what-you-need)。每个模型的显卡、内存和各规格的细节在它自己的页面里。
 
 Qwen3.6、Clover、Ornith 1.5、Gemma 4、Tiel Coder 和 MiniCPM-V 这六个模型各自需要什么、是怎么验证的：[docs/BACKENDS.md](docs/BACKENDS.md#install)（英文）。
 
@@ -175,7 +175,7 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 [下载 PolyStrata](https://github.com/simplexai-labs/PolyStrata/archive/refs/heads/main.zip) 并解压（或者用 `git clone`）。
 **Windows：** 双击 **`START-HERE.bat`**。**Linux：** 在 PolyStrata 文件夹里运行 **`./setup.sh`**。
 
-**Mac（Apple 芯片，M1 到 M5，macOS 15 或更新版本）：** 先安装一次 Apple 的 Command Line Tools（在终端里运行 `xcode-select --install`；不需要 Xcode 本身）。然后在 PolyStrata 文件夹里打开终端，运行 **`./setup.sh`**。它会在你的 Mac 上编译 Mac 版引擎（大约 7 分钟），问同样的问题，下载模型并启动。下次运行 `./setup.sh` 会马上启动。哪个大小适合你的 Mac、速度如何：[docs/MAC.md](docs/MAC.md)。默认装的是 Qwen3.8-Flash-Next。`./setup.sh --family qwen36` 或 `--family lfm25` 改装 Qwen3.6 或 LFM2.5，跑在 strata-poly 的 Metal 引擎上，算测试版：在 M5 Ultra 上，Qwen3.6 UD-Q2_K_XL 短对话每秒写 134 个 token，读 3,768 个 token 的提示每秒 2,978 个。安装程序在 Mac 上也提供 GLM、DeepSeek、Ornith、Gemma 4、Tiel Coder 和 MiniCPM-V，但还没在 Mac 上用真实权重跑过。Kolibri、Flint 和 Clover 需要 NVIDIA 或 AMD 显卡。
+**Mac（Apple 芯片，M1 到 M5，macOS 15 或更新版本）：** 先安装一次 Apple 的 Command Line Tools（在终端里运行 `xcode-select --install`；不需要 Xcode 本身）。然后在 PolyStrata 文件夹里打开终端，运行 **`./setup.sh`**。它会在你的 Mac 上编译 Mac 版引擎（大约 7 分钟），问同样的问题，下载模型并启动。下次运行 `./setup.sh` 会马上启动。哪个大小适合你的 Mac、速度如何：[docs/MAC.md](docs/MAC.md)。默认装的是 Qwen3.8-Flash-Next。`./setup.sh --family qwen36` 或 `--family lfm25` 改装 Qwen3.6 或 LFM2.5，跑在 strata-poly 的 Metal 引擎上，算测试版：在 M5 Ultra 上，Qwen3.6 UD-Q2_K_XL 短对话每秒写 134 个 token，读 3,768 个 token 的提示每秒 2,978 个。`--family inkling` 用同样的方式装 Inkling 2 Mini：在 M5 Ultra 上，UD-Q3_K_XL 短对话每秒写 74 个 token，读 32,788 个 token 的提示每秒 2,411 个，之后每秒写 61 个；图片在 CPU 上读。安装程序在 Mac 上也提供 GLM、DeepSeek、Ornith、Gemma 4、Tiel Coder 和 MiniCPM-V，但还没在 Mac 上用真实权重跑过。Kolibri、Flint 和 Clover 需要 NVIDIA 或 AMD 显卡。
 
 安装程序会识别你的显卡，并装好对应的引擎。它会问你几个问题：
 

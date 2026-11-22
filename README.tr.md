@@ -182,10 +182,10 @@ Nasıl çalıştığı ve nasıl ölçüldüğü: [docs/BACKENDS.md](docs/BACKEN
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.md) | yukarıdakiyle aynı; AMD beta olarak | 8 GB'lık bir kartın yanında yaklaşık 25 GB | 16 ila 29 GB | Windows, Linux |
 | [Kolibri 1](docs/models/kolibri.md) | NVIDIA RTX 20 serisi veya daha yenisi, 8 GB veya daha fazla | 8 GB'lık bir kartın yanında yaklaşık 33 GB | 29 ila 48 GB | Windows, Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md) (deneysel) | ortak CUDA/HIP arka uçları; Q4_K_M metinle 8 GB'lık bir RTX 5060'ta çalıştı (ölçülen tepe 7,05 GiB VRAM, 21,8 GiB RAM) | Q4_K_M için 8 GB'lık bir kartın yanında yaklaşık 17 GB, yükleyicinin tahmini | 12,5 ila 20,2 GB; görüntüler 0,9 GB ekler | Windows, Linux; görüntüler, Q6_K ve Q8_0 denenmedi |
-| [Inkling 2 Mini](docs/models/inkling.md) (deneysel) | NVIDIA, 8 GB veya daha fazla; bir RTX 5090'da ve bir RTX 4070 Laptop'ta (8 GB, UD-Q3_K_XL) çalıştı | UD-Q4_K_XL için 8 GB'lık bir kartın yanında yaklaşık 21 GB, yükleyicinin tahmini | 9 ila 18 GB | Windows, Linux |
+| [Inkling 2 Mini](docs/models/inkling.md) (deneysel) | NVIDIA, 8 GB veya daha fazla; bir RTX 5090'da ve bir RTX 4070 Laptop'ta (8 GB, UD-Q3_K_XL) çalıştı | UD-Q4_K_XL için 8 GB'lık bir kartın yanında yaklaşık 21 GB, yükleyicinin tahmini | 9 ila 18 GB | Windows, Linux, Mac (beta) |
 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) (Strata projesinin motoru) | NVIDIA V100'den RTX 50'ye, 8 GB veya daha fazla; AMD RX 6000'den 9000'e ve Strix Halo; Intel Arc | SQ-64 için 64 GB veya daha fazla, SQ-96 için 96 GB, SQ-128 için 128 GB | 130 ila 181 GB, bir SSD'de | Windows, Linux, Mac |
 
-RAM değeri yükleyicinin tahminidir; daha büyük bir kartla daha azı gerekir. Geri kalan her şeyi yükleyici kurar: Windows'ta motoru hazır derlenmiş olarak indirir; yalnızca AVX2 desteği olmayan bir işlemcide, AMD kartta PolyStrata'nın kendi modelleri için ya da senin kopyandaki motor son sürümden daha yeniyse onu bilgisayarında derler ve gereken araçları kurmayı önerir. İki ya da üç kart bir modeli paylaşabilir ([çoklu GPU](docs/MULTI_GPU.md)). Eski ekran kartları, Intel Arc, Apple Silicon Mac'ler (Qwen3.8-Flash-Next; beta olarak Qwen3.6 ve LFM2.5), Strix Halo ve AVX2 desteği olmayan eski işlemciler: [tam liste](docs/INSTALL.md#what-you-need). Her modelin kart, RAM ve boyut ayrıntıları kendi sayfasında.
+RAM değeri yükleyicinin tahminidir; daha büyük bir kartla daha azı gerekir. Geri kalan her şeyi yükleyici kurar: Windows'ta motoru hazır derlenmiş olarak indirir; yalnızca AVX2 desteği olmayan bir işlemcide, AMD kartta PolyStrata'nın kendi modelleri için ya da senin kopyandaki motor son sürümden daha yeniyse onu bilgisayarında derler ve gereken araçları kurmayı önerir. İki ya da üç kart bir modeli paylaşabilir ([çoklu GPU](docs/MULTI_GPU.md)). Eski ekran kartları, Intel Arc, Apple Silicon Mac'ler (Qwen3.8-Flash-Next; beta olarak Qwen3.6, LFM2.5 ve Inkling 2 Mini), Strix Halo ve AVX2 desteği olmayan eski işlemciler: [tam liste](docs/INSTALL.md#what-you-need). Her modelin kart, RAM ve boyut ayrıntıları kendi sayfasında.
 
 Qwen3.6, Clover, Ornith 1.5, Gemma 4, Tiel Coder ve MiniCPM-V'nin her birinin neye ihtiyaç duyduğu ve bunun nasıl kontrol edildiği: [docs/BACKENDS.md](docs/BACKENDS.md#install).
 
@@ -215,8 +215,11 @@ indirir ve başlatır. Bir dahaki sefere `./setup.sh` onu hemen başlatır. Mac'
 olduğu: [docs/MAC.md](docs/MAC.md). Varsayılan olarak Qwen3.8-Flash-Next'i kurar. `./setup.sh --family qwen36` ya da
 `--family lfm25` onun yerine Qwen3.6'yı ya da LFM2.5'i strata-poly'nin Metal motorunda beta olarak kurar: bir M5
 Ultra'da Qwen3.6 UD-Q2_K_XL kısa bir sohbette saniyede 134 token yazdı ve 3.768 token'lık bir prompt'u saniyede 2.978
-token hızla okudu. Kurulum Mac'te GLM, DeepSeek, Ornith, Gemma 4, Tiel Coder ve MiniCPM-V'yi de sunar, ama bunlar
-orada henüz gerçek ağırlıklarıyla çalıştırılmadı. Kolibri, Flint ve Clover bir NVIDIA veya AMD kart gerektirir.
+token hızla okudu. `--family inkling` Inkling 2 Mini'yi de aynı şekilde kurar: M5 Ultra'da UD-Q3_K_XL kısa bir
+sohbette saniyede 74 token yazdı, 32.788 token'lık bir prompt'u saniyede 2.411 token hızla okudu ve ardından saniyede
+61 token yazdı; resimleri CPU'da okur. Kurulum Mac'te GLM, DeepSeek, Ornith, Gemma 4, Tiel Coder ve MiniCPM-V'yi de
+sunar, ama bunlar orada henüz gerçek ağırlıklarıyla çalıştırılmadı. Kolibri, Flint ve Clover bir NVIDIA veya AMD kart
+gerektirir.
 
 Yükleyici kartını bulur ve ona uygun motoru kurar. Sana birkaç soru sorar:
 

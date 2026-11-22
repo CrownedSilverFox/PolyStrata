@@ -162,10 +162,10 @@ RTX PRO 6000、エンジンの RAM を 12 GB と 10 GB に制限（16 GB の PC 
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.ja.md) | 同上、AMD はベータ | 8 GB のカードで約 25 GB | 16〜29 GB | Windows、Linux |
 | [Kolibri 1](docs/models/kolibri.ja.md) | NVIDIA RTX 20 シリーズ以降、8 GB 以上 | 8 GB のカードで約 33 GB | 29〜48 GB | Windows、Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md)（実験的） | CUDA/HIP 共通のバックエンド。Q4_K_M のテキストを 8 GB の RTX 5060 で実行（実測のピークは VRAM 7.05 GiB、RAM 21.8 GiB） | Q4_K_M で 8 GB のカードなら約 17 GB（インストーラーの見積もり） | 12.5〜20.2 GB、画像で 0.9 GB 増 | Windows、Linux。画像、Q6_K、Q8_0 は未確認 |
-| [Inkling 2 Mini](docs/models/inkling.md)（実験的） | NVIDIA、8 GB 以上。RTX 5090 と RTX 4070 Laptop（8 GB、UD-Q3_K_XL）で動作 | UD-Q4_K_XL で 8 GB のカードなら約 21 GB（インストーラーの見積もり） | 9〜18 GB | Windows、Linux |
+| [Inkling 2 Mini](docs/models/inkling.md)（実験的） | NVIDIA、8 GB 以上。RTX 5090 と RTX 4070 Laptop（8 GB、UD-Q3_K_XL）で動作 | UD-Q4_K_XL で 8 GB のカードなら約 21 GB（インストーラーの見積もり） | 9〜18 GB | Windows、Linux、Mac（ベータ版） |
 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)（Strata プロジェクトのエンジン） | NVIDIA V100〜RTX 50、8 GB 以上。AMD RX 6000〜9000、Strix Halo。Intel Arc | SQ-64 は 64 GB 以上、SQ-96 は 96 GB、SQ-128 は 128 GB | 130〜181 GB、SSD に置く | Windows、Linux、Mac |
 
-RAM はインストーラーの見積もりで、カードが大きいほど少なくて済みます。ほかはすべてインストーラーが用意します。Windows ではビルド済みのエンジンをダウンロードし、AVX2 のないプロセッサー、AMD のカードで動かす PolyStrata 独自のモデル、手元のエンジンが最新リリースより新しいときだけ PC でコンパイルします（足りないツールは入れるか聞きます）。2〜3 枚のカードで 1 つのモデルを分担できます（[マルチ GPU](docs/MULTI_GPU.md)）。古いグラフィックカード、Intel Arc、Apple シリコンの Mac（Qwen3.8-Flash-Next、ベータ版として Qwen3.6 と LFM2.5）、Strix Halo、AVX2 のない古いプロセッサー：[詳しい一覧](docs/INSTALL.md#what-you-need)。各モデルのカード、RAM、サイズの詳細はそれぞれのページにあります。
+RAM はインストーラーの見積もりで、カードが大きいほど少なくて済みます。ほかはすべてインストーラーが用意します。Windows ではビルド済みのエンジンをダウンロードし、AVX2 のないプロセッサー、AMD のカードで動かす PolyStrata 独自のモデル、手元のエンジンが最新リリースより新しいときだけ PC でコンパイルします（足りないツールは入れるか聞きます）。2〜3 枚のカードで 1 つのモデルを分担できます（[マルチ GPU](docs/MULTI_GPU.md)）。古いグラフィックカード、Intel Arc、Apple シリコンの Mac（Qwen3.8-Flash-Next、ベータ版として Qwen3.6、LFM2.5、Inkling 2 Mini）、Strix Halo、AVX2 のない古いプロセッサー：[詳しい一覧](docs/INSTALL.md#what-you-need)。各モデルのカード、RAM、サイズの詳細はそれぞれのページにあります。
 
 Qwen3.6、Clover、Ornith 1.5、Gemma 4、Tiel Coder、MiniCPM-V の 6 つのモデルそれぞれに必要なものと確認の方法：[docs/BACKENDS.md](docs/BACKENDS.md#install)（英語）。
 
@@ -195,7 +195,7 @@ PolyStrata のインストール、起動、停止もできます。
 - コンテキストをどのくらいにするか（モデルが覚えておけるテキストの量）
 - 画像を読ませるかどうか（GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Flint、Clover、Kolibri 1 は画像を読めません）
 
-**Mac（Apple シリコン、M1〜M5、macOS 15 以降）：** まず一度だけ Apple の Command Line Tools をインストールします（ターミナルで `xcode-select --install`。Xcode 本体は不要です）。次に PolyStrata フォルダーでターミナルを開き、**`./setup.sh`** を実行します。Mac 用エンジンをお使いの Mac 上でビルドし（約 7 分）、同じ質問をしてからモデルをダウンロードして起動します。次回からは `./setup.sh` ですぐに起動します。どのサイズが Mac に合うかと速度：[docs/MAC.md](docs/MAC.md)。標準では Qwen3.8-Flash-Next をセットアップします。`./setup.sh --family qwen36` または `--family lfm25` を使うと、代わりに Qwen3.6 か LFM2.5 を strata-poly の Metal エンジンでセットアップします（ベータ版）。M5 Ultra では Qwen3.6 UD-Q2_K_XL が短いチャットで毎秒 134 トークンを書き、3,768 トークンのプロンプトを毎秒 2,978 トークンで読みました。GLM、DeepSeek、Ornith、Gemma 4、Tiel Coder、MiniCPM-V も Mac でセットアップできますが、Mac ではまだ実際の重みで動かしていません。Kolibri、Flint、Clover には NVIDIA か AMD のグラフィックカードが必要です。
+**Mac（Apple シリコン、M1〜M5、macOS 15 以降）：** まず一度だけ Apple の Command Line Tools をインストールします（ターミナルで `xcode-select --install`。Xcode 本体は不要です）。次に PolyStrata フォルダーでターミナルを開き、**`./setup.sh`** を実行します。Mac 用エンジンをお使いの Mac 上でビルドし（約 7 分）、同じ質問をしてからモデルをダウンロードして起動します。次回からは `./setup.sh` ですぐに起動します。どのサイズが Mac に合うかと速度：[docs/MAC.md](docs/MAC.md)。標準では Qwen3.8-Flash-Next をセットアップします。`./setup.sh --family qwen36` または `--family lfm25` を使うと、代わりに Qwen3.6 か LFM2.5 を strata-poly の Metal エンジンでセットアップします（ベータ版）。M5 Ultra では Qwen3.6 UD-Q2_K_XL が短いチャットで毎秒 134 トークンを書き、3,768 トークンのプロンプトを毎秒 2,978 トークンで読みました。`--family inkling` でも同じように Inkling 2 Mini をセットアップできます。M5 Ultra では UD-Q3_K_XL が短いチャットで毎秒 74 トークンを書き、32,788 トークンのプロンプトを毎秒 2,411 トークンで読み、そのあと毎秒 61 トークンで書きました。画像は CPU で読みます。GLM、DeepSeek、Ornith、Gemma 4、Tiel Coder、MiniCPM-V も Mac でセットアップできますが、Mac ではまだ実際の重みで動かしていません。Kolibri、Flint、Clover には NVIDIA か AMD のグラフィックカードが必要です。
 
 毎回 Enter を押せば、おすすめの答えになります。そのあとモデル（Qwen3.8-Flash-Next は約 70 GB、GLM 5.3 Flash は 79〜114 GB、DeepSeek V4 Flash は 91 GB、Kolibri 1 は 29〜48 GB、ほかの 8 つは 11〜42 GB）をダウンロードして起動します。
 ダウンロードが止まったら、もう一度実行してください。続きから再開します。ブラウザーで PolyStrata アプリが

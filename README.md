@@ -172,10 +172,10 @@ How it works and how it was measured: [docs/BACKENDS.md](docs/BACKENDS.md#less-o
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.md) | same as above; AMD as a beta | about 25 GB beside an 8 GB card | 16 to 29 GB | Windows, Linux |
 | [Kolibri 1](docs/models/kolibri.md) | NVIDIA RTX 20 series or newer, 8 GB or more | about 33 GB beside an 8 GB card | 29 to 48 GB | Windows, Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md) (experimental) | shared CUDA/HIP backends; Q4_K_M text run on an 8 GB RTX 5060 (measured peak 7.05 GiB VRAM, 21.8 GiB RAM) | about 17 GB beside an 8 GB card for Q4_K_M, setup's fit estimate | 12.5 to 20.2 GB; images add 0.9 GB | Windows, Linux; images, Q6_K and Q8_0 untested |
-| [Inkling 2 Mini](docs/models/inkling.md) (experimental) | NVIDIA, 8 GB or more; it has run on an RTX 5090 and on an RTX 4070 Laptop (8 GB, UD-Q3_K_XL) | about 21 GB beside an 8 GB card for UD-Q4_K_XL, setup's estimate | 9 to 18 GB | Windows, Linux |
+| [Inkling 2 Mini](docs/models/inkling.md) (experimental) | NVIDIA, 8 GB or more; it has run on an RTX 5090 and on an RTX 4070 Laptop (8 GB, UD-Q3_K_XL) | about 21 GB beside an 8 GB card for UD-Q4_K_XL, setup's estimate | 9 to 18 GB | Windows, Linux, Mac (beta) |
 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) (the Strata project's engine) | NVIDIA V100 to RTX 50, 8 GB or more; AMD RX 6000 to 9000 and Strix Halo; Intel Arc | 64 GB or more for SQ-64, 96 GB for SQ-96, 128 GB for SQ-128 | 130 to 181 GB, on an SSD | Windows, Linux, Mac |
 
-RAM is the installer's estimate; a larger card needs less. The installer sets up everything else: on Windows it downloads the engine ready-made, and compiles it on your PC only on a processor without AVX2, for PolyStrata's own models on an AMD card, or when your copy's engine is newer than the latest release, offering to install the tools. Two or three cards can share a model ([multi-GPU](docs/MULTI_GPU.md)). Older graphics cards, Intel Arc, Apple Silicon Macs (Qwen3.8-Flash-Next, and Qwen3.6 and LFM2.5 as a beta), Strix Halo and older processors without AVX2: [the full list](docs/INSTALL.md#what-you-need). Each model's card, RAM and sizes in detail are on its page.
+RAM is the installer's estimate; a larger card needs less. The installer sets up everything else: on Windows it downloads the engine ready-made, and compiles it on your PC only on a processor without AVX2, for PolyStrata's own models on an AMD card, or when your copy's engine is newer than the latest release, offering to install the tools. Two or three cards can share a model ([multi-GPU](docs/MULTI_GPU.md)). Older graphics cards, Intel Arc, Apple Silicon Macs (Qwen3.8-Flash-Next, and Qwen3.6, LFM2.5 and Inkling 2 Mini as a beta), Strix Halo and older processors without AVX2: [the full list](docs/INSTALL.md#what-you-need). Each model's card, RAM and sizes in detail are on its page.
 
 What Qwen3.6, Clover, Ornith 1.5, Gemma 4, Tiel Coder and MiniCPM-V each need and how it was checked: [docs/BACKENDS.md](docs/BACKENDS.md#install).
 
@@ -204,9 +204,11 @@ you how to connect your apps. AI tools can also install, start and stop PolyStra
 and starts it. Next time, `./setup.sh` starts it right away. Which size fits your Mac and how fast it is:
 [docs/MAC.md](docs/MAC.md). By default it sets up Qwen3.8-Flash-Next. `./setup.sh --family qwen36` or `--family lfm25`
 sets up Qwen3.6 or LFM2.5 instead, on strata-poly's Metal engine, as a beta: on an M5 Ultra, Qwen3.6 UD-Q2_K_XL wrote
-134 tokens/s in a short chat and read a 3,768-token prompt at 2,978 tokens/s. Setup also offers GLM, DeepSeek, Ornith,
-Gemma 4, Tiel Coder and MiniCPM-V on a Mac, but they have not been run there with their real weights. Kolibri, Flint
-and Clover need an NVIDIA or AMD card.
+134 tokens/s in a short chat and read a 3,768-token prompt at 2,978 tokens/s. `--family inkling` sets up Inkling 2
+Mini the same way: on the M5 Ultra, UD-Q3_K_XL wrote 74 tokens/s in a short chat, read a 32,788-token prompt at 2,411
+tokens/s and wrote 61 tokens/s after it; it reads pictures on the CPU. Setup also offers GLM, DeepSeek, Ornith, Gemma
+4, Tiel Coder and MiniCPM-V on a Mac, but they have not been run there with their real weights. Kolibri, Flint and
+Clover need an NVIDIA or AMD card.
 
 The installer finds your card and sets up the right engine for it. It asks you a few questions:
 
