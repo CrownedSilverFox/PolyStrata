@@ -25,7 +25,7 @@ class Pins(unittest.TestCase):
         self.assertEqual(list(setup.family_models("inkling")), [m for m, _ in SIZES])
         self.assertRegex(FAM["hf"], r"^https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/resolve/[0-9a-f]{40}/"
                                     r"Mainline_Support/$")
-        self.assertEqual(list(FAM["sha256"]), [f"Inkling-2-Mini-{m}.gguf" for m, _ in SIZES])
+        self.assertEqual(list(FAM["sha256"]), [f"Inkling-2-Mini-{m}.gguf" for m, _ in SIZES] + [FAM["mmproj"]])
         for size, n in SIZES:
             file = f"Inkling-2-Mini-{size}.gguf"
             d = FAM["models"][size]
