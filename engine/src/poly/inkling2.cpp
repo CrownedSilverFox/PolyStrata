@@ -552,6 +552,9 @@ void Inkling2::assign_scratch() {
     for (float*& b : bl_) b = fbuf(e);
     bank_ = fbuf(e);
     bank_out_ = fbuf(e);
+    std::copy(bl_, bl_ + kBlocks, home_);
+    home_[kBlocks] = bank_;
+    home_[kBlocks + 1] = bank_out_;
     for (float*& b : in_) b = fbuf(e);
     for (float*& b : xin_) b = fbuf(e);
     for (float*& b : msg_) b = fbuf(e);
@@ -1225,14 +1228,27 @@ size_t Inkling2::extra_bytes() const {
     return n * 2 * (size_t) keep_ * row;
 }
 
-// A layer's slots: each one's convolution inputs at their place in the state, and a window slot's rows behind the
-// state, after the window slots before it.
-void Inkling2::save_layer(int il, int64_t pos, uint8_t* dst) {
+void Inkling2::carry_at(float* at) {
+    const auto place = [&](int i) { return at ? at + (size_t) i * rows_ * n_embd_ : home_[i]; };
+    for (int i = 0; i < kBlocks; ++i) bl_[i] = place(i);
+    bank_ = place(kBlocks);
+    bank_out_ = place(kBlocks + 1);
+}
+
+void Inkling2::save_layer(int il, int64_t pos, uint8_t* dst) { save_slots(il, -1, pos, dst); }
+
+// read()'s groups take a slot of the layer at a time: the run under way's
+void Inkling2::save_run(int il, int64_t pos, uint8_t* dst) { save_slots(il, pass_of(il), pos, dst); }
+
+// A layer's slots (pass < 0), or its slot of that pass: each one's convolution inputs at their place in the state,
+// and a window slot's rows behind the state, after the window slots before it.
+void Inkling2::save_slots(int il, int pass, int64_t pos, uint8_t* dst) {
     const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t), whole = 2 * (size_t) keep_ * row;
+    const Slot* only = pass < 0 ? nullptr : &slots_[(size_t) slot_of(il, pass)];
     size_t rings = 0;
     for (const Slot& s : slots_) {
         const bool swa = blocks_[(size_t) s.il].swa;
-        if (s.il == il && s.past) {
+        if (s.il == il && s.past && (!only || &s == only)) {
             ck(cudaMemcpyAsync(dst + (size_t) (s.past - state_) * sizeof(float), s.past,
                                past_floats() * sizeof(float), cudaMemcpyDeviceToHost, cs(st_)),
                "save state");

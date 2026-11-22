@@ -323,6 +323,7 @@ public:
     /// buffer.  window() and step() do it too, if the caller has not.
     void end_read() {
         if (stage_lent_) narrow_stage();
+        if (carry_lent_) carry_give();
         if (prompt_lends_) lend_prompt();
     }
 
@@ -518,6 +519,14 @@ protected:
     /// Whether read() may take a prompt's calls through a layer together before the next layer.  Not where a call's
     /// layers keep rows of their own between them, or do not run in order.
     virtual bool reads_by_layer() const { return true; }
+    /// Rows a token keeps of its own from one layer run to the next beside its rows of r_ (Inkling 2's residual
+    /// streams).  Where there are any, read() takes a group of calls through each layer run, in the order next_layer()
+    /// gives, with the group's rows and these on the card (read_groups()).  carry_at() points the architecture's
+    /// buffers of them at a call's: carry_rows() blocks of rows_ rows each from `at`, or back at its own with null.
+    virtual int carry_rows() const { return 0; }
+    virtual void carry_at(float* at) { (void) at; }
+    /// What save_layer() writes of layer il that its run under way changes: all of it where a layer runs once a token.
+    virtual void save_run(int il, int64_t pos, uint8_t* dst) { save_layer(il, pos, dst); }
     /// Optional host hook called before layer_head (including when layer_head is graph-replayed).
     virtual void prefetch_layer(int il, int n) { (void) il; (void) n; }
     /// The model's output for `rows` tokens from row `first` of the call, normed: what the output matrix takes.
@@ -926,6 +935,12 @@ protected:
     std::vector<Pack> packs_;
     std::vector<int32_t> pack_tok_;   ///< the read's tokens, co-reads' after its own: a pack's for the routing
     void layer_pack(int il, const Pack& p, float* rows);
+    bool read_groups(const Mark* marks, int n_marks, const std::function<bool(int, int)>* turn, int n);
+    Mapped carry_map_;           ///< read_groups()'s calls' rows: VRAM the expert cache lends a read (carry_take())
+    size_t carry_cut_ = 0;       ///< what the cache gave up for it, which it takes back (carry_give())
+    bool carry_lent_ = false;
+    float* carry_take(size_t bytes, size_t most);
+    void carry_give();
     float* h_res_ = nullptr;  ///< h_res_rows_ tokens' rows, pinned: as many as the longest read so far that needed it
     int h_res_rows_ = 0;
     void* rs_ = nullptr;      ///< the stream of those copies

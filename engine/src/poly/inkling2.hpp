@@ -47,6 +47,11 @@ protected:
     int head_key(int il, int n) const override;
     int tail_key(int il, int n) const override;
     bool reads_by_layer() const override { return false; }
+    // A call's residual streams and the core's bank from one layer run to the next: read() takes the calls through
+    // the runs a group at a time.  Not with the drafter, whose taps of three runs are a call's too.
+    int carry_rows() const override { return ds_file_ ? 0 : kBlocks + 2; }
+    void carry_at(float* at) override;
+    void save_run(int il, int64_t pos, uint8_t* dst) override;
     void output_rows(int first, int rows, float* h) override;
     void finish_logits(float* logits, int rows) override;
     void route(int il, const float* logits, int32_t token, int* ids, float* w, float* tmp) const override;
@@ -189,6 +194,8 @@ private:
     // device scratch, a row a token
     float* bl_[kBlocks] = {};   ///< the residual streams the blocks started from
     float *bank_ = nullptr, *bank_out_ = nullptr;
+    float* home_[kBlocks + 2] = {};   ///< bl_, bank_ and bank_out_ in the scratch, where carry_at(nullptr) puts them
+    void save_slots(int il, int pass, int64_t pos, uint8_t* dst);
     float* in_[3] = {};
     float* xin_[3] = {};
     float* msg_[kCtrl] = {};

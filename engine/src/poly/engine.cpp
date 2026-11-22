@@ -830,6 +830,7 @@ Engine::~Engine() {
     }
     vmm_free(arena_);
     vmm_free(stage_map_);
+    vmm_free(carry_map_);
     vmm_free(prompt_map_);
     vmm_free(work_map_);
     for (unsigned long long h : vpool_) cuMemRelease(h);   // the pool goes back to the card with the engine
@@ -7317,8 +7318,12 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
         share = [&, to](int done, int of) { return (*asked)(lo_ * of + done * (to - lo_), n_layer_ * of); };
         return (const std::function<bool(int, int)>*) &share;
     };
+    // An architecture whose calls keep rows of their own between layer runs takes them through the runs a group at a
+    // time (read_groups()), where the staging buffer can grow for the read.
+    const bool groups = carry_rows() > 0 && n_co == 0 && !next_ && !draft_ && stage_wide_ > stage_narrow_;
     // co-reads go through the layers in packs whatever the experts: one by one their calls would wait as long
-    if (n_co == 0 && (n_calls == 1 || !mmq_ || all_cached() || all < opt_.stage_ahead || !reads_by_layer())) {
+    if (n_co == 0 &&
+        (n_calls == 1 || !mmq_ || all_cached() || all < opt_.stage_ahead || !(reads_by_layer() || groups))) {
         turn = share_to(n_layer_);   // eval() takes the calls through the cards after this one
         // On several cards the next one takes a call on a thread of its own, while this one runs the call after
         // it.  Each card runs the calls as eval() does, in the same order.
@@ -7389,6 +7394,7 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     ck(cudaStreamSynchronize(cs(st_)), "read");
     lock_settle();
     if (n_swap_ > 0) follow(0);
+    if (groups) return read_groups(marks, n_marks, turn, n);
     const size_t e_row = (size_t) n_embd_, r_row = (size_t) streams() * e_row, r_bytes = r_row * sizeof(float);
     const size_t part = (size_t) std::max(streams(), draft_ ? 3 : 1) * rows_ * e_row;   // a call's rows of r_
     float* const r0 = r_;
@@ -7542,6 +7548,141 @@ bool Engine::read(const int32_t* tokens, int n, const Mark* marks, int n_marks,
     pos_ = pos0 + n;
     stats_.tokens += n;
     return true;
+}
+
+// read()'s calls where a call keeps rows of its own from one layer run to the next (carry_rows()): a group of calls
+// at a time through every layer run, in the order next_layer() gives, the group's rows of r_ and its carried rows
+// on the card.  A run's experts outside VRAM are copied once a group, where a call at a time through all the runs
+// copied them once a call.  Inkling 2 Mini UD-Q3_K_XL on the RTX 4070 Laptop, 1,144 of 3,072 experts in VRAM: a
+// 30,954-token read copied 15.2 GB a call that way, 472 GB in all, and the card waited 27 of its 71 s for the bus.
+// A group is as many calls as the card has VRAM for, the expert cache's among it (66 MB a call of 1,024 tokens
+// there); with room for none, a call at a time in the engine's own buffers.  Each call meets the layer runs in the
+// order it would alone, and each run's state takes the group's calls in their order.  A mark's state is copied run
+// by run behind the mark's call (save_run()), as read() copies a layer's.
+bool Engine::read_groups(const Mark* marks, int n_marks, const std::function<bool(int, int)>* turn, int n) {
+    const size_t e_row = (size_t) n_embd_, r_row = (size_t) streams() * e_row;
+    const size_t per = (size_t) rows_ * (r_row + (size_t) carry_rows() * e_row);   // a call's floats
+    const int n_calls = (int) calls_.size();
+    float* const r0 = r_;
+    const int64_t pos0 = pos_;
+    size_t free_b = 0, total_b = 0;
+    ck(cudaMemGetInfo(&free_b, &total_b), "cudaMemGetInfo");
+    if (pool_on_) free_b = vpool_bytes();
+    const size_t quarter = pool_on_ ? 0 : (size_t(std::max(reserve_mib_, 0)) << 20) / 4;
+    const size_t room = (free_b > quarter ? free_b - quarter : 0) +
+                        (exp_ && arena_.mapped > kArenaPiece ? arena_.mapped - kArenaPiece : 0);
+    int g = (int) std::min<size_t>((size_t) n_calls, room / (per * sizeof(float)));
+    float* base = nullptr;
+    const size_t most = (size_t) ((read_rows_ + rows_ - 1) / rows_) * per * sizeof(float);
+    for (; g > 1 && !(base = carry_take((size_t) g * per * sizeof(float), most)); g = (g + 1) / 2) {
+    }
+    g = std::max(g, 1);
+    int visits = 0;
+    for (int il = lo_; il < hi_; il = next_layer(il)) ++visits;
+    const int groups = (n_calls + g - 1) / g, steps = groups * visits;
+    std::vector<uint8_t*> staged((size_t) n_marks, nullptr);   // the first mark's state goes through h_state_
+    for (int m = 0; m < n_marks; ++m)
+        if (marks[m].state && h_state_bytes_ >= card_state_bytes()) {
+            staged[(size_t) m] = h_state_;
+            break;
+        }
+    shared_ahead_ = n >= opt_.stage_ahead;
+    const auto restore = [&] {
+        r_ = r0;
+        carry_at(nullptr);
+        pos_ = pos0;
+        shared_ahead_ = false;
+    };
+    try {
+        for (int k = 0; k < groups; ++k) {
+            const int c0 = k * g, c1 = std::min(n_calls, c0 + g);
+            const auto rows_of = [&](int c) { return base ? base + (size_t) (c - c0) * per : r0; };
+            for (int c = c0; c < c1; ++c) {
+                const Call& call = calls_[(size_t) c];
+                embed_rows(call.tok, call.pos, call.m, h_r_);
+                ck(cudaMemcpyAsync(rows_of(c), h_r_, (size_t) call.m * r_row * sizeof(float), cudaMemcpyHostToDevice,
+                                   cs(st_)),
+                   "embed");
+                ck(cudaStreamSynchronize(cs(st_)), "embed");   // h_r_ is filled again
+            }
+            int il = lo_;
+            for (int v = 0; v < visits; ++v, il = next_layer(il)) {
+                const int step = k * visits + v;
+                if (turn && step > 0 && !(*turn)(step, steps)) {
+                    ck(cudaStreamSynchronize(cs(st_)), "read");
+                    restore();
+                    return false;
+                }
+                for (int c = c0; c < c1; ++c) {
+                    const Call& call = calls_[(size_t) c];
+                    r_ = rows_of(c);
+                    carry_at(base ? r_ + (size_t) rows_ * r_row : nullptr);
+                    pos_ = call.pos;
+                    tok_ = call.tok;
+                    layer(il, call.m);
+                    if (uint8_t* state = call.mark >= 0 ? marks[call.mark].state : nullptr)
+                        save_run(il, call.pos + call.m, staged[(size_t) call.mark] ? staged[(size_t) call.mark] : state);
+                }
+            }
+            for (int c = c0; c < c1; ++c) {   // what no run is for: a layer behind the model's
+                const Call& call = calls_[(size_t) c];
+                uint8_t* state = call.mark >= 0 ? marks[call.mark].state : nullptr;
+                if (!state) continue;
+                uint8_t* to = staged[(size_t) call.mark] ? staged[(size_t) call.mark] : state;
+                for (int j = n_layer_; j < (int) layers_.size(); ++j) save_layer(j, call.pos + call.m, to);
+                save_last(to);
+            }
+        }
+        ck(cudaStreamSynchronize(cs(st_)), "read");
+        for (int m = 0; m < n_marks; ++m)
+            if (staged[(size_t) m]) state_out(staged[(size_t) m], marks[m].state);
+    } catch (...) {
+        restore();
+        throw;
+    }
+    restore();
+    pos_ = pos0 + n;
+    stats_.tokens += n;
+    return true;
+}
+
+// read_groups()'s rows: `bytes` of VRAM at carry_map_ (addresses for `most`), out of the expert cache where the card
+// has not that much free, until end_read() gives it back (carry_give()).  Null where it cannot be mapped.
+float* Engine::carry_take(size_t bytes, size_t most) {
+    if (!carry_map_.base) vmm_reserve(carry_map_, most);
+    if (bytes > carry_map_.reserved) return nullptr;
+    if (carry_map_.mapped >= bytes) return (float*) carry_map_.base;
+    if (up_) ck(cudaStreamSynchronize(cs(up_)), "a read's rows");
+    ck(cudaStreamSynchronize(cs(st_)), "a read's rows");
+    const size_t want = up_to(bytes, pool_on_ ? pg_ : grain_) - carry_map_.mapped;
+    size_t free_b = 0, total_b = 0;
+    ck(cudaMemGetInfo(&free_b, &total_b), "cudaMemGetInfo");
+    if (pool_on_) free_b = vpool_bytes();
+    const size_t quarter = pool_on_ ? 0 : (size_t(std::max(reserve_mib_, 0)) << 20) / 4;
+    if (exp_ && free_b < want + quarter) {
+        const size_t had = arena_.mapped;
+        shrink_cache(want + quarter - free_b);
+        held_is_budget();
+        carry_cut_ += had - arena_.mapped;
+    }
+    carry_lent_ = true;   // carry_give() gives back what was cut even if the map below fails
+    try {
+        vmm_map(carry_map_, bytes, SIZE_MAX, "a read's rows");
+    } catch (const std::runtime_error&) {
+        carry_give();
+        return nullptr;
+    }
+    return (float*) carry_map_.base;
+}
+
+void Engine::carry_give() {
+    if (!carry_lent_) return;
+    if (up_) ck(cudaStreamSynchronize(cs(up_)), "a read's rows");
+    ck(cudaStreamSynchronize(cs(st_)), "a read's rows");
+    vmm_unmap(carry_map_, 0);
+    carry_lent_ = false;
+    if (exp_ && carry_cut_ > 0) grow_cache(carry_cut_, true);
+    carry_cut_ = 0;
 }
 
 // The tokens of a window of t that leave the recurrent state as it is after them: each but the last when there
