@@ -27,7 +27,7 @@ int collect_dots(Type w, Arith a, const DotKernel** out, int cap) {
     const DotTable tables[] = {
         generic_dot_table(),
 #ifdef STRATA_QUANT_X86_TIERS
-        avx_dot_table(), avx2_dot_table(), avx512_dot_table(),
+        avx_dot_table(), avx2_dot_table(), avx512_dot_table(), avx512vbmi_dot_table(),
 #endif
 #ifdef STRATA_QUANT_AVXVNNI
         avxvnni_dot_table(),
