@@ -279,6 +279,16 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_link_libraries(poly_hip_split_attend_test PRIVATE ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
   add_test(NAME poly_hip_split_attend_test COMMAND poly_hip_split_attend_test)
   set_tests_properties(poly_hip_split_attend_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  # ink_attend_batch() on RDNA4's matrix cores against an FP64 reference and ink_attend(), and in 2 calls bit for bit;
+  # needs a gfx12 card (77 = skipped)
+  if(STRATA_ENABLE_HIP)
+    add_executable(poly_inkling2_wmma_test src/poly/inkling2_wmma_test.cu src/poly/inkling2.cu src/poly/kernels.cu)
+    target_include_directories(poly_inkling2_wmma_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                              ${_strata_gpu_include_directories})
+    target_link_libraries(poly_inkling2_wmma_test PRIVATE strata_kernels ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+    add_test(NAME poly_inkling2_wmma_test COMMAND poly_inkling2_wmma_test)
+    set_tests_properties(poly_inkling2_wmma_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  endif()
   # attend_batch() against attend() with Flint's heads, sinks and window ring; needs a card
   add_executable(poly_sink_attend_test src/poly/sink_attend_test.cu src/poly/kernels.cu)
   target_include_directories(poly_sink_attend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include

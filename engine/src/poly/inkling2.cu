@@ -23,6 +23,11 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#if defined(__HIPCC__)
+#include <atomic>
+
+#include "strata/kernels/gfx_arch.hpp"
+#endif
 
 namespace strata::poly {
 namespace {
@@ -1504,6 +1509,265 @@ __global__ void __launch_bounds__(kFlash75Tokens / 16 * G * 32) ink_flash75_kern
     (void) a;   // ink_attend_batch() launches it only where the PTX has the steps
 #endif
 }
+// ink_attend() of a prompt batch on RDNA4's matrix cores (ink_attend_batch() on gfx12): v_wmma_f32_16x16x16_f16
+// (wave32) steps, done transposed, S^T = K Q^T and O^T = V^T P^T.  A launch block takes kWmTokens tokens of a key
+// head's 3 query heads, 4 warps of 16 rows (row = token * 3 + head of the group; 21 tokens, the last row unused), and
+// the keys go kWmKeys at a time counted from position 0, so a token's tiles are the same whichever call it is in.
+// gfx12's fragments: a lane l holds A[l % 16][(l / 16) * 8 + i] and B[(l / 16) * 8 + i][l % 16], and its C/D is
+// D[(l / 16) * 8 + i][l % 16].  So lane l's scores are its row l % 16's at 8 keys, which is what the same lane's B
+// fragment of P^T holds: a row's online softmax lives in the two lanes l and l ^ 16, and the weights never leave the
+// registers.  The queries (times the scale, in log2 units), R, the bias table's rows and the weights go into the
+// products as a half and the half of what it leaves (hi + lo, two or three steps a product), so a sum is float-exact
+// to about 2^-22 of each term; the cache's halves are exact.  The bias is R times the table's rows of the distances a
+// warp's rows reach in the tile, through the warp's shared memory, read back at each score's distance; only tiles
+// with a distance below the extent compute it.  The softmax has the sink's term, and the gate goes on at the end.
+#if defined(__HIPCC__)
+#if defined(__gfx1200__) || defined(__gfx1201__)
+#define INK_WMMA 1
+#else
+#define INK_WMMA 0
+#endif
+constexpr int kWmPer = 3, kWmDim = 128, kWmRel = 16;   // Inkling 2 Mini's heads
+constexpr int kWmWarps = 4, kWmKeys = 32, kWmTokens = 16 * kWmWarps / kWmPer;
+constexpr int kWmSlice = 64;        // the block's distances a tile (rows of the table)
+constexpr int kWmDist = 48;         // a warp's distances a tile: 3 steps of 16
+static_assert(16 * (kWmWarps - 1) / kWmPer + kWmDist <= kWmSlice, "ink_wmma_kernel: the slice covers every warp");
+static_assert(16 / kWmPer + 1 + kWmKeys <= kWmDist, "ink_wmma_kernel: a warp's distances fit its steps");
+static_assert(kWmKeys * kWmDim % (16 * kWmWarps * WARP) == 0, "ink_wmma_kernel: the tiles' copies fill the block");
+
+#if INK_WMMA
+constexpr int kWmKr = kWmDim + 8;   // a key row of shared memory, halves
+constexpr int kWmVs = kWmKeys + 8;  // a dim's row of the values, halves
+constexpr int kWmBe = kWmDist + 4;  // a row's bias of a tile, floats
+// The weights go into the products times 2^12 and the output comes out divided by it (both exact): a weight as small
+// as 1e-6 is then a normal half, and its lo half is not lost below 6e-8.
+constexpr float kWmPScale = 4096.0f;
+
+typedef _Float16 ink_wh8 __attribute__((ext_vector_type(8)));
+typedef float ink_wf8 __attribute__((ext_vector_type(8)));
+
+__device__ __forceinline__ ink_wf8 ink_wmma16(ink_wh8 a, ink_wh8 b, ink_wf8 c) {
+    return __builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12(a, b, c);
+}
+
+__device__ __forceinline__ ink_wf8 ink_wf8_zero() { return ink_wf8{0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f}; }
+
+// x as a half and the half of what that leaves
+__device__ __forceinline__ void ink_hilo(const float* x, ink_wh8& hi, ink_wh8& lo) {
+#pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        hi[i] = (_Float16) x[i];
+        lo[i] = (_Float16) (x[i] - (float) hi[i]);
+    }
+}
+
+__device__ __forceinline__ void ink_load8(const float* p, float* x) {
+    const float4 a = *reinterpret_cast<const float4*>(p), b = *reinterpret_cast<const float4*>(p + 4);
+    x[0] = a.x, x[1] = a.y, x[2] = a.z, x[3] = a.w, x[4] = b.x, x[5] = b.y, x[6] = b.z, x[7] = b.w;
+}
+
+// The warp's shared-memory writes before its lanes read each other's
+__device__ __forceinline__ void ink_wave_sync() {
+    __builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront");
+    __builtin_amdgcn_wave_barrier();
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");
+}
+#endif
+
+__global__ void __launch_bounds__(kWmWarps * WARP) ink_wmma_kernel(InkAttn a) {
+#if INK_WMMA
+    constexpr int DIM = kWmDim, PER = kWmPer, KEYS = kWmKeys;
+    __shared__ __align__(16) _Float16 ks[KEYS * kWmKr];   // [KEYS][KR]
+    __shared__ __align__(16) _Float16 vt[DIM * kWmVs];    // [DIM][VS]: a dim's keys, an A fragment's row
+    __shared__ __align__(16) float slice[kWmSlice * kWmRel];   // the table's rows of the block's distances
+    __shared__ __align__(16) float bias[kWmWarps][16 * kWmBe];
+    constexpr float LOG2E = 1.44269504f;
+    const int tid = threadIdx.x, lane = tid % WARP, w = tid / WARP, col = lane % 16, kh = lane / 16;
+    const int g = blockIdx.y, t0 = (gridDim.x - 1 - blockIdx.x) * kWmTokens;   // the longest blocks first
+    const int nt = min(kWmTokens, a.rows - t0), wt0 = 16 * w / PER;
+    const int r = 16 * w + col, tok = r / PER, head = g * PER + r % PER;   // the lane's row
+    const bool row_ok = tok < nt;
+    const long long p0 = a.pos + t0, own = p0 + tok, ext = a.extent;
+    const long long kb = a.window > 0 && p0 >= a.window ? p0 - a.window + 1 : 0, ke = p0 + nt;
+    const size_t th = (size_t(t0) + (row_ok ? tok : 0)) * a.n_head + head;
+    const __half* kc = (const __half*) a.keys;
+    const __half* vc = (const __half*) a.vals;
+
+    // the row's query (B fragments of Q^T, 16 dims a step) and R, in log2 units
+    ink_wh8 qh[DIM / 16], ql[DIM / 16], rh, rl;
+    {
+        const float c = a.scale * LOG2E;
+#pragma unroll
+        for (int kk = 0; kk < DIM / 16; ++kk) {
+            float x[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+            if (row_ok) ink_load8(a.q + th * DIM + kk * 16 + kh * 8, x);
+#pragma unroll
+            for (int i = 0; i < 8; ++i) x[i] *= c;
+            ink_hilo(x, qh[kk], ql[kk]);
+        }
+        float x[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+        if (row_ok) ink_load8(a.r + th * kWmRel + kh * 8, x);
+#pragma unroll
+        for (int i = 0; i < 8; ++i) x[i] *= LOG2E;
+        ink_hilo(x, rh, rl);
+    }
+    ink_wf8 acc[DIM / 16];   // O^T: dims dt * 16 + kh * 8 + i of the row
+#pragma unroll
+    for (int dt = 0; dt < DIM / 16; ++dt) acc[dt] = ink_wf8_zero();
+    float m = -INFINITY, l = 0.0f;
+
+    for (long long kt = kb < ke ? kb / KEYS * KEYS : ke; kt < ke; kt += KEYS) {
+        __syncthreads();   // the last tile's keys, values and table rows are read
+        // the keys, a 16-byte copy a thread; a key outside [kb, ke) is zeros (its cache row may be anything)
+#pragma unroll
+        for (int it = 0; it < KEYS * (DIM / 8) / (kWmWarps * WARP); ++it) {
+            const int i = tid + it * kWmWarps * WARP, j = i / (DIM / 8), c = i % (DIM / 8);
+            const long long kp = kt + j;
+            const bool live = kp >= kb && kp < ke;
+            const size_t at = (size_t(a.ring > 0 ? kp % a.ring : kp) * a.n_kv + g) * DIM + c * 8;
+            *reinterpret_cast<uint4*>(ks + j * kWmKr + c * 8) =
+                live ? *reinterpret_cast<const uint4*>(kc + at) : make_uint4(0, 0, 0, 0);
+        }
+        // the values by dim, two keys a thread: lanes of a half-warp take 16 key pairs, so a write is 16 words
+#pragma unroll
+        for (int it = 0; it < KEYS / 2 * (DIM / 8) / (kWmWarps * WARP); ++it) {
+            const int i = tid + it * kWmWarps * WARP, j = 2 * (i % (KEYS / 2)), c = i / (KEYS / 2);
+            uint4 x[2];
+#pragma unroll
+            for (int u = 0; u < 2; ++u) {
+                const long long kp = kt + j + u;
+                const bool live = kp >= kb && kp < ke;
+                const size_t at = (size_t(a.ring > 0 ? kp % a.ring : kp) * a.n_kv + g) * DIM + c * 8;
+                x[u] = live ? *reinterpret_cast<const uint4*>(vc + at) : make_uint4(0, 0, 0, 0);
+            }
+            const uint32_t w0[4] = {x[0].x, x[0].y, x[0].z, x[0].w}, w1[4] = {x[1].x, x[1].y, x[1].z, x[1].w};
+#pragma unroll
+            for (int d = 0; d < 8; ++d) {
+                const uint32_t sh = 16 * (d % 2);
+                const uint32_t v = (w0[d / 2] >> sh & 0xffffu) | (w1[d / 2] >> sh & 0xffffu) << 16;
+                *reinterpret_cast<uint32_t*>(vt + (c * 8 + d) * kWmVs + j) = v;
+            }
+        }
+        // the table's rows of distances p0 - (kt + KEYS - 1) + e, zeros outside [0, extent)
+        const long long d0 = p0 - (kt + KEYS - 1);
+        if (d0 < ext)
+            for (int i = tid; i < kWmSlice * 4; i += kWmWarps * WARP) {
+                const long long d = d0 + i / 4;
+                float4 x = make_float4(0.f, 0.f, 0.f, 0.f);
+                if (d >= 0 && d < ext) x = *reinterpret_cast<const float4*>(a.rel_bias + d * kWmRel + (i % 4) * 4);
+                *reinterpret_cast<float4*>(slice + i * 4) = x;
+            }
+        __syncthreads();
+
+        // S^T = K Q^T: s[t16][i] is the row's score at key kt + 16 t16 + 8 kh + i
+        ink_wf8 s[KEYS / 16];
+#pragma unroll
+        for (int t16 = 0; t16 < KEYS / 16; ++t16) {
+            const _Float16* kr = ks + (t16 * 16 + col) * kWmKr + kh * 8;
+            ink_wf8 c = ink_wf8_zero();
+#pragma unroll
+            for (int kk = 0; kk < DIM / 16; ++kk) {
+                const ink_wh8 kf = *reinterpret_cast<const ink_wh8*>(kr + kk * 16);
+                c = ink_wmma16(kf, qh[kk], c);
+                c = ink_wmma16(kf, ql[kk], c);
+            }
+            s[t16] = c;
+        }
+
+        // the bias: the warp's distances dw + e, e = 16 T + 8 kh + i, times the rows' R, put by row and read back
+        const long long dw = d0 + wt0;
+        const bool near = dw < ext;
+        float* bw = bias[w];
+        if (near) {
+#pragma unroll
+            for (int T = 0; T < kWmDist / 16; ++T) {
+                float x[8];
+                ink_load8(slice + (wt0 + T * 16 + col) * kWmRel + kh * 8, x);
+                ink_wh8 th_, tl_;
+                ink_hilo(x, th_, tl_);
+                ink_wf8 c = ink_wmma16(th_, rh, ink_wf8_zero());
+                c = ink_wmma16(tl_, rh, c);
+                c = ink_wmma16(th_, rl, c);
+#pragma unroll
+                for (int i = 0; i < 8; ++i) bw[col * kWmBe + T * 16 + kh * 8 + i] = c[i];
+            }
+            ink_wave_sync();
+        }
+
+        // the mask and the online softmax, in log2 units
+        const int e0 = tok - wt0 + KEYS - 1;   // the row's distance to key kt, less dw
+        float mx = -INFINITY;
+#pragma unroll
+        for (int t16 = 0; t16 < KEYS / 16; ++t16)
+#pragma unroll
+            for (int i = 0; i < 8; ++i) {
+                const int k = t16 * 16 + kh * 8 + i;
+                const long long kp = kt + k, dist = own - kp;
+                const bool seen = row_ok && kp >= kb && kp < ke && dist >= 0 && (a.window <= 0 || dist < a.window);
+                float v = -INFINITY;
+                if (seen) v = near ? s[t16][i] + bw[col * kWmBe + e0 - k] : s[t16][i];
+                s[t16][i] = v;
+                mx = fmaxf(mx, v);
+            }
+        mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 16));
+        const float now = fmaxf(m, mx), base = now == -INFINITY ? 0.0f : now;
+        const float f = exp2f(m - base);
+        m = now;
+        if (f != 1.0f) {
+            l *= f;
+#pragma unroll
+            for (int dt = 0; dt < DIM / 16; ++dt)
+#pragma unroll
+                for (int i = 0; i < 8; ++i) acc[dt][i] *= f;
+        }
+#pragma unroll
+        for (int t16 = 0; t16 < KEYS / 16; ++t16)
+#pragma unroll
+            for (int i = 0; i < 8; ++i) {
+                const float p = exp2f(s[t16][i] - base);
+                s[t16][i] = p;
+                l += p;
+            }
+
+        // O^T += V^T P^T: keys 16 kg.. of the dims 16 dt..
+#pragma unroll
+        for (int kg = 0; kg < KEYS / 16; ++kg) {
+            const _Float16* vr = vt + col * kWmVs + kg * 16 + kh * 8;
+            float p[8];
+#pragma unroll
+            for (int i = 0; i < 8; ++i) p[i] = s[kg][i] * kWmPScale;
+            ink_wh8 ph, pl;
+            ink_hilo(p, ph, pl);
+#pragma unroll
+            for (int dt = 0; dt < DIM / 16; ++dt) {
+                const ink_wh8 vf = *reinterpret_cast<const ink_wh8*>(vr + dt * 16 * kWmVs);
+                acc[dt] = ink_wmma16(vf, ph, acc[dt]);
+                acc[dt] = ink_wmma16(vf, pl, acc[dt]);
+            }
+        }
+    }
+
+    l += __shfl_xor_sync(0xffffffffu, l, 16);
+    if (!row_ok) return;
+    // the sink, in log2 units like the scores: the softmax's term of score 0 once the sink is taken off the scores
+    const float sink = a.sink[th] * LOG2E, now = fmaxf(m, sink), f = exp2f(m - now);
+    l = l * f + exp2f(sink - now);
+    const size_t at = th * DIM + kh * 8;
+#pragma unroll
+    for (int dt = 0; dt < DIM / 16; ++dt)
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            const size_t e = at + dt * 16 + i;
+            float v = acc[dt][i] * f / (l * kWmPScale);
+            if (a.gate) v *= 1.0f / (1.0f + expf(-a.gate[e]));   // ink_mul_sigmoid_kernel's
+            a.out[e] = v;
+        }
+#else
+    (void) a;
+    __builtin_trap();   // ink_attend_batch() launches it on gfx12 only (ink_wmma_card())
+#endif
+}
+#endif
 
 __device__ __forceinline__ float2 situ_scales(const ExpertScales& s, int row) {
     if (!s.gate && !s.up) return make_float2(1.0f, 1.0f);
@@ -2006,10 +2270,44 @@ static bool flash75(const InkAttn& a, int per, void* stream) {
 }
 #endif
 
+#if defined(__HIPCC__)
+// Whether the current card is gfx12, whose instructions ink_wmma_kernel has.  The arch macros are the device pass's
+// alone, so the host asks the card, once a device.
+static bool ink_wmma_card() {
+    static std::atomic<int> cards[16] = {};   // a device's: 1 gfx12, 2 not, 0 not yet asked
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 16) {
+        (void) cudaGetLastError();
+        return false;
+    }
+    int card = cards[dev].load(std::memory_order_relaxed);
+    if (!card) {
+        cudaDeviceProp p{};
+        const bool gfx12 = cudaGetDeviceProperties(&p, dev) == cudaSuccess &&
+                           strata::kernels::gfx_arch_is_gfx12_wmma(p.gcnArchName);
+        (void) cudaGetLastError();
+        card = gfx12 ? 1 : 2;
+        cards[dev].store(card, std::memory_order_relaxed);
+    }
+    return card == 1;
+}
+#endif
+
 bool ink_attend_batch(const InkAttn& a, void* stream) {
 #if defined(__HIPCC__)
-    (void) a, (void) stream;
-    return false;   // the kernel is NVIDIA's tensor cores' (INK_FLASH)
+    // RDNA4's matrix cores (ink_wmma_kernel): fp16 caches, Inkling 2 Mini's heads (128 values, 3 on a key head, 16
+    // relative values), positions on the host, no q8.  Elsewhere, or with STRATA_INK_FLASH=0, attend_batch()'s path.
+    if (a.rows <= 0) return true;
+    static const bool off = [] {
+        const char* v = std::getenv("STRATA_INK_FLASH");
+        return v && v[0] == '0';
+    }();
+    if (off || a.kv8 || a.dim != kWmDim || a.n_rel != kWmRel || a.n_kv < 1 || a.n_head != kWmPer * a.n_kv || a.at || a.q8 ||
+        !ink_wmma_card())
+        return false;
+    ink_wmma_kernel<<<dim3(grid((size_t) a.rows, kWmTokens), a.n_kv), kWmWarps * WARP, 0, cs(stream)>>>(a);
+    launched("ink_wmma");
+    return true;
 #else
     if (a.rows <= 0) return true;
     static const bool off = [] {   // STRATA_INK_FLASH=0: attend_batch()'s path
