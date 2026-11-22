@@ -4921,7 +4921,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         Cached cached[kCpuRows * kMaxUsed];
         int32_t host_e[kCpuRows * kMaxUsed], host_k[kCpuRows * kMaxUsed];   // a host entry's expert and its place
 #if !defined(STRATA_GPU_METAL)
-        ExpertCard::Job far[kCpuRows * kMaxUsed];   // --expert-gpu: the experts the second card holds
+        ExpertCard::Job card2[kCpuRows * kMaxUsed];   // --expert-gpu: the experts the second card holds
         int n_far = 0;
 #endif
         float host_rel[kCpuRows * kMaxUsed];   // and its weight's share of its token's experts' weight
@@ -4984,7 +4984,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                 }
 #if !defined(STRATA_GPU_METAL)
                 if (const uint8_t* s = ecard_ ? ecard_->slot(il, (int) e) : nullptr) {
-                    far[n_far++] = {s, we, t, (int) e};
+                    card2[n_far++] = {s, we, t, (int) e};
                     continue;
                 }
 #endif
@@ -5065,7 +5065,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         stats_.gpu_experts += n_cached;
 #if !defined(STRATA_GPU_METAL)
         if (n_far > 0) {   // on the second card while the first one and the CPU do theirs
-            ecard_->start(L, il, h_x_ + (size_t) at * e_row, m, far, n_far, limit, gelu_, situ_beta_, situ_lb_);
+            ecard_->start(L, il, h_x_ + (size_t) at * e_row, m, card2, n_far, limit, gelu_, situ_beta_, situ_lb_);
             stats_.gpu_experts += n_far;
         }
 #endif
