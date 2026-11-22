@@ -517,43 +517,122 @@ bool ink_attend_batch(const InkAttn& c, void* stream) {
 
 bool ink_kv8_ok() { return false; }
 
-// ---- the DSpark drafter: no Metal kernels yet ----
+// ---- the DSpark drafter (inkling.metal's ds_*): its pick's 2-bit screen (ds_screens()) has no Metal kernels ----
 
-void ds_mix(const DsMix&, int, int, float, void*) { unported("DSpark drafter (--draft-model)"); }
-void ds_rope(float*, int, int, const float*, float, float, const DsPos&, uint16_t*, int64_t, const float*, uint16_t*,
-             void*, long long*) {
-    unported("DSpark drafter (--draft-model)");
+namespace {
+constexpr int kDsRows = 24, kDsSplits = 64, kDsPart = 130, kDsPickParts = 128;
+void ds_cap(Args& a, int64_t cap, int at) {
+    a.n[at] = int(uint32_t(cap));
+    a.n[at + 1] = int(uint32_t(uint64_t(cap) >> 32));
 }
-void ds_attend(const float*, const uint16_t*, const uint16_t*, const long long*, int64_t, const DsPos&, int, int, int,
-               int, float, float*, float*, void*) {
-    unported("DSpark drafter (--draft-model)");
+void ds_elem(Args& a, int kind, size_t n, void* stream) {
+    if (!n) return;
+    a.n[0] = kind;
+    a.stride = n;
+    run("ds_elem", a, stream, {blocks(n, 256), 1, 1}, 256);
 }
-size_t ds_attend_floats(int) { return 1; }
-void ds_swiglu(float*, const float*, size_t, void*) { unported("DSpark drafter (--draft-model)"); }
-void ds_block_in(float*, const float*, int, int, const DsPos&, const long long*, float*, int, int32_t*, const float*,
-                 int, float*, void*) {
-    unported("DSpark drafter (--draft-model)");
+}  // namespace
+
+void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream) {
+    if (rows <= 0) return;
+    if (n > 4096) throw std::invalid_argument("ds_mix: rows of up to 4,096 values");
+    Args a;
+    a.p[0] = m.tap, a.p[4] = m.alpha, a.p[9] = m.out, a.p[10] = m.ring, a.p[11] = m.pos.at;
+    for (int j = 0; j < 4; ++j) a.p[5 + j] = m.norm[j];
+    a.n[0] = n, a.n[1] = rows, a.n[2] = m.ring_rows;
+    a.f[0] = eps;
+    a.pos = m.pos.pos0;
+    a.stride = m.tap_stride;
+    run("ds_mix", a, stream, {uint32_t(rows), 4, 1}, 256);
 }
-void ds_markov_in(const float*, const uint16_t*, const int32_t*, float*, int, void*) {
-    unported("DSpark drafter (--draft-model)");
+
+void ds_rope(float* x, int heads, int rows, const float* w, float eps, float theta, const DsPos& p, uint16_t* cache,
+             int64_t cap, const float* v, uint16_t* vcache, void* stream, long long* tags) {
+    if (rows <= 0) return;
+    Args a;
+    a.p[0] = x, a.p[1] = w, a.p[2] = cache, a.p[3] = v, a.p[4] = vcache, a.p[5] = tags, a.p[6] = p.at;
+    a.n[0] = heads;
+    ds_cap(a, cap, 1);
+    a.f[0] = eps, a.f[1] = theta;
+    a.pos = p.pos0;
+    run("ds_rope", a, stream, {uint32_t(rows), uint32_t(heads), 1}, 128);
 }
-void ds_markov_step(const float*, const float*, const float*, const float*, float*, float*, int, void*) {
-    unported("DSpark drafter (--draft-model)");
+
+size_t ds_attend_floats(int kv_heads) { return (size_t) kv_heads * kDsSplits * kDsRows * kDsPart; }
+
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, const long long* tags, int64_t cap,
+               const DsPos& p, int window, int rows, int heads, int kv_heads, float scale, float* part, float* out,
+               void* stream) {
+    if (heads % kv_heads || rows * (heads / kv_heads) > kDsRows)
+        throw std::logic_error("ds_attend: more query rows a kv head than it holds");
+    Args a;
+    a.p[0] = q, a.p[1] = keys, a.p[2] = vals, a.p[3] = tags, a.p[4] = part, a.p[5] = p.at, a.p[6] = out;
+    a.n[0] = rows, a.n[1] = window, a.n[2] = heads, a.n[3] = kv_heads;
+    ds_cap(a, cap, 4);
+    a.f[0] = scale;
+    a.pos = p.pos0;
+    run("ds_part", a, stream, {uint32_t(kv_heads), uint32_t(kDsSplits), 1}, 256);
+    run("ds_join", a, stream, {uint32_t(rows), uint32_t(heads), 1}, 128);
 }
-void ds_pick(const float*, const float*, const float*, int, float, float*, Likeliest*, int32_t*, void*) {
-    unported("DSpark drafter (--draft-model)");
+
+void ds_swiglu(float* g, const float* u, size_t n, void* stream) {
+    Args a;
+    a.p[0] = g, a.p[1] = u;
+    ds_elem(a, 0, n, stream);
 }
-size_t ds_pick_floats() { return 1; }
-void ds_fold_q8(const float*, int, int, int, void*, void*) { unported("DSpark drafter (--draft-model)"); }
+
+void ds_block_in(float* x, const float* mask, int n, int rows, const DsPos& p, const long long* token, float* state,
+                 int rank, int32_t* prev, const float* ring, int ring_rows, float* ctx, void* stream) {
+    Args a;
+    a.p[0] = x, a.p[1] = mask, a.p[2] = p.at, a.p[3] = token, a.p[4] = state, a.p[5] = prev, a.p[6] = ring, a.p[7] = ctx;
+    a.n[1] = n, a.n[2] = rows, a.n[3] = rank, a.n[4] = ring_rows;
+    a.pos = p.pos0;
+    ds_elem(a, 1, (size_t) n, stream);
+}
+
+void ds_markov_in(const float* state, const uint16_t* w1, const int32_t* prev, float* in, int rank, void* stream) {
+    Args a;
+    a.p[0] = state, a.p[1] = w1, a.p[2] = prev, a.p[3] = in;
+    a.n[1] = rank;
+    ds_elem(a, 2, (size_t) rank, stream);
+}
+
+void ds_markov_step(const float* ctx_h, const float* ctx_f, const float* bias, const float* sp, float* state,
+                    float* latent, int rank, void* stream) {
+    Args a;
+    a.p[0] = ctx_h, a.p[1] = ctx_f, a.p[2] = bias, a.p[3] = sp, a.p[4] = state, a.p[5] = latent;
+    a.n[1] = rank;
+    ds_elem(a, 3, (size_t) rank, stream);
+}
+
+size_t ds_pick_floats() { return kDsPickParts * 3; }
+
+void ds_pick(const float* base, const float* fy, const float* fb, int n_keep, float cap, float* scratch, Likeliest* out,
+             int32_t* prev, void* stream) {
+    Args a;
+    a.p[0] = base, a.p[1] = fy, a.p[2] = fb, a.p[3] = scratch, a.p[4] = out, a.p[5] = prev;
+    a.n[0] = n_keep, a.n[1] = kDsPickParts;
+    a.f[0] = cap;
+    run("ds_pick_part", a, stream, {uint32_t(kDsPickParts), 1, 1}, 256);
+    run("ds_pick_join", a, stream, {1, 1, 1}, 32);
+}
+
+void ds_fold_q8(const float* ft, int n_rows, int blocks_, int b, void* fold, void* stream) {
+    Args a;
+    a.p[0] = ft, a.p[1] = fold;
+    a.n[0] = n_rows, a.n[1] = blocks_, a.n[2] = b;
+    run("ds_fold_q8", a, stream, {blocks((size_t) n_rows, 256), 1, 1}, 256);
+}
+
 bool ds_screens(int, int) { return false; }
 size_t ds_screen_bytes(int, int64_t) { return 0; }
-void ds_screen_pack(const void*, int, int64_t, void*, void*) { unported("DSpark drafter (--draft-model)"); }
+void ds_screen_pack(const void*, int, int64_t, void*, void*) { unported("the drafter's 2-bit screen"); }
 int64_t ds_screen_rows(int64_t n) { return n; }
-void ds_screen_order(const float*, int64_t, float*, void*) { unported("DSpark drafter (--draft-model)"); }
+void ds_screen_order(const float*, int64_t, float*, void*) { unported("the drafter's 2-bit screen"); }
 size_t ds_screen_scratch_bytes(int64_t) { return 0; }
-void ds_head_base(const DsScreen&, const void*, int, float*, void*) { unported("DSpark drafter (--draft-model)"); }
+void ds_head_base(const DsScreen&, const void*, int, float*, void*) { unported("the drafter's 2-bit screen"); }
 void ds_head_pick(const DsScreen&, const void*, const void*, const float*, int, void*, int32_t*, Likeliest*, void*) {
-    unported("DSpark drafter (--draft-model)");
+    unported("the drafter's 2-bit screen");
 }
 
 }  // namespace strata::poly

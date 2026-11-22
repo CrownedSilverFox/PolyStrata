@@ -718,3 +718,251 @@ kernel void ink_attn_join(constant Args& a [[buffer(0)]], uint2 grp [[threadgrou
         if (a.p[10]) q8_put(P<uchar>(a, 10), int(head * dim) + d, y);
     }
 }
+
+// ---- the DSpark drafter (Inkling2::guess_block(), ds_commit()): inkling2.cu's ds_* kernels ----
+// A row's position: at[2 t] where the launch reads it on the card (at), else pos0 + t.
+inline long ds_pos(device const long* at, long pos0, int t) { return at ? at[2 * t] : pos0 + t; }
+
+// ds_mix(): row t (x), mix j (y).  p[0] the features (feature k at k * stride), p[4] alpha, p[5..8] norm[j], p[9]
+// out, p[10] ring, p[11] at; n: n, rows, ring rows; f[0] eps; pos the first row's position.
+kernel void ds_mix(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_position_in_grid]],
+                   uint tid [[thread_index_in_threadgroup]], uint2 shape [[threads_per_threadgroup]]) {
+    const uint nt = shape.x;
+    threadgroup float part[32];
+    threadgroup float v[4096];
+    const int t = g.x, j = g.y, n = a.n[0], rows = a.n[1];
+    device const float* al = P<float>(a, 4) + j * 4;
+    device const float* tap = P<float>(a, 0);
+    float ss = 0;
+    for (int i = tid; i < n; i += nt) {
+        float x = 0;
+        for (int k = 0; k < 4; ++k) x += al[k] * tap[ulong(k) * a.stride + ulong(t) * n + i];
+        v[i] = x;
+        ss += x * x;
+    }
+    const float scale = 1.0f / sqrt(tg_sum(ss, part, tid, nt) / float(n) + a.f[0]);
+    device float* out = j < 3 ? P<float>(a, 9) + (ulong(j) * rows + t) * n
+                              : P<float>(a, 10) + ulong(ds_pos(P<long>(a, 11), a.pos, t) % a.n[2]) * n;
+    device const float* w = P<float>(a, 5 + j);
+    for (int i = tid; i < n; i += nt) out[i] = v[i] * scale * w[i];
+}
+
+// ds_rope(): row t (x), head h (y), a thread a value of 128.  p: x, w, cache, v, vcache, tags, at; n: heads, cap (low
+// and high words); f: eps, theta; pos.
+kernel void ds_rope(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_position_in_grid]],
+                    uint i [[thread_index_in_threadgroup]]) {
+    threadgroup float part[32];
+    threadgroup float y[128];
+    const int t = g.x, h = g.y, heads = a.n[0];
+    device float* row = P<float>(a, 0) + (ulong(t) * heads + h) * 128;
+    const float xi = row[i];
+    const float scale = 1.0f / sqrt(tg_sum(xi * xi, part, i, 128) / 128.0f + a.f[0]);
+    y[i] = xi * scale * P<float>(a, 1)[i];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const long pos = ds_pos(P<long>(a, 6), a.pos, t);
+    const int k = i % 64;
+    const float freq = precise::pow(a.f[1], -2.0f * float(k) / 128.0f), ang = float(pos) * freq;
+    const float c = precise::cos(ang), s = precise::sin(ang);
+    const float out = i < 64 ? y[i] * c - y[i + 64] * s : y[i - 64] * s + y[i] * c;
+    if (!a.p[2]) {
+        row[i] = out;
+        return;
+    }
+    const long cap = long(uint(a.n[1])) | (long(a.n[2]) << 32);
+    const ulong cell = ulong(pos % cap) * heads * 128 + ulong(h) * 128 + i;
+    P<half>(a, 2)[cell] = half(out);
+    if (a.p[3]) P<half>(a, 4)[cell] = half(P<float>(a, 3)[(ulong(t) * heads + h) * 128 + i]);
+    if (a.p[5] && h == 0 && i == 0) P<long>(a, 5)[pos % cap] = pos;
+}
+
+// ds_attend()'s part: kv head g (x), split s (y) of the keys [lo, lo + nk) (a window layer's window before the block
+// and the block, a full layer's every position), each query row of the head's (block row t's head g * grp + k as
+// row t * grp + k) a SIMD group's in turn, a key at a time with an online softmax; a cell whose tag is another
+// position is left out.  p: q, keys, vals, tags, part, at, out; n: rows, window, heads, kv heads, cap (low, high);
+// f[0] scale; pos the block's first position.  8 SIMD groups, rows r = sg, sg + 8, sg + 16.
+constant constexpr int kDsRows = 24, kDsSplits = 64, kDsPart = 130;
+inline void ds_span(constant Args& a, thread long& lo, thread long& nk, thread long& per) {
+    const long p0 = ds_pos(P<long>(a, 5), a.pos, 0);
+    lo = a.n[1] > 0 ? max(0L, p0 - a.n[1]) : 0L;
+    nk = p0 + a.n[0] - lo;
+    per = ((nk + kDsSplits - 1) / kDsSplits + 31) / 32 * 32;
+}
+kernel void ds_part(constant Args& a [[buffer(0)]], uint2 grp [[threadgroup_position_in_grid]],
+                    uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    const int g = grp.x, s = grp.y, heads = a.n[2], kvh = a.n[3], gq = heads / kvh, R = a.n[0] * gq;
+    const long cap = long(uint(a.n[4])) | (long(a.n[5]) << 32);
+    long lo, nk, per;
+    ds_span(a, lo, nk, per);
+    const long k0 = long(s) * per;
+    if (k0 >= nk) return;
+    const long k1 = min(nk, k0 + per);
+    device const half* keys = P<half>(a, 1);
+    device const half* vals = P<half>(a, 2);
+    device const long* tags = P<long>(a, 3);
+    device float* out = P<float>(a, 4) + (ulong(g) * kDsSplits + s) * kDsRows * kDsPart;
+    for (int r = sg; r < R; r += 8) {
+        float q[4], acc[4] = {0, 0, 0, 0};
+        device const float* qr = P<float>(a, 0) + (ulong(r / gq) * heads + g * gq + r % gq) * 128;
+        for (int c = 0; c < 4; ++c) q[c] = qr[lane * 4 + c] * a.f[0];
+        float m = -INFINITY, l = 0;
+        for (long k = k0; k < k1; ++k) {
+            const long at = lo + k, cell = at % cap;
+            if (tags && tags[cell] != at) continue;
+            const ulong o = (ulong(cell) * kvh + g) * 128 + lane * 4;
+            float d = 0;
+            for (int c = 0; c < 4; ++c) d += q[c] * float(keys[o + c]);
+            d = simd_sum(d);
+            const float next = max(m, d), keep = exp(m - next), w = exp(d - next);
+            l = l * keep + w;
+            m = next;
+            for (int c = 0; c < 4; ++c) acc[c] = acc[c] * keep + w * float(vals[o + c]);
+        }
+        for (int c = 0; c < 4; ++c) out[r * kDsPart + lane * 4 + c] = acc[c];
+        if (lane == 0) {
+            out[r * kDsPart + 128] = m;
+            out[r * kDsPart + 129] = l;
+        }
+    }
+}
+
+// ds_attend()'s join: query row t (x), head h (y), a thread a value
+kernel void ds_join(constant Args& a [[buffer(0)]], uint2 grp [[threadgroup_position_in_grid]],
+                    uint d [[thread_index_in_threadgroup]]) {
+    const int t = grp.x, h = grp.y, heads = a.n[2], gq = heads / a.n[3];
+    long lo, nk, per;
+    ds_span(a, lo, nk, per);
+    const int ns = int((nk + per - 1) / per);
+    const ulong step = ulong(kDsRows) * kDsPart;
+    device const float* in = P<float>(a, 4) + ulong(h / gq) * kDsSplits * step + ulong(t * gq + h % gq) * kDsPart;
+    float m = -INFINITY;
+    for (int s = 0; s < ns; ++s) m = max(m, in[s * step + 128]);
+    float l = 0, acc = 0;
+    for (int s = 0; s < ns; ++s) {
+        const float ms = in[s * step + 128];
+        const float w = ms == -INFINITY ? 0.0f : exp(ms - m);
+        l += w * in[s * step + 129];
+        acc += w * in[s * step + d];
+    }
+    P<float>(a, 6)[(ulong(t) * heads + h) * 128 + d] = acc / l;
+}
+
+// The drafter's elementwise steps, n[0] the kind; stride the count.
+// 0 ds_swiglu: g = silu(g) * u (p g, u).
+// 1 ds_block_in: x's rows 1 .. rows - 1 the mask, ctx the ring row before the block, state zeros, *prev = *token
+//   (p x, mask, at, token, state, prev, ring, ctx; n: kind, n, rows, rank, ring rows; pos).
+// 2 ds_markov_in: in = [state ; BF16 row *prev of w1] (p state, w1, prev, in; n[1] rank).
+// 3 ds_markov_step (p ctx_h, ctx_f, bias, sp, state, latent; n[1] rank).
+kernel void ds_elem(constant Args& a [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+    if (i >= a.stride) return;
+    switch (a.n[0]) {
+        case 0: {
+            device float* gv = P<float>(a, 0);
+            gv[i] = gv[i] / (1.0f + exp(-gv[i])) * P<float>(a, 1)[i];
+            break;
+        }
+        case 1: {
+            const int n = a.n[1];
+            for (int r = 1; r < a.n[2]; ++r) P<float>(a, 0)[ulong(r) * n + i] = P<float>(a, 1)[i];
+            const long p0 = ds_pos(P<long>(a, 2), a.pos, 0);
+            P<float>(a, 7)[i] = P<float>(a, 6)[ulong((p0 - 1) % a.n[4]) * n + i];
+            if (int(i) < a.n[3]) P<float>(a, 4)[i] = 0.0f;
+            if (i == 0) P<int>(a, 5)[0] = int(P<long>(a, 3)[0]);
+            break;
+        }
+        case 2: {
+            const int rank = a.n[1];
+            P<float>(a, 3)[i] = P<float>(a, 0)[i];
+            P<float>(a, 3)[rank + i] = as_type<float>(uint(P<ushort>(a, 1)[ulong(P<int>(a, 2)[0]) * rank + i]) << 16);
+            break;
+        }
+        case 3: {
+            const int rank = a.n[1];
+            device const float* ch = P<float>(a, 0);
+            device const float* cf = P<float>(a, 1);
+            device const float* b = P<float>(a, 2);
+            device const float* sp = P<float>(a, 3);
+            const float gate = sigm(ch[i] + cf[i] + b[i] + sp[i]);
+            const int u = rank + i, l = 2 * rank + i;
+            device float* state = P<float>(a, 4);
+            state[i] = gate * state[i] + (1.0f - gate) * precise::tanh(ch[u] + cf[u] + b[u] + sp[u]);
+            P<float>(a, 5)[i] = precise::tanh(ch[l] + cf[l] + b[l] + sp[l]);
+            break;
+        }
+    }
+}
+
+// ds_pick(): each threadgroup (of 256 threads) a slice of the vocabulary, its scores cap tanh((base + fy + fb) / cap):
+// the largest (the lowest id of equals) and the softmax sum against it into part (m, s, id); then ds_pick_join.
+// p: base, fy, fb, part, out, prev; n: n_keep, parts; f[0] cap.
+struct DsPart {
+    float m, s;
+    int id;
+};
+inline void ds_join_part(thread float& m, thread float& s, thread int& id, float m2, float s2, int id2) {
+    if (m2 > m || (m2 == m && id2 < id)) {
+        s = (m == -INFINITY ? 0.0f : s * exp(m - m2)) + s2;
+        m = m2;
+        id = id2;
+    } else if (m2 != -INFINITY) {
+        s += s2 * exp(m2 - m);
+    }
+}
+kernel void ds_pick_part(constant Args& a [[buffer(0)]], uint blk [[threadgroup_position_in_grid]],
+                         uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float bm[8], bs[8];
+    threadgroup int bi[8];
+    const int n_keep = a.n[0], parts = a.n[1], per = (n_keep + parts - 1) / parts, v0 = int(blk) * per,
+              v1 = min(n_keep, v0 + per);
+    const float cap = a.f[0];
+    float m = -INFINITY, s = 0;
+    int id = 0x7fffffff;
+    for (int v = v0 + int(tid); v < v1; v += 256) {
+        const float z = cap * precise::tanh((P<float>(a, 0)[v] + P<float>(a, 1)[v] + P<float>(a, 2)[v]) / cap);
+        if (z > m) {
+            s = s * exp(m - z) + 1.0f;
+            m = z;
+            id = v;
+        } else {
+            s += exp(z - m);
+        }
+    }
+    for (ushort o = 16; o > 0; o >>= 1) {
+        const float m2 = simd_shuffle_xor(m, o), s2 = simd_shuffle_xor(s, o);
+        const int id2 = simd_shuffle_xor(id, o);
+        ds_join_part(m, s, id, m2, s2, id2);
+    }
+    if ((tid & 31) == 0) bm[tid >> 5] = m, bs[tid >> 5] = s, bi[tid >> 5] = id;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid != 0) return;
+    for (int k = 1; k < 8; ++k) ds_join_part(m, s, id, bm[k], bs[k], bi[k]);
+    device DsPart* part = reinterpret_cast<device DsPart*>(a.p[3]);
+    part[blk].m = m;
+    part[blk].s = s;
+    part[blk].id = id;
+}
+kernel void ds_pick_join(constant Args& a [[buffer(0)]], uint tid [[thread_index_in_threadgroup]]) {
+    if (tid != 0) return;
+    device const DsPart* part = reinterpret_cast<device const DsPart*>(a.p[3]);
+    float m = -INFINITY, s = 0;
+    int id = 0x7fffffff;
+    for (int k = 0; k < a.n[1]; ++k) ds_join_part(m, s, id, part[k].m, part[k].s, part[k].id);
+    P<int>(a, 4)[0] = id;
+    P<float>(a, 4)[1] = 1.0f / s;
+    P<int>(a, 5)[0] = id;
+}
+
+// ds_fold_q8(): a row a thread, Q8_0 block b of each row from the 32 rows of ft (ft[k][v]).  p: ft, fold; n: n_rows,
+// blocks, b.
+kernel void ds_fold_q8(constant Args& a [[buffer(0)]], uint v [[thread_position_in_grid]]) {
+    const int n_rows = a.n[0];
+    if (v >= uint(n_rows)) return;
+    float x[32], amax = 0;
+    for (int k = 0; k < 32; ++k) {
+        x[k] = P<float>(a, 0)[ulong(k) * n_rows + v];
+        amax = max(amax, abs(x[k]));
+    }
+    const float d = amax / 127.0f, id = d != 0.0f ? 1.0f / d : 0.0f;
+    device uchar* blk = P<uchar>(a, 1) + (ulong(v) * a.n[1] + a.n[2]) * 34;
+    *reinterpret_cast<device half*>(blk) = half(d);
+    for (int k = 0; k < 32; ++k) blk[2 + k] = uchar(char(round(x[k] * id)));
+}
