@@ -53,6 +53,23 @@ class MoveOver(unittest.TestCase):
             moved = setup.move_over_old_layout()
         return moved, out.getvalue()
 
+    def test_strata_polys_engine_moves_too(self):
+        """poly.10's setup put strata-poly in the clone's engine-poly/: left there, its config named it outside terminal/
+        and update_poly_engine() never replaced it (an update from poly.10 kept the 0.1.45 engine)."""
+        c = self.clone
+        (c / "engine-poly").mkdir()
+        (c / "engine-poly" / "strata-poly.exe").write_bytes(b"MZ")
+        (c / "engine-poly" / "BUILD.json").write_text('{"source": "release"}', encoding="utf-8")
+        (c / "strata-qwen36-ud-q3_k_m.json").write_text(json.dumps({
+            "model_name": "q", "exe": str(c / "engine-poly" / "strata-poly.exe"), "args": []}), encoding="utf-8")
+        self.run_it()
+        t = self.root
+        self.assertTrue((t / "engine-poly" / "strata-poly.exe").exists())
+        self.assertFalse((c / "engine-poly").exists())
+        cfg = json.loads((t / "strata-qwen36-ud-q3_k_m.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["exe"], str(t / "engine-poly" / "strata-poly.exe"))
+        self.assertEqual(Path(cfg["exe"]).parent, t / setup.ENGINE_POLY_DIR)   # update_poly_engine()'s test for its own engine
+
     def test_the_old_state_moves_into_terminal_with_its_paths(self):
         moved, out = self.run_it()
         t, c = self.root, self.clone

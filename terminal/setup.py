@@ -9147,7 +9147,10 @@ def update_pull(argv: list) -> int | None:
 
 #: what setup writes into the folder it runs in: a clone made before 0.2.16 has these at its root; from 0.2.16 they are in terminal/
 OLD_LAYOUT_FILES = ("strata-*.json", "strata-*.log", "run-*.bat", "run-*.sh", "build-strata*.bat")
-OLD_LAYOUT_DIRS = ("models", "packs", "mtp", ".strata-mcp", "engine-sycl", "engine-cuda12", ".rocm-win")
+#: PolyStrata's strata-poly engine sat at the clone's root too (engine-poly; engine-glm before its rename): left there, its config
+#: names it outside terminal/, update_poly_engine() takes it for an engine of the user's own, and an update never replaces it
+OLD_LAYOUT_DIRS = ("models", "packs", "mtp", ".strata-mcp", "engine-sycl", "engine-cuda12", ".rocm-win", ENGINE_POLY_DIR,
+                   OLD_ENGINE_POLY_DIR)
 #: engine/ of a 0.2.16 clone is the engine's source; anything else in it is the engine an older setup downloaded or compiled there
 ENGINE_SOURCE_ENTRIES = {"src", "include", "cmake", "metal", "sycl", "spark", "third_party", "tests", "bench", "CMakeLists.txt",
                          "CMakePresets.json"}
