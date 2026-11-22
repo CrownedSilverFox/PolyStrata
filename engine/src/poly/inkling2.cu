@@ -891,8 +891,9 @@ __global__ void ink_softmax_kernel(InkAttn a, int t0, int nk_max, float* norm) {
 // The values' sums under the weights for a token's heads on one key head (blockIdx.x), a block of keys
 // (blockIdx.y), into parts: `dim` values a head and a block.  A warp has kValueKeys values, one at a time, read
 // as the score kernel reads a key; a lane holds one of the warp's weights, a head and a key each.  The warps'
-// sums are added in their order.
-__global__ void ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, int n_parts) {
+// sums are added in their order.  value_warps() launches up to 32 warps, so the registers must fit 1,024 threads on
+// every card: sm_86 and sm_89 gave this kernel 66 a thread without the bound, and the launch failed there.
+__global__ void __launch_bounds__(1024) ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, int n_parts) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
     extern __shared__ float sums[];   // a warp's, a head of the group: dim
