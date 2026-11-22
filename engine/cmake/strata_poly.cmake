@@ -250,6 +250,12 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_include_directories(poly_attend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                      ${_strata_gpu_include_directories})
   target_link_libraries(poly_attend_test PRIVATE ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
+  # Inkling 2's flash attention (ink_attend_batch()) against float64 and the paths it stands in for; needs a card,
+  # so it is run by hand (--bench: its speed against attend_batch())
+  add_executable(poly_ink_flash_test src/poly/ink_flash_test.cu src/poly/inkling2.cu src/poly/kernels.cu)
+  target_include_directories(poly_ink_flash_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                        ${_strata_gpu_include_directories})
+  target_link_libraries(poly_ink_flash_test PRIVATE strata_kernels ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
   # DeepSeek V4's hyper-connection read for a batch against the rows one at a time; needs a card, run by hand
   add_executable(poly_hc_test src/poly/hc_test.cu src/poly/kernels.cu)
   target_include_directories(poly_hc_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})

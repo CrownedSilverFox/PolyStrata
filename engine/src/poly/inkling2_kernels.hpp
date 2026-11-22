@@ -205,7 +205,7 @@ void ink_attend(const InkAttn& a, void* stream);
 /// ink_attend() of a prompt batch on the tensor cores, its scores never written out (FlashAttention-2's way): the
 /// scores attend_batch() with an AttnBias makes, the weights rounded to halves for the values' product, then the gate
 /// when a.gate is set.  Heads of 128 values, up to 4 on a key head, 16 relative values, positions on the host, no q8;
-/// a card from Ampere on.  False, with nothing launched, where it does not take them.
+/// a card from Ampere on, or Turing with fp16 caches.  False, with nothing launched, where it does not take them.
 bool ink_attend_batch(const InkAttn& a, void* stream);
 
 /// An FP8 cache row's bytes.
