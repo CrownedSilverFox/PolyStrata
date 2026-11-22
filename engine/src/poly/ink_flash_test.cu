@@ -7,6 +7,7 @@
 // usage: poly_ink_flash_test            (exit 0: every case within the bounds below; 77: no flash kernel here)
 //                                       each case also prints a hash of the flash kernel's output bits, which two
 //                                       builds of the same arithmetic must share
+//        STRATA_FAST_ATTN=1 poly_ink_flash_test   (full layers on ink_fast_kernel: twice the flash bound)
 //        poly_ink_flash_test --bench [keys...]   (ms of one call of 1,024 rows, Inkling 2 Mini's shape, full and
 //                                       window layers, at 2K/8K/32K keys or the ones given)
 #include "inkling2_kernels.hpp"
@@ -261,7 +262,9 @@ int run_tests() {
 
         const double ef = flash ? max_err(got_flash, want) : 0.0, et = max_err(got_token, want),
                      eb = max_err(got_batch, want);
-        const bool ok = (!flash || ef <= kFlashErr) && et <= kTokenErr && eb <= kBatchErr;
+        const char* fv = std::getenv("STRATA_FAST_ATTN");
+        const double flash_err = fv && fv[0] == '1' && cs.window <= 0 ? 2 * kFlashErr : kFlashErr;
+        const bool ok = (!flash || ef <= flash_err) && et <= kTokenErr && eb <= kBatchErr;
         ran_flash = ran_flash || flash;
         std::printf("%-22s flash %s err %.3e | ink_attend err %.3e | attend_batch err %.3e | flash-batch %.3e | "
                     "bits %016llx  %s\n",
