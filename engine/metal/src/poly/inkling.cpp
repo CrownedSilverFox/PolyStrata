@@ -1,7 +1,7 @@
 // metal/src/poly/inkling.cpp - Inkling 2's kernels on Metal (inkling2_kernels.hpp, inkling.metal), and the shared
-// entry points only its layers call here: rms_norm_many(), gemv_set() and situ_rows().  Where
-// inkling2.cu fuses a quantization into a norm's launch, the Metal form is the norm and then native_quantize_q8_1(),
-// the bytes Metal's other quantized rows have (native_add_rms_norm_q8_1() is made the same way).
+// entry points only its layers call here: rms_norm_many(), gemv_set() and situ_rows().  A row quantized in the launch
+// that makes it (inkling2.cu's fusions) has the bytes native_quantize_q8_1() gives it here, and a fused norm is
+// poly_norm's arithmetic, so that native_add_rms_norm_q8_1() and the launches it stands for agree.
 #include "inkling2_kernels.hpp"
 
 #include "launch.hpp"
@@ -47,10 +47,6 @@ void elem(Args& a, int kind, size_t n, void* stream) {
     run("ink_elem", a, stream, {blocks(n, 256), 1, 1}, 256);
 }
 
-void quantize_rows(const float* y, void* q8, int n, void* stream) {
-    if (q8) kernels::native_quantize_q8_1(y, q8, n, 1, stream);
-}
-
 }  // namespace
 
 // ---- shared entry points ----
@@ -60,9 +56,27 @@ void rms_norm_many(const float* const* x, const float* const* w, float* const* y
     for (int j = 0; j < count; ++j) rms_norm(x[j], w[j], y[j], n, rows, eps, stream);
 }
 
+namespace {
+void gemv_many(const void* const* w, const float* const* x, float* const* y, const int* n_out, int count, int n_in,
+               int rows, bool bf16, void* stream) {
+    if (count < 1 || count > 6) throw std::invalid_argument("gemv_set: 1 to 6 matrices");
+    if (rows <= 0) return;
+    Args a;
+    int total = 0;
+    for (int j = 0; j < count; ++j) {
+        a.p[j] = w[j], a.p[6 + j] = x[j], a.p[12 + j] = y[j], a.n[j] = n_out[j];
+        total += n_out[j];
+    }
+    a.n[7] = n_in, a.n[8] = rows, a.n[9] = bf16;
+    run("ink_gemv_set", a, stream, {uint32_t(total), uint32_t(rows), 1}, n_in < 128 ? 32 : sum_threads(n_in) / 4);
+}
+}  // namespace
+
 void gemv_set(const float* const* w, const float* const* x, float* const* y, const int* n_out, int count, int n_in,
               int rows, void* stream) {
-    for (int j = 0; j < count; ++j) gemv_f32(w[j], x[j], y[j], n_in, n_out[j], n_out[j], rows, stream);
+    const void* m[6];
+    std::copy(w, w + count, m);
+    gemv_many(m, x, y, n_out, count, n_in, rows, false, stream);
 }
 
 void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream, void* q8,
@@ -70,12 +84,12 @@ void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, fl
     if (rows <= 0) return;
     if (q8 && n % 32 != 0) throw std::invalid_argument("situ_rows: quantized rows of a multiple of 32");
     struct SituArgs {
-        const void* p[5]{};
+        const void* p[6]{};
         int n = 0, rows = 0;
         float beta = 0, lb = 0;
         int e[32]{};
     } a;
-    static_assert(sizeof(SituArgs) == 184);
+    static_assert(sizeof(SituArgs) == 192);
     a.p[0] = gate_up;
     a.p[1] = out;
     if (scales) {
@@ -86,19 +100,19 @@ void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, fl
             throw std::invalid_argument("situ_rows: more than 32 rows of experts named on the host");
         std::copy(scales->e, scales->e + 32, a.e);
     }
+    a.p[5] = q8;   // the rows back to back, as one vector
     a.n = n;
     a.rows = rows;
     a.beta = beta;
     a.lb = lb;
     run("ink_situ", a, stream, {blocks(n, 256), uint32_t(rows), 1}, 256);
-    if (q8) kernels::native_quantize_q8_1(out, q8, n * rows, 1, stream);   // the rows back to back, as one vector
 }
 
 // ---- the mixes ----
 
 namespace {
 void mix(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs, int n_embd,
-         int rows, const float* norm_w, float* norm_out, float eps, void* stream) {
+         int rows, const float* norm_w, float* norm_out, float eps, void* stream, void* q8 = nullptr) {
     if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > 4 || jobs < 1 || jobs > 12)
         throw std::invalid_argument("ink_mix: 1 to 6 states, 1 to 4 queries, 1 to 12 jobs");
     if (rows <= 0) return;
@@ -110,6 +124,7 @@ void mix(const InkStates& states, const float* const* query, int n_query, float*
     }
     a.p[66] = norm_w;
     a.p[67] = norm_out;
+    a.p[68] = q8;
     a.n[0] = states.n;
     a.n[1] = n_query;
     a.n[2] = n_embd;
@@ -132,17 +147,17 @@ void ink_mix_norm(const InkStates& states, const float* query, int n_query, floa
                   const float* norm_w, float* norm_out, float eps, void* stream, void* q8, bool ffn) {
     if ((q8 || ffn) && (rows != 1 || !norm_out || (ffn && (!q8 || !norm_w))))
         throw std::invalid_argument("ink_mix_norm: a quantized norm is one row's");
-    mix(states, &query, n_query, out, 1, n_embd, rows, norm_w, norm_out, eps, stream);
-    quantize_rows(norm_out, q8, n_embd, stream);
+    mix(states, &query, n_query, out, 1, n_embd, rows, norm_w, norm_out, eps, stream, q8);
 }
 
 void ink_norm_many_q8(const float* const* x, const float* const* w, float* const* y, void* const* q8, int count, int n,
                       float eps, void* stream) {
     if (count < 1 || count > 3 || n % 32 != 0) throw std::invalid_argument("ink_norm_many_q8: 1 to 3 rows of 32k");
-    for (int j = 0; j < count; ++j) {
-        rms_norm(x[j], w[j], y[j], n, 1, eps, stream);
-        kernels::native_quantize_q8_1(y[j], q8[j], n, 1, stream);
-    }
+    Args a;
+    for (int j = 0; j < count; ++j) a.p[j] = x[j], a.p[3 + j] = w[j], a.p[6 + j] = y[j], a.p[9 + j] = q8[j];
+    a.n[0] = n;
+    a.f[0] = eps;
+    run("ink_norm_q8", a, stream, {1, uint32_t(count), 1}, sum_threads(n));
 }
 
 // ---- the loop controllers ----
@@ -165,11 +180,15 @@ void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, in
     ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
 }
 
-// the norms and the down products in one launch: not here (ink_cat_norm_set() and gemv_set() do it)
-bool ink_ctrl_down(const float* const*, const float* const*, const void* const*, float* const*, int count, int, int,
-                   int, void*, bool) {
+bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
+                   int count, int n_embd, int rank, int rows, void* stream, bool bf16) {
     if (count < 1 || count > 3) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
-    return false;
+    if (rows <= 0) return true;
+    Args a;
+    for (int j = 0; j < count; ++j) a.p[j] = cur[j], a.p[3 + j] = msg[j], a.p[6 + j] = down[j], a.p[9 + j] = ch[j];
+    a.n[0] = n_embd, a.n[1] = rank, a.n[2] = bf16;
+    run("ink_ctrl_down", a, stream, {uint32_t(count * rank), uint32_t(rows), 1}, 256);
+    return true;
 }
 
 void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,
@@ -196,8 +215,12 @@ void ink_gate(const float* cur, const float* msg, const float* gain, const float
 
 void ink_gate_norm_q8(const float* cur, const float* msg, const float* gain, const float* forget, float* out,
                       const float* w, float* y, void* q8, int n, float eps, void* stream) {
-    ink_gate(cur, msg, gain, forget, out, (size_t) n, stream);
-    kernels::native_add_rms_norm_q8_1(out, nullptr, w, y, q8, n, 1, eps, sum_threads(n), stream);
+    if (n % 32 != 0) throw std::invalid_argument("ink_gate_norm_q8: rows of 32k");
+    Args a;
+    a.p[0] = cur, a.p[3] = w, a.p[6] = y, a.p[9] = q8, a.p[12] = msg, a.p[13] = gain, a.p[14] = forget, a.p[15] = out;
+    a.n[0] = n, a.n[1] = 1;
+    a.f[0] = eps;
+    run("ink_norm_q8", a, stream, {1, 1, 1}, sum_threads(n));
 }
 
 void ink_control3_gate(const float* const* cur, const float* const* msg, const float* const* ch,
@@ -390,13 +413,17 @@ void ink_attend(const InkAttn& c, void* stream) {
     Args a;
     const void* p[9] = {c.q, c.r, c.sink, c.keys, c.vals, c.rel_bias, c.gate, c.out, c.at};
     std::copy(p, p + 9, a.p);
+    if (c.q8 && c.rows != 1) throw std::invalid_argument("ink_attend: a quantized output is one token's");
+    a.p[10] = c.q8;
     a.n[0] = c.rows, a.n[1] = c.n_head, a.n[2] = c.n_kv, a.n[3] = c.dim, a.n[4] = c.n_rel, a.n[5] = c.extent;
     a.n[6] = c.window, a.n[7] = c.ring;
     a.f[0] = c.scale;
     a.pos = c.pos;
     // The keys a token of the call reads: up to its own, within the window; a recorded launch reads its position on
-    // the card and is sized for the middle of the rows it serves.  A few tokens' keys go to runs of about 64 a
-    // threadgroup (up to 32 runs), which meet in a scratch of its own (never freed: recorded launches keep its address).
+    // the card and is sized for the middle of the rows it serves.  A threadgroup to a key head and a token, its SIMD
+    // groups (as many as its threadgroup memory takes, up to 16) each on every g-th key: one launch.  A few tokens
+    // over more than 2,048 keys split them into runs of about 1,024 a threadgroup (up to 32 runs), which meet in a
+    // scratch of its own (never freed: recorded launches keep its address) for ink_attn_join.
     int64_t keys = c.at ? std::max<int64_t>(c.room / 2, c.rows) : c.pos + c.rows;
     if (c.window > 0) keys = std::min<int64_t>(keys, c.window);
     static void* scratch = nullptr;
@@ -404,22 +431,22 @@ void ink_attend(const InkAttn& c, void* stream) {
     constexpr size_t kRunFloats = size_t(4) << 20;
     const size_t per_run = (size_t) c.rows * c.n_head * (c.dim + 2);
     int splits = 1;
-    if (c.rows < 32 && keys >= 128) {
+    if (c.rows < 32 && keys > 2048) {
         if (!tried) {
             tried = true;
             if (gpu::malloc_device_raw(&scratch, kRunFloats * 4) != gpu::kSuccess) scratch = nullptr;
         }
-        if (scratch) splits = (int) std::min<size_t>({(size_t) (keys + 63) / 64, 32, kRunFloats / per_run});
+        if (scratch) splits = (int) std::min<size_t>({(size_t) (keys + 1023) / 1024, 32, kRunFloats / per_run});
     }
     a.n[8] = splits;
     a.p[9] = splits > 1 ? scratch : nullptr;
     const int per = c.n_head / c.n_kv;
-    const int groups = splits > 1 ? 4 : std::max(per, keys >= 1024 ? 8 : 4);
+    const int most = (int) std::min<size_t>(16, size_t(32768) / ((size_t) per * (c.dim + 2) * 4));
+    const int groups = std::max(per, std::min<int>(most, (int) ((keys + 31) / 32 / splits)));
     const size_t shared = ((size_t) groups * per * (c.dim + 2) * 4 + 15) / 16 * 16;
     run(c.dim == 128 ? "ink_attn_128" : "ink_attn_64", a, stream, {uint32_t(c.n_kv), uint32_t(c.rows), uint32_t(splits)},
         uint32_t(32 * groups), shared);
     if (splits > 1) run("ink_attn_join", a, stream, {uint32_t(c.n_head), uint32_t(c.rows), 1}, 32);
-    if (c.q8) kernels::native_quantize_q8_1(c.out, c.q8, c.n_head * c.dim, 1, stream);
 }
 
 // a prompt batch: ink_attend()'s kernel, which writes no score out either
