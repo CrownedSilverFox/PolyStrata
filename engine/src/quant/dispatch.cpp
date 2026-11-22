@@ -1,6 +1,7 @@
 // src/quant/dispatch.cpp - kernel lookup: the best kernel of an arithmetic contract that this CPU can run.
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 
 #include "registry.hpp"
 #include "strata/quant/act.hpp"
@@ -57,8 +58,9 @@ int collect_acts(Type act, Arith a, const ActKernel** out, int cap) {
 
 bool iq3s_own_on() noexcept {
     static const bool on = [] {
+        // Only the exact value 0 turns them off (no "off"/"false"); the quant layer has no shared env-flag helper.
         const char* v = std::getenv("STRATA_CPU_IQ3S");
-        return v == nullptr || v[0] != '0';
+        return v == nullptr || std::strcmp(v, "0") != 0;
     }();
     return on;
 }

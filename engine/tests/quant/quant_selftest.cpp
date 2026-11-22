@@ -29,7 +29,7 @@ static int g_fail = 0;
 // Every own kernel this CPU runs against the ggml port of its contract (the last runnable kernel without `on`), to the bit: rows of
 // random blocks with sane scales at the front (the formats with an own kernel: IQ3_S) at 256, 2304 (Inkling 2 Mini's gate|up rows) and
 // 4096 values, times five kinds of activation: normal, tiny, one large value, every 7th large and negative (codes of +-127), and raw random
-// codes (-128 included).  Returns the dots compared.
+// codes; each with a -128 code planted at a set place of every 32 (the one code whose sign flip wraps).  Returns the dots compared.
 static long long own_kernels_bits() {
     std::mt19937 rng(1234);
     long long all = 0;
@@ -78,6 +78,12 @@ static long long own_kernels_bits() {
                             const float d = 0.01f;
                             std::memcpy(&a[o], &d, 4);
                         }
+                    }
+                    {   // a -128 code at a set place of every block (code 5 of each 32), so every row meets it under random signs
+                        const sq::TypeInfo* ai = sq::type_info(ti->act);
+                        const size_t qs = ti->act == sq::Type::Q8_0 ? 2 : 4;   // Q8_0: fp16 d; Q8_1: fp16 d, s; Q8_K: float d
+                        for (size_t o = 0; o + ai->bytes <= a.size(); o += ai->bytes)
+                            for (int j = 5; j < ai->blck; j += 32) a[o + qs + (size_t) j] = (uint8_t) 0x80;
                     }
                     for (int r = 0; r < rows; ++r, ++here) {
                         float p = 0, q = 0;

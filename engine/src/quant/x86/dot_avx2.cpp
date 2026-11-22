@@ -37,6 +37,25 @@ static inline __m128i iq3s_words4(uint64_t w) {   // the grid words of four 16-b
     const __m128i b = _mm_unpacklo_epi32(iq3s_word(i2), iq3s_word((uint32_t) (w >> 48)));
     return _mm_unpacklo_epi64(a, b);
 }
+// The low / high 64 bits of v in a general register (x86-64), or through memory on 32-bit x86, which has no 64-bit moves.
+static inline uint64_t lo64(__m128i v) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return (uint64_t) _mm_cvtsi128_si64(v);
+#else
+    uint64_t w[2];
+    _mm_storeu_si128((__m128i*) w, v);
+    return w[0];
+#endif
+}
+static inline uint64_t hi64(__m128i v) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return (uint64_t) _mm_extract_epi64(v, 1);
+#else
+    uint64_t w[2];
+    _mm_storeu_si128((__m128i*) w, v);
+    return w[1];
+#endif
+}
 
 void dot_iq3_s_q8_K_words(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT vx, const void* STRATA_RESTRICT vy) {
     assert(n % QK_K == 0);
@@ -64,10 +83,10 @@ void dot_iq3_s_q8_K_words(int n, float* STRATA_RESTRICT s, const void* STRATA_RE
                                                        _mm_load_si128((const __m128i*) kIq3sHigh.v[qh[ib32 + 1]]), 1);
             const __m256i idx = _mm256_or_si256(lo, hi);
             const __m128i il = _mm256_castsi256_si128(idx), ih = _mm256_extracti128_si256(idx, 1);
-            const __m256i q2_1 = _mm256_inserti128_si256(_mm256_castsi128_si256(iq3s_words4((uint64_t) _mm_cvtsi128_si64(il))),
-                                                         iq3s_words4((uint64_t) _mm_extract_epi64(il, 1)), 1);
-            const __m256i q2_2 = _mm256_inserti128_si256(_mm256_castsi128_si256(iq3s_words4((uint64_t) _mm_cvtsi128_si64(ih))),
-                                                         iq3s_words4((uint64_t) _mm_extract_epi64(ih, 1)), 1);
+            const __m256i q2_1 = _mm256_inserti128_si256(_mm256_castsi128_si256(iq3s_words4(lo64(il))),
+                                                         iq3s_words4(hi64(il)), 1);
+            const __m256i q2_2 = _mm256_inserti128_si256(_mm256_castsi128_si256(iq3s_words4(lo64(ih))),
+                                                         iq3s_words4(hi64(ih)), 1);
             uint32_t s1, s2;
             memcpy(&s1, sg, 4);
             memcpy(&s2, sg + 4, 4);

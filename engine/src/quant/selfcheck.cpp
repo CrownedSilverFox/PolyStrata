@@ -157,7 +157,7 @@ bool check_act(const ActKernel& k, std::string* why) {
     return true;
 }
 
-// one verdict per (kind, type, arith, isa), computed on first use
+// one verdict per (kind, type, arith, isa; for dots also the position in the kernel list), computed on first use
 struct Verdicts {
     std::mutex mu;
     std::vector<std::pair<uint64_t, bool>> v;
