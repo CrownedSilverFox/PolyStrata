@@ -51,6 +51,25 @@ struct dot_q8_0 {
         return float(b->d)*s;
     }
 };
+// eight grid bytes (two words) times xv with the signs' bits flipping xv's
+static inline float signed_grid8(uint2 g,uint signs,thread const float* xv) {
+    float s=0;
+    for(int j=0;j<4;++j)
+        s+=float((g.x>>(8*j))&255)*((signs>>j)&1?-xv[j]:xv[j])+float((g.y>>(8*j))&255)*((signs>>(j+4))&1?-xv[4+j]:xv[4+j]);
+    return s;
+}
+struct dot_iq2_s {
+    enum { kSum=0 };
+    static float run(device const block_iq2_s* b,short il,thread const float* xv,float) {
+        const int ib32=il/2,h=il%2;
+        device const uint8_t* qs=b->qs+4*ib32+2*h;
+        device const uint8_t* signs=qs+QK_K/8;
+        const uint8_t qh=b->qh[ib32]>>4*h;
+        const float dl=float(b->d)*(0.5f+((b->scales[ib32]>>4*h)&0xf))*0.25f;
+        const uint2 g1=as_type<uint2>(iq2s_grid[qs[0]|((qh<<8)&0x300)]),g2=as_type<uint2>(iq2s_grid[qs[1]|((qh<<6)&0x300)]);
+        return dl*(signed_grid8(g1,signs[0],xv)+signed_grid8(g2,signs[1],xv+8));
+    }
+};
 // A threadgroup is a SIMD group of NR outputs, the rows' values read once for them: 4 where a launch has 8,192 outputs
 // or more (qrun() in quantized.cpp), else 1 (poly_mul_<type>_1).  Its 32 lanes take 16 values at a time, 512 apart.
 template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),typename Dot,int NR>
@@ -132,7 +151,7 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
 #define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) \
     M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
-    M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
+    M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
