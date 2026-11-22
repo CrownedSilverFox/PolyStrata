@@ -15606,6 +15606,111 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_INK_DOWN_ROWS",
+   "backends": [
+    "metal"
+   ],
+   "reads": [
+    {
+     "file": "engine/metal/src/poly/inkling.cpp",
+     "line": 189,
+     "backend": "metal",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "2",
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "d3cb7d79e8",
+   "first_date": "2026-11-22",
+   "since": null,
+   "last_commit": "d3cb7d79e8",
+   "last_date": "2026-11-22",
+   "status": "research",
+   "owner": "",
+   "note": "Metal Inkling 2: outputs a threadgroup in ink_ctrl_down (1, 2, 4 or 8; default 2); 1, 2 and 8 measured within noise on an M5 Ultra",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_INK_FLASH",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/inkling2.cu",
+     "line": 1729,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/inkling2.cu",
+     "line": 1762,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "9ff5570f44",
+   "first_date": "2026-11-22",
+   "since": null,
+   "last_commit": "abdb3b46f1",
+   "last_date": "2026-11-22",
+   "status": "rollback",
+   "owner": "",
+   "note": "0: Inkling 2's prompt attention goes back to attend_batch() instead of the tensor-core flash kernel (--kv fp8 then refuses to start)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_INK_RUN_KEYS",
+   "backends": [
+    "metal"
+   ],
+   "reads": [
+    {
+     "file": "engine/metal/src/poly/inkling.cpp",
+     "line": 446,
+     "backend": "metal",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "d3cb7d79e8",
+   "first_date": "2026-11-22",
+   "since": null,
+   "last_commit": "d3cb7d79e8",
+   "last_date": "2026-11-22",
+   "status": "research",
+   "owner": "",
+   "note": "Metal Inkling 2: keys a run of the token attention (default 128; 0: one threadgroup up to 2,048 keys); 0, 128 and 256 measured within noise on an M5 Ultra",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_IO_PF_AHEAD",
    "backends": [
     "cuda-hip"
@@ -32414,6 +32519,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_POLY_BELL",
+   "backends": [
+    "cuda"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/engine.cpp",
+     "line": 3728,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "202c1ad843",
+   "first_date": "2026-11-22",
+   "since": null,
+   "last_commit": "202c1ad843",
+   "last_date": "2026-11-22",
+   "status": "rollback",
+   "owner": "",
+   "note": "0: Inkling 2's experts outside VRAM go back to the mirror path instead of the CPU doorbell",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_POLY_CARDS",
    "backends": [
     "cuda-hip"
@@ -32514,6 +32652,39 @@
    "status": "default",
    "owner": "poly",
    "note": "[reviewed] the host mirror of the experts outside VRAM that the card reads (CUDA, unified addressing), on where it applies unless =0; on Windows off unless =1 or --lock-experts (engine/src/poly/engine.cpp:5100)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_POLY_NV4_TILE",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/mmq_own.cu",
+     "line": 85,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "c121e4e4af",
+   "first_date": "2026-11-22",
+   "since": null,
+   "last_commit": "c121e4e4af",
+   "last_date": "2026-11-22",
+   "status": "rollback",
+   "owner": "",
+   "note": "0: NVFP4 rows of 128 values (Inkling 2's downs) go to a dequantized copy and cuBLAS again instead of the grouped prompt tiles",
    "retire_after": "",
    "retired_in": ""
   },
