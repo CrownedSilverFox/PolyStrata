@@ -662,7 +662,12 @@ void Inkling2::join() {
 }
 
 void Inkling2::copy_rows(const float* from, float* to, int n) {
+#if defined(STRATA_GPU_METAL)
+    // a kernel's copy: Metal's copies are a blit encoder's, which ends the compute encoder and fences the next
+    copy2(from, to, n * n_embd_, nullptr, nullptr, 0, st_);
+#else
     ck(cudaMemcpyAsync(to, from, (size_t) n * n_embd_ * sizeof(float), cudaMemcpyDeviceToDevice, cs(st_)), "rows");
+#endif
 }
 
 // The first `blocks` residual streams and the current one, from float `at` of each.
@@ -741,8 +746,15 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
     const Dev* w[5] = {&B.wq, &B.wk, &B.wv, &B.rel, &B.gate};
     float* y[5] = {q_, kraw_, vraw_, rr_, gate_};
     const int from[5] = {0, 1, 2, 0, 0};
+#if defined(STRATA_GPU_METAL)
+    // Metal has no launch of several matrices (native_mmvq_many()): a product a launch, of whatever type its matrix
+    // is, on the inputs quantized once (lin() quantized its own for each when the five were not of one type)
+    constexpr bool kOneType = false;
+#else
+    constexpr bool kOneType = true;
+#endif
     for (const Dev* d : w)
-        if (d->type != w[0]->type || d->n_in != n_embd_ || d->scale != 1.0f) return false;
+        if ((kOneType && d->type != w[0]->type) || d->n_in != n_embd_ || d->scale != 1.0f) return false;
     const float* xs[3];
     void* qs[3];
     int nx = 0, slot[3];
@@ -756,7 +768,7 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
         }
         slot[j] = k;
     }
-    if (n > 1) {   // a window's: each input quantized once, in one launch, as lin() quantizes it
+    if (n > 1 || !kOneType) {   // a window's: each input quantized once, in one launch, as lin() quantizes it
         if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_ * n, st_);
         bool done[5] = {};   // two products of one input a launch (lin_pair())
         for (int i = 0; i < 5; ++i) {
