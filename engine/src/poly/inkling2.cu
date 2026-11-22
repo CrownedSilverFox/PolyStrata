@@ -658,19 +658,30 @@ __global__ void ink_conv_snaps_kernel(const float* x, const float* state, float*
         conv_state_into(x, state, snap + size_t(j) * stride, channels, taps, __ffs(b), c);
 }
 
-// A channel a thread, a call of a few tokens: what ink_conv_kernel, ink_conv_snaps_kernel and ink_conv_state_kernel
-// do in turn, the same bits in one launch
-__global__ void ink_conv_few_kernel(const float* x, float* state, const float* __restrict__ w,
-                                    const float* __restrict__ dyn, float* out, float* snap, size_t stride,
-                                    unsigned bits, int channels, int heads, int taps, int rows, float norm) {
+// A channel a thread, a call of a few tokens, job blockIdx.y: what ink_conv_kernel, ink_conv_snaps_kernel and
+// ink_conv_state_kernel do in turn, then the stream's update ink_conv_add_kernel makes, the same bits in one launch
+__global__ void ink_conv_few_kernel(InkConv j0, InkConv j1, size_t stride, unsigned bits, int channels, int heads,
+                                    int taps, int rows) {
+    const InkConv& j = blockIdx.y ? j1 : j0;
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (c >= channels) return;
-    for (int t = 0; t < rows; ++t)
-        out[size_t(t) * channels + c] = conv_value(x, state, w, dyn, channels, heads, taps, t, c, norm);
-    int j = 0;
-    for (unsigned b = bits; b; b &= b - 1, ++j)
-        conv_state_into(x, state, snap + size_t(j) * stride, channels, taps, __ffs(b), c);
-    conv_state_at(x, state, channels, taps, rows, c);
+    for (int t = 0; t < rows; ++t) {
+        const size_t i = size_t(t) * channels + c;
+        const float y = conv_value(j.x, j.state, j.w, j.dyn, channels, heads, taps, t, c, j.norm);
+        j.out[i] = y;
+        if (!j.acc) continue;
+        if (j.mode == 0) {
+            j.acc[i] = j.acc[i] + y * j.a;
+        } else {
+            if (j.mode == 1) j.keep[i] = j.acc[i];
+            j.acc[i] = y;
+        }
+    }
+    int k = 0;
+    if (j.snap)
+        for (unsigned b = bits; b; b &= b - 1, ++k)
+            conv_state_into(j.x, j.state, j.snap + size_t(k) * stride, channels, taps, __ffs(b), c);
+    conv_state_at(j.x, j.state, channels, taps, rows, c);
 }
 
 // a channel a thread
@@ -700,6 +711,11 @@ __global__ void ink_clips_kernel(InkClips c) {
     else
         clip_head(v, c.scale[j] ? c.scale[j] + size_t(head) * c.dim[j] : nullptr, c.thr[j], c.dim[j], c.alpha[j],
                   c.floor[j], c.at ? c.at[2 * row] : c.pos + row, part);
+    if (!c.cache[j]) return;   // each thread its own values, as clip_head() and rms_head() left them
+    long long cell = (c.at ? c.at[0] : c.pos) + row;
+    if (c.ring > 0) cell %= c.ring;
+    __half* to = (__half*) c.cache[j] + (size_t) cell * c.heads[j] * c.dim[j] + (size_t) head * c.dim[j];
+    for (int i = threadIdx.x; i < c.dim[j]; i += blockDim.x) to[i] = __float2half(v[i]);
 }
 
 __global__ void ink_head_rms_kernel(float* x, int dim, int heads, float eps) {
@@ -1269,10 +1285,10 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
     if (taps < 2 || taps > 8) throw std::invalid_argument("ink_conv: 2 to 8 taps");
     if (rows <= 0) return;
     const float norm = 1.0f / std::sqrt((float) ((dyn ? 2 : 1) * taps + 1));
-    if (rows <= 8) {   // a window's: 384 launches fewer in Inkling 2 Mini's pass
-        ink_conv_few_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(
-            x, state, w, dyn, out, snap, snap_stride, snap ? snap_bits : 0u, channels, heads, taps, rows, norm);
-        launched("ink_conv");
+    if (rows <= kConvFew) {   // a window's: 384 launches fewer in Inkling 2 Mini's pass
+        InkConv j;
+        j.x = x, j.state = state, j.w = w, j.dyn = dyn, j.out = out, j.snap = snap_bits ? snap : nullptr;
+        ink_conv_few(j, InkConv{}, channels, heads, taps, rows, stream, snap_stride, snap_bits);
         return;
     }
     ink_conv_kernel<<<grid((size_t) rows * channels, 256), 256, 0, cs(stream)>>>(x, state, w, dyn, out, channels,
@@ -1285,6 +1301,18 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
     }
     ink_conv_state_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, state, channels, taps, rows);
     launched("ink_conv_state");
+}
+
+void ink_conv_few(const InkConv& a, const InkConv& b, int channels, int heads, int taps, int rows, void* stream,
+                  size_t snap_stride, unsigned snap_bits) {
+    if (taps < 2 || taps > 8 || rows < 1 || rows > kConvFew)
+        throw std::invalid_argument("ink_conv_few: 2 to 8 taps, 1 to 8 rows");
+    InkConv ja = a, jb = b;   // ink_conv()'s norm, made on the host as it makes it
+    ja.norm = 1.0f / std::sqrt((float) ((a.dyn ? 2 : 1) * taps + 1));
+    jb.norm = 1.0f / std::sqrt((float) ((b.dyn ? 2 : 1) * taps + 1));
+    ink_conv_few_kernel<<<dim3(grid((size_t) channels, 256), b.x ? 2 : 1), 256, 0, cs(stream)>>>(
+        ja, jb, snap_stride, snap_bits, channels, heads, taps, rows);
+    launched("ink_conv_few");
 }
 
 void ink_conv_add(const float* x, float* state, const float* w, float* out, float* acc, float* keep, float a, int mode,

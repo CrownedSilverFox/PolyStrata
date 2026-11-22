@@ -106,8 +106,32 @@ struct InkClips {
     long long pos = 0;
     const long long* at = nullptr;
     int rows = 0;
+    /// With a job's cache (fp16, heads * dim a cell), its rows then stored at cells pos + row (at[0] + row with at),
+    /// modulo ring where ring > 0, as store_f16(), store_f16_at() and ink_store_ring() store them.
+    uint16_t* cache[4] = {};
+    int ring = 0;
 };
 void ink_clips(const InkClips& c, void* stream);
+
+/// One job of ink_conv_few(): ink_conv()'s arguments (snap null: no snapshots) and, with acc, the stream's update
+/// after it as ink_conv_add()'s mode makes it: 0 acc += out * a, 1 keep = acc then acc = out, 2 acc = out.
+struct InkConv {
+    const float* x = nullptr;
+    float* state = nullptr;
+    const float* w = nullptr;
+    const float* dyn = nullptr;
+    float* out = nullptr;
+    float* snap = nullptr;
+    float* acc = nullptr;
+    float* keep = nullptr;
+    float a = 1.f;
+    int mode = 0;
+    float norm = 0.f;   ///< ink_conv_few() sets it
+};
+constexpr int kConvFew = 8;   ///< ink_conv_few()'s rows at most
+/// ink_conv() of a call of 1 to kConvFew tokens, one heads-wide job or two (b.x null: one), in one launch.
+void ink_conv_few(const InkConv& a, const InkConv& b, int channels, int heads, int taps, int rows, void* stream,
+                  size_t snap_stride, unsigned snap_bits);
 
 /// x *= sigmoid(gate), n values.
 void ink_mul_sigmoid(float* x, const float* gate, size_t n, void* stream);

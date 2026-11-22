@@ -939,10 +939,18 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         c.ring = B.swa ? ring_ : 0;
         ink_qkv(c, st_);
     } else {
-        ink_conv(kraw_, past_k(S), fp(B.k_conv), kd, k_, kv, n_kv_, taps_, n, st_, snap_of(past_k(S)), rec_n_,
-                 snap_bits_);
-        ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_, snap_of(past_v(S)), rec_n_,
-                 snap_bits_);
+        if (n <= kConvFew) {   // a window's K and V convolutions in one launch
+            InkConv ck, cv;
+            ck.x = kraw_, ck.state = past_k(S), ck.w = fp(B.k_conv), ck.dyn = kd, ck.out = k_;
+            cv.x = vraw_, cv.state = past_v(S), cv.w = fp(B.v_conv), cv.dyn = vd, cv.out = v_;
+            if (snap_bits_) ck.snap = snap_of(past_k(S)), cv.snap = snap_of(past_v(S));
+            ink_conv_few(ck, cv, kv, n_kv_, taps_, n, st_, rec_n_, snap_bits_);
+        } else {
+            ink_conv(kraw_, past_k(S), fp(B.k_conv), kd, k_, kv, n_kv_, taps_, n, st_, snap_of(past_k(S)), rec_n_,
+                     snap_bits_);
+            ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_, snap_of(past_v(S)), rec_n_,
+                     snap_bits_);
+        }
         InkClips c;   // q, k, v, rr: one launch
         float* xs[4] = {q_, k_, v_, rr_};
         const float* sc[4] = {fp(B.q_clip), nullptr, nullptr, fp(B.rel_clip)};
@@ -963,17 +971,10 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         c.pos = pos_;
         c.at = at;
         c.rows = n;
+        c.cache[1] = S.keys;   // and the keys and values to their caches
+        c.cache[2] = S.vals;
+        c.ring = B.swa ? ring_ : 0;
         ink_clips(c, st_);
-        if (at) {
-            store_f16_at(k_, S.keys, kv, at, n, B.swa ? ring_ : 0, st_);
-            store_f16_at(v_, S.vals, kv, at, n, B.swa ? ring_ : 0, st_);
-        } else if (B.swa) {
-            ink_store_ring(k_, S.keys, kv, pos_, n, ring_, st_);
-            ink_store_ring(v_, S.vals, kv, pos_, n, ring_, st_);
-        } else {
-            store_f16(k_, S.keys, kv, pos_, n, st_);
-            store_f16(v_, S.vals, kv, pos_, n, st_);
-        }
     }
     InkAttn a;
     a.q = q_;
@@ -1023,14 +1024,24 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
                      n_embd_, taps_, st_);
         dbg("attn", il, ao_, n_embd_);
     } else {
-        ink_conv(aoraw_, past_a(S), fp(B.a_conv), nullptr, ao_, n_embd_, 1, taps_, n, st_, snap_of(past_a(S)), rec_n_,
-                 snap_bits_);
-        dbg("attn", il, ao_, n_embd_);
-        if (il % blk_ == 0) {
-            if (!(il == core_start_ && looped)) copy_rows(r_, bl_[il / blk_], n);
-            copy_rows(ao_, r_, n);
+        if (n <= kConvFew) {   // the convolution and the stream's update in one launch, as for a token
+            InkConv c;
+            c.x = aoraw_, c.state = past_a(S), c.w = fp(B.a_conv), c.out = ao_, c.acc = r_;
+            if (snap_bits_) c.snap = snap_of(past_a(S));
+            c.mode = il % blk_ != 0 ? 0 : il == core_start_ && looped ? 2 : 1;
+            if (c.mode == 1) c.keep = bl_[il / blk_];
+            ink_conv_few(c, InkConv{}, n_embd_, 1, taps_, n, st_, rec_n_, snap_bits_);
+            dbg("attn", il, ao_, n_embd_);
         } else {
-            axpy(ao_, 1.f, r_, (int) ne, true, st_);
+            ink_conv(aoraw_, past_a(S), fp(B.a_conv), nullptr, ao_, n_embd_, 1, taps_, n, st_, snap_of(past_a(S)),
+                     rec_n_, snap_bits_);
+            dbg("attn", il, ao_, n_embd_);
+            if (il % blk_ == 0) {
+                if (!(il == core_start_ && looped)) copy_rows(r_, bl_[il / blk_], n);
+                copy_rows(ao_, r_, n);
+            } else {
+                axpy(ao_, 1.f, r_, (int) ne, true, st_);
+            }
         }
     }
 
@@ -1066,6 +1077,13 @@ void Inkling2::tail_rows(int il, int n) {
     }
     if (n == 1) {
         ink_conv_add(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), fc_, r_, nullptr, 1.f, 0, n_embd_, taps_, st_);
+        return;
+    }
+    if (n <= kConvFew) {   // the convolution and the stream's update in one launch, as for a token
+        InkConv c;
+        c.x = fo_, c.state = past_f(S), c.w = fp(blocks_[(size_t) il].f_conv), c.out = fc_, c.acc = r_;
+        if (snap_bits_) c.snap = snap_of(past_f(S));
+        ink_conv_few(c, InkConv{}, n_embd_, 1, taps_, n, st_, rec_n_, snap_bits_);
         return;
     }
     ink_conv(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), nullptr, fc_, n_embd_, 1, taps_, n, st_,
