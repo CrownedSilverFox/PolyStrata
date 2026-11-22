@@ -73,8 +73,9 @@ void qrun(const std::string& name,const QArgs& a,void* s,gpu::metal::Grid groups
     std::string kernel=name;
     const bool mul=name.starts_with("poly_mul_");
     // groups.x: the outputs.  4 a threadgroup where the launch has 8,192 outputs or more; fewer leave the GPU too few
-    // threadgroups (a dense 2,304 x 4,096 matrix: 13% slower on the M5 Ultra), so there 1 (poly_mv_bench)
-    const int nr=mul && uint64_t(groups.x)*groups.y*groups.z>=8192?4:1;
+    // threadgroups (a dense 2,304 x 4,096 matrix: 13% slower on the M5 Ultra), so there 1 (poly_mv_bench).  Q5_1
+    // always 1: its 4 were 8% slower on Qwen3.6's experts and no faster on Inkling 2's.
+    const int nr=mul && name!="poly_mul_q5_1" && uint64_t(groups.x)*groups.y*groups.z>=8192?4:1;
     if(mul && nr==1) kernel+="_1";
     if(mul && a.kind==9) {   // native_mmvq_many: each matrix's outputs in groups of nr
         const uint64_t packed[4]={a.stride,a.xstride,a.ystride,a.offset};
