@@ -580,9 +580,9 @@ void Inkling2::alloc_caches() {
     }
 }
 
-// Per-token buffers hold rows_ tokens, row after row.
+// Per-token buffers hold buf_rows_ tokens, row after row.
 void Inkling2::assign_scratch() {
-    const size_t n = (size_t) rows_, e = n * n_embd_, heads = n * n_head_ * head_dim_, kv = n * n_kv_ * head_dim_;
+    const size_t n = (size_t) buf_rows_, e = n * n_embd_, heads = n * n_head_ * head_dim_, kv = n * n_kv_ * head_dim_;
     for (float*& b : bl_) b = fbuf(e);
     bank_ = fbuf(e);
     bank_out_ = fbuf(e);
@@ -598,7 +598,7 @@ void Inkling2::assign_scratch() {
     ch_ = fbuf(n * rank_);
     gain_ = fbuf(e);
     forget_ = fbuf(e);
-    const size_t few = (size_t) std::min(rows_, kStageRows);
+    const size_t few = (size_t) std::min(buf_rows_, kStageRows);
     for (int j = 0; j < 3; ++j) {
         cat3_[j] = fbuf(2 * few * n_embd_);
         ch3_[j] = fbuf(few * rank_);
@@ -625,7 +625,7 @@ void Inkling2::assign_scratch() {
     score_ = fbuf(score_n_);
     zeros_ = fbuf((size_t) n_head_);
     xqo_ = fbuf((kernels::native_q8_1_bytes(n_head_ * head_dim_) + sizeof(float) - 1) / sizeof(float));
-    if (rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
+    if (buf_rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
     if (ds_file_) {   // the drafter's: a call's features and mixes, and a block's rows
         const size_t E = (size_t) n_embd_, hq = (size_t) n_head_ * head_dim_, kv = (size_t) n_kv_ * head_dim_,
                      B = (size_t) ds_block_, V = (size_t) n_vocab_, R = (size_t) ds_rank_;

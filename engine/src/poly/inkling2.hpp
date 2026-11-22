@@ -38,6 +38,9 @@ protected:
     void load_extra(const uint8_t* src, int64_t pos) override;
     void alloc_caches() override;
     void assign_scratch() override;
+    // A call of a few tokens keeps a scratch of its own, and a prompt batch's is lent to the expert cache between
+    // prompts (Engine::use_scratch()).  Not with the drafter, whose features are a whole call's rows.
+    bool scratch_layouts() const override { return !ds_file_; }
     int widest() const override;
     int streams() const override { return 1; }
     void layer_head(Layer& L, int il, int n) override;
