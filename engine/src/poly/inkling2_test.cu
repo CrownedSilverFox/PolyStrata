@@ -9,7 +9,8 @@
 // (the fused launches, the positions read from the card, a call split into chunks), the two are compared byte for
 // byte as well.
 //
-// usage: poly_inkling2_test [--list] [NAME...]   (exit 0: every check passed; 1: a check failed; 77: no card)
+// usage: poly_inkling2_test [--list] [NAME...]   (exit 0: every check passed; 1: a check failed or none ran;
+//   2: no case of that NAME; 77: no card)
 //   NAME: run only the cases of that name (--list lists them).  A case is a function in kCases below: add new ones there.
 #include "inkling2_kernels.hpp"
 #include "strata/kernels/native_mmvq.hpp"
@@ -41,7 +42,7 @@ constexpr int kEmbd = 2304, kHeads = 24, kKv = 8, kDim = 128, kRel = 16, kWindow
 constexpr int kExperts = 128, kUsed = 8, kExtent = 1024;
 constexpr float kEps = 1e-6f, kQkClip = 22.627416610717773f, kRelClip = 8.0f, kAlpha = 0.1f, kFloor = 8192.f;
 
-int failures = 0, checks = 0;
+int failures = 0, checks = 0, codegen_failures = 0;
 std::mt19937 rng(20261123);
 
 void ck(cudaError_t e, const char* what) {
@@ -163,9 +164,22 @@ void same_bits(const std::string& what, const std::vector<T>& a, const std::vect
     std::printf("\n");
 }
 
+// Byte for byte against a host reference rounded as nvcc compiles the kernel (h_conv_f32() and the like): the bits
+// follow the compiler's choice of FMAs and roundings, not the arithmetic, so another nvcc or hipcc can differ here
+// while every check against the double-precision reference passes.  Still a check that counts, labelled "[codegen]"
+// so that such a difference is told apart from a wrong result.
+template <typename T>
+void codegen_bits(const std::string& what, const std::vector<T>& a, const std::vector<T>& b) {
+    const int before = failures;
+    same_bits("[codegen] " + what, a, b);
+    codegen_failures += failures - before;
+}
+
 void skipped(const std::string& what, const char* why) { std::printf("%-66s skipped: %s\n", what.c_str(), why); }
 
+#if defined(__GNUC__)
 std::string fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
+#endif
 std::string fmt(const char* f, ...) {
     char b[256];
     va_list ap;
@@ -461,8 +475,25 @@ void case_clips() {
                     want[(size_t) t * kKv * kDim + i] = kref[(size_t) t * kKv * kDim + i];
                 }
             }
-            // fp16: a half's rounding of values up to ~4; FP8: E4M3's 3 bits of mantissa, a sixteenth of the value
-            compare(tag + ": the cache's rows hold K", stored, want, kv8 ? 0.25 : 2e-3);
+            if (!kv8) {   // fp16: a half's rounding of values up to ~4
+                compare(tag + ": the cache's rows hold K", stored, want, 2e-3);
+                continue;
+            }
+            // FP8: a head's codes are x / scale with scale = max|x| / 448, so a code's value is at most 448.  E4M3
+            // has 3 bits of mantissa: in [2^e, 2^(e+1)) its step is 2^(e-3), at most 32 (in [256, 448]), and a
+            // nearest code is off by at most half a step, 16 code units = max|x| * 16 / 448 = max|x| / 28.  So the
+            // check is on x / max|x| (each head's), with a tolerance of 1/28, and 1e-4 more for K's own error (2e-6 *
+            // 22.6 above, over a max|x| of about 5).
+            std::vector<float> stored_n(stored.size());
+            for (size_t h = 0; h < (size_t) rows * kKv; ++h) {
+                double m = 0;
+                for (int i = 0; i < kDim; ++i) m = std::max(m, std::fabs(want[h * kDim + i]));
+                for (int i = 0; i < kDim; ++i) {
+                    stored_n[h * kDim + i] = (float) (stored[h * kDim + i] / m);
+                    want[h * kDim + i] /= m;
+                }
+            }
+            compare(tag + ": the cache's rows hold K (over each head's max |K|)", stored_n, want, 1.0 / 28 + 1e-4);
         }
     }
 }
@@ -531,7 +562,7 @@ void case_conv() {
             const std::string tag = fmt("ink_conv %s, %d rows", dynamic ? "with taps" : "plain", rows);
             const auto got = dout.get();
             compare(tag, got, ref, 2e-6);
-            same_bits(tag + ": = the CUDA-rounded reference",
+            codegen_bits(tag + ": = the CUDA-rounded reference",
                       got, h_conv_f32(x, before, w, dynamic ? dyn.data() : nullptr, channels, kKv, kTaps, rows));
             compare(tag + ": the state after", dstate.get(), dbl(state), 0.0);
             if (bits) {
@@ -577,11 +608,11 @@ void case_conv_acc() {
             compare(tag + ": out", got, ref, 2e-6);
             compare(tag + ": the stream", gacc, racc, 4e-6);
             const auto y32 = h_conv_f32(x, st, w, nullptr, channels, 1, kTaps, rows);
-            same_bits(tag + ": out = the CUDA-rounded reference", got, y32);
-            same_bits(tag + ": the stream = the CUDA-rounded reference", gacc, h_stream_f32(acc, y32, 0.75f, mode));
+            codegen_bits(tag + ": out = the CUDA-rounded reference", got, y32);
+            codegen_bits(tag + ": the stream = the CUDA-rounded reference", gacc, h_stream_f32(acc, y32, 0.75f, mode));
             if (mode == 1) compare(tag + ": the stream kept", dkeep.get(), rkeep, 0.0);
             compare(tag + ": second job (taps)", got2, ref2, 2e-6);
-            same_bits(tag + ": second job = the CUDA-rounded reference", got2,
+            codegen_bits(tag + ": second job = the CUDA-rounded reference", got2,
                       h_conv_f32(x2, st2, w, dy2.data(), c2, kKv, kTaps, rows));
             compare(tag + ": second job's state", dst2.get(), dbl(s2), 0.0);
             if (rows != 1) continue;
@@ -631,11 +662,12 @@ void case_moe_conv_add() {
                 sum = std::fma(scaled ? w[k] * escale[ids[k]] : w[k], x[(size_t) k * kEmbd + i], sum);
             fo32[i] = 0.0f + sum;
         }
-        same_bits(fmt("ink_moe_conv_add %s: the sum = the CUDA-rounded reference", scaled ? "scaled" : "plain"), gfo,
+        codegen_bits(fmt("ink_moe_conv_add %s: the sum = the CUDA-rounded reference", scaled ? "scaled" : "plain"), gfo,
                   fo32);
         const auto y32 = h_conv_f32(fo32, st, cw, nullptr, kEmbd, 1, kTaps, 1);
-        same_bits(fmt("ink_moe_conv_add %s: out = the CUDA-rounded reference", scaled ? "scaled" : "plain"), got, y32);
-        same_bits(fmt("ink_moe_conv_add %s: the stream = the CUDA-rounded reference", scaled ? "scaled" : "plain"),
+        codegen_bits(fmt("ink_moe_conv_add %s: out = the CUDA-rounded reference", scaled ? "scaled" : "plain"), got,
+                     y32);
+        codegen_bits(fmt("ink_moe_conv_add %s: the stream = the CUDA-rounded reference", scaled ? "scaled" : "plain"),
                   gacc, h_stream_f32(acc, y32, 1.0f, 0));
         compare(fmt("ink_moe_conv_add %s: the state", scaled ? "scaled" : "plain"), dst.get(), dbl(s), 0.0);
     }
@@ -813,7 +845,8 @@ void case_mix() {
         }
         const char* what[3] = {"rms_norm()", "rms_norm() + quantize", "native_add_rms_norm_q8_1()"};
         const std::string tag = fmt("ink_mix_norm %d rows = ink_mix() + %s", rows, what[mode]);
-        same_bits(tag + ": mixes", o0.get(), m0.get());
+        same_bits(tag + ": mix 0", o0.get(), m0.get());
+        same_bits(tag + ": mix 1", o1.get(), m1.get());
         same_bits(tag + ": mix 2", o2.get(), m2.get());
         same_bits(tag + ": norm", y.get(), y2.get());
         if (mode) same_bits(tag + ": q8_1", q8.get(), q82.get());
@@ -983,16 +1016,20 @@ void case_controllers() {
                 const float* c3[3] = {shared, shared, shared};
                 float* o3s[3] = {shared, out[1], out[2]};
                 ink_control3_gate(c3, mp, chs, gw, fw, o3s, kEmbd, kRank, stream(), 3, false);
-                std::vector<double> ref(kEmbd);
-                const auto chv = ch[0].get();
-                for (int i = 0; i < kEmbd; ++i) {
-                    double g = 0, f = 0;
-                    for (int k = 0; k < kRank; ++k)
-                        g += (double) gain[0][(size_t) i * kRank + k] * chv[k],
-                            f += (double) forget[0][(size_t) i * kRank + k] * chv[k];
-                    ref[i] = h_gate(cur[0][i], msg[0][i], g, f);
+                // each controller's gate of the one input (cur[0], as it was before controller 0 wrote over it)
+                const Dev<float>* got3[3] = {&shared, &out[1], &out[2]};
+                for (int j = 0; j < 3; ++j) {
+                    std::vector<double> ref(kEmbd);
+                    const auto chv = ch[(size_t) j].get();
+                    for (int i = 0; i < kEmbd; ++i) {
+                        double g = 0, f = 0;
+                        for (int k = 0; k < kRank; ++k)
+                            g += (double) gain[(size_t) j][(size_t) i * kRank + k] * chv[k],
+                                f += (double) forget[(size_t) j][(size_t) i * kRank + k] * chv[k];
+                        ref[i] = h_gate(cur[0][i], msg[(size_t) j][i], g, f);
+                    }
+                    compare(fmt("ink_control3_gate in place (out 0 = cur), ctrl %d", j), got3[j]->get(), ref, 2e-5);
                 }
-                compare("ink_control3_gate in place (out = cur)", shared.get(), ref, 2e-5);
             }
         }
     }
@@ -1176,7 +1213,8 @@ void case_small() {
                 if (i < n_keep) keep.push_back(g), ref.push_back(30.0 * std::tanh(x[(size_t) r * n_all + i] / 30.0));
                 else pads_ok += g == -INFINITY;
             }
-        compare("ink_softcap (cap 30)", keep, ref, 1e-5);   // a few units in the last place of 30
+        // the worst seen is 2.3 units in the last place; the tolerance is 1e-5 absolute (~5 ulp of a value near 30)
+        compare("ink_softcap (cap 30)", keep, ref, 1e-5);
         compare("ink_softcap: the rows past the vocabulary are -inf", std::vector<float>{(float) pads_ok},
                 std::vector<double>{(double) rows * (n_all - n_keep)}, 0.0);
     }
@@ -1362,7 +1400,9 @@ void case_attend_batch() {
                     // the weights are rounded to halves for the values' product: a few units in 2^-11 of a value
                     compare("ink_attend_batch " + tag, out.get(), ref, 4e-3);
                 } else {
-                    skipped("ink_attend_batch " + tag, "not on this card (from Ampere on, not HIP)");
+                    const char* v = std::getenv("STRATA_INK_FLASH");   // read as ink_attend_batch() reads it
+                    skipped("ink_attend_batch " + tag,
+                            v && v[0] == '0' ? "STRATA_INK_FLASH=0" : "not on this card (from Ampere on, not HIP)");
                 }
                 if (kv8) continue;   // attend_batch() reads fp16 only
                 const size_t score_n = size_t(16) << 20, heads = (size_t) rows * kHeads * kDim;
@@ -1415,6 +1455,14 @@ int main(int argc, char** argv) {
             for (const Case& c : kCases) std::printf("%s\n", c.name);
             return 0;
         }
+        bool known = false;
+        for (const Case& c : kCases) known = known || std::string(c.name) == argv[i];
+        if (!known) {
+            std::fprintf(stderr, "poly_inkling2_test: no case %s; the cases:", argv[i]);
+            for (const Case& c : kCases) std::fprintf(stderr, " %s", c.name);
+            std::fprintf(stderr, "\n");
+            return 2;
+        }
         only.emplace_back(argv[i]);
     }
     int devices = 0;
@@ -1444,6 +1492,13 @@ int main(int argc, char** argv) {
             (void) cudaGetLastError();
         }
     }
-    std::printf("%d checks, %d failed\n", checks, failures);
+    std::printf("%d checks, %d failed", checks, failures);
+    if (codegen_failures)
+        std::printf(" (%d of them [codegen]: the compiler's rounding, not a wrong result)", codegen_failures);
+    std::printf("\n");
+    if (checks == 0) {
+        std::printf("no checks ran  FAIL\n");
+        return 1;
+    }
     return failures ? 1 : 0;
 }
