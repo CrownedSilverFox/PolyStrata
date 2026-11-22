@@ -168,7 +168,16 @@ void native_mmvq_many(int t,const NativeMmvqMany& m,int ni,void* s) {
 }
 namespace strata::poly {
 using namespace metal_detail;
-Mmq::Mmq() = default;
+// The products' pipelines (every type, both tiles) made at load: about 3 ms from Metal's cache, 0.3 s the first time
+// after an update.  Made on the way in the first request, poly_mul's two kernels a type kept LFM2.5 UD-IQ2_M's first
+// prompt at 0.20-0.22 s in 8 of 8 starts, where the engine before them read it in 0.16-0.17 s in about half.
+Mmq::Mmq() {
+    static const auto source=quant_source();
+    std::string error;
+    for(int t=0;t<64;++t) if(quant_name(t))
+        for(const char* tile:{"","_1"})
+            gpu::metal::pipeline("poly_quantized",source.c_str(),(std::string("poly_mul_")+quant_name(t)+tile).c_str(),error);
+}
 Mmq::~Mmq() = default;
 bool Mmq::fits(int t,int64_t rows,int64_t cols) {
     return kernels::native_mmvq_supported(t) && rows>0 && rows<=INT32_MAX && cols>0 && cols<=INT32_MAX && cols%block_values(t)==0;
