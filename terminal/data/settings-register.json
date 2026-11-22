@@ -9043,6 +9043,45 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_FAST_ATTN",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/ink_flash_test.cu",
+     "line": 264,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/poly/inkling2.cu",
+     "line": 1996,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "off",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "d7307a6760",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "d7307a6760",
+   "last_date": "2026-11-23",
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "1: Inkling 2's full layers read prompt batches on ink_fast_kernel (sm_80 and newer; fp16 bias table and partial sums, other bits)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_FATTN",
    "backends": [
     "cuda-hip"
