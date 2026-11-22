@@ -163,4 +163,52 @@ void ink_attend(const InkAttn& a, void* stream);
 /// The floats of scratch ink_attend() needs for a token that reads up to `keys` keys.
 size_t ink_attend_floats(int n_head, int n_kv, int dim, int64_t keys);
 
+// ---- the DSpark drafter (Inkling2::guess_block()) ----
+
+/// A row's position: what the card holds at at[2 * t] in a recorded launch, else pos0 + t.
+struct DsPos {
+    const long long* at = nullptr;
+    long long pos0 = 0;
+};
+/// The target's four features of `rows` rows (tap + k * tap_stride, n values a row) mixed four ways: mix j =
+/// rms(sum_k alpha[j][k] f_k) * norm[j]; mixes 0..2 to out (j * rows + t rows on), mix 3 to ring row pos % ring_rows.
+struct DsMix {
+    const float* tap = nullptr;
+    size_t tap_stride = 0;
+    const float* alpha = nullptr;   ///< [4][4], each row a softmax over the features
+    const float* norm[4] = {};
+    float* out = nullptr;
+    float* ring = nullptr;
+    int ring_rows = 0;
+    DsPos pos;
+};
+void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream);
+/// Each head of 128 values of `rows` rows of x RMS-normed with w and rotated at its row's position (NeoX halves,
+/// base theta): back into x, or with cache into its fp16 cell pos % cap (heads * 128 halves a cell), v's heads to
+/// vcache's beside it.
+void ds_rope(float* x, int heads, int rows, const float* w, float eps, float theta, const DsPos& p, uint16_t* cache,
+             int64_t cap, const float* v, uint16_t* vcache, void* stream);
+/// Each of `rows` query rows' heads over the cache's positions [lo, hi), all of them (no causal mask); score has
+/// rows * heads rows of score_stride floats of scratch.
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, int64_t lo, int64_t hi,
+               int rows, int heads, int kv_heads, float scale, float* score, size_t score_stride, float* out,
+               void* stream);
+/// g = silu(g) * u
+void ds_swiglu(float* g, const float* u, size_t n, void* stream);
+/// rows 1 .. rows - 1 of x (n values a row) = mask
+void ds_mask_rows(float* x, const float* mask, int n, int rows, void* stream);
+/// in = [state ; BF16 row *prev of w1] (rank values each)
+void ds_markov_in(const float* state, const uint16_t* w1, const int32_t* prev, float* in, int rank, void* stream);
+/// The Markov head's step: raw = ctx_h + ctx_f + bias + sp (3 * rank); gate = sigmoid(raw[0:r]), state = gate *
+/// state + (1 - gate) * tanh(raw[r:2r]), latent = tanh(raw[2r:3r]).
+void ds_markov_step(const float* ctx_h, const float* ctx_f, const float* bias, const float* sp, float* state,
+                    float* latent, int rank, void* stream);
+/// A draft's pick from its scores cap tanh((base + fy + fb) / cap) over the first n_keep tokens: the lowest id of the
+/// largest and its softmax probability into out, the id into prev too.  scratch: ds_pick_floats() floats.
+void ds_pick(const float* base, const float* fy, const float* fb, int n_keep, float cap, float* scratch, Likeliest* out,
+             int32_t* prev, void* stream);
+size_t ds_pick_floats();
+/// Q8_0 block b of each of n_rows rows of `blocks` blocks (fold), from the 32 rows of ft (ft[k][v], k < 32).
+void ds_fold_q8(const float* ft, int n_rows, int blocks, int b, void* fold, void* stream);
+
 }  // namespace strata::poly

@@ -3174,8 +3174,8 @@ void Engine::load(const Options& o) {
     // one more such call a round.  With every expert on an RTX PRO 6000 Clover wrote 157 tokens/s after a 30K prompt
     // with its blocks and 204 without, and the policy asked for few (docs/BACKENDS.md).
     const char* bg = std::getenv("STRATA_BLOCK_GUESS");
-    block_guess_ = bg && std::atoi(bg) == 1 && !draft_ && opt_.draft && opt_.window > 1 && block_mask() >= 0 &&
-                   !split_;
+    block_guess_ = ((bg && std::atoi(bg) == 1 && !draft_ && opt_.draft && block_mask() >= 0) || own_blocks()) &&
+                   opt_.window > 1 && !split_;
     if (block_guess_) std::fprintf(stderr, "strata-poly: STRATA_BLOCK_GUESS: the model guesses its own blocks\n");
     alloc();
     if (!opt_.profile.empty()) read_profile(opt_.profile, (int) layers_.size(), n_expert_, prior_);

@@ -1383,4 +1383,305 @@ void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, fl
     launched("situ_rows");
 }
 
+// ---- the DSpark drafter's kernels (Inkling2::guess_block(), ds_commit()) ----
+//
+// The drafter's forward (the features' mixes, the context keys and values, the block of the anchor and mask rows, the
+// Markov head's recurrence and its fold into the output matrix) follows Basalt's src/models/inkling2/dspark.cpp and
+// kernels/dspark.cu (github.com/jesdga95/basalt), which follow vLLM's Inkling 2 DSpark draft (Apache-2.0); the kernels
+// here are this engine's own.  Basalt is under the MIT license:
+// MIT License
+// Copyright (c) 2026 Jesús Gulfo
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+namespace {
+
+constexpr int kDsHead = 128;   // a drafter head's values
+
+__device__ __forceinline__ float ds_bf16(uint16_t v) { return __uint_as_float(uint32_t(v) << 16); }
+
+__device__ __forceinline__ long long ds_pos(const DsPos& p, int t) { return p.at ? p.at[2 * t] : p.pos0 + t; }
+
+// row t (blockIdx.x), mix j (blockIdx.y): v = sum_k alpha[j][k] f_k, then rms(v) * norm[j]; mixes 0..2 to out, mix 3 to
+// the ring row of the row's position
+__global__ void ds_mix_kernel(DsMix m, int n, int rows, float eps) {
+    __shared__ float part[32];
+    extern __shared__ float v[];
+    const int t = blockIdx.x, j = blockIdx.y;
+    const float* a = m.alpha + j * 4;
+    float ss = 0.0f;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        float x = 0.0f;
+#pragma unroll
+        for (int k = 0; k < 4; ++k) x += a[k] * m.tap[(size_t) k * m.tap_stride + (size_t) t * n + i];
+        v[i] = x;
+        ss += x * x;
+    }
+    ss = block_sum(ss, part);
+    const float scale = 1.0f / sqrtf(ss / (float) n + eps);
+    float* out = j < 3 ? m.out + ((size_t) j * rows + t) * n
+                       : m.ring + (size_t) (ds_pos(m.pos, t) % m.ring_rows) * n;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) out[i] = v[i] * scale * m.norm[j][i];
+}
+
+// row t (blockIdx.x), head h (blockIdx.y), a thread a value: x's head RMS-normed with w, then rotated at the row's
+// position (NeoX halves, base theta); into the fp16 cache's cell of the position, or back into x.  With v, v's head
+// goes to its cache too.
+__global__ void ds_rope_kernel(float* x, int heads, const float* __restrict__ w, float eps, float theta, DsPos p,
+                               __half* cache, long long cap, const float* v, __half* vcache) {
+    __shared__ float part[kDsHead / 32];
+    __shared__ float y[kDsHead];
+    const int t = blockIdx.x, h = blockIdx.y, i = threadIdx.x;
+    float* row = x + ((size_t) t * heads + h) * kDsHead;
+    const float xi = row[i];
+    const float scale = 1.0f / sqrtf(block_sum(xi * xi, part) / (float) kDsHead + eps);
+    y[i] = xi * scale * w[i];
+    __syncthreads();
+    const long long pos = ds_pos(p, t);
+    const int half = kDsHead / 2, k = i % half;
+    const float freq = powf(theta, -2.0f * (float) k / (float) kDsHead), ang = (float) pos * freq;
+    const float c = cosf(ang), s = sinf(ang);
+    const float out = i < half ? y[i] * c - y[i + half] * s : y[i - half] * s + y[i] * c;
+    if (!cache) {
+        row[i] = out;
+        return;
+    }
+    const size_t cell = (size_t) (pos % cap) * heads * kDsHead + (size_t) h * kDsHead + i;
+    cache[cell] = __float2half(out);
+    if (v) vcache[cell] = __float2half(v[((size_t) t * heads + h) * kDsHead + i]);
+}
+
+// query row t (blockIdx.x), head h (blockIdx.y): softmax attention over the cache's positions [lo, hi), every one of
+// them for every row (the block's rows see each other)
+__global__ void ds_attend_kernel(const float* q, const __half* keys, const __half* vals, long long cap, long long lo,
+                                 long long hi, int heads, int kv_heads, float scale, float* score, size_t score_stride,
+                                 float* out) {
+    __shared__ float qs[kDsHead];
+    __shared__ float part[32];
+    const int t = blockIdx.x, h = blockIdx.y, g = h / (heads / kv_heads), tid = threadIdx.x;
+    const int nk = (int) (hi - lo);
+    if (tid < kDsHead) qs[tid] = q[((size_t) t * heads + h) * kDsHead + tid] * scale;
+    __syncthreads();
+    float* s = score + ((size_t) t * heads + h) * score_stride;
+    float m = -INFINITY;
+    for (int j = tid; j < nk; j += blockDim.x) {
+        const __half* k = keys + (size_t) ((lo + j) % cap) * kv_heads * kDsHead + (size_t) g * kDsHead;
+        float d = 0.0f;
+        for (int c = 0; c < kDsHead; c += 2) {
+            const float2 kv = __half22float2(*(const half2*) (k + c));
+            d += qs[c] * kv.x + qs[c + 1] * kv.y;
+        }
+        s[j] = d;
+        m = fmaxf(m, d);
+    }
+    m = block_max(m, part);
+    float sum = 0.0f;
+    for (int j = tid; j < nk; j += blockDim.x) {
+        const float e = expf(s[j] - m);
+        s[j] = e;
+        sum += e;
+    }
+    sum = block_sum(sum, part);
+    if (tid >= kDsHead) return;
+    float acc = 0.0f;
+    for (int j = 0; j < nk; ++j)
+        acc += s[j] * __half2float(vals[(size_t) ((lo + j) % cap) * kv_heads * kDsHead + (size_t) g * kDsHead + tid]);
+    out[((size_t) t * heads + h) * kDsHead + tid] = acc / sum;
+}
+
+__global__ void ds_swiglu_kernel(float* g, const float* __restrict__ u, size_t n) {
+    const size_t i = (size_t) blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) g[i] = g[i] / (1.0f + expf(-g[i])) * u[i];
+}
+
+// rows 1 .. rows - 1 of x: the mask row
+__global__ void ds_mask_rows_kernel(float* x, const float* __restrict__ mask, int n, int rows) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    for (int r = 1; r < rows; ++r) x[(size_t) r * n + i] = mask[i];
+}
+
+// [state ; w1's row of the token before] (rank + rank values), the token *prev
+__global__ void ds_markov_in_kernel(const float* __restrict__ state, const uint16_t* __restrict__ w1,
+                                    const int32_t* __restrict__ prev, float* in, int rank) {
+    const int r = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= rank) return;
+    in[r] = state[r];
+    in[rank + r] = ds_bf16(w1[(size_t) *prev * rank + r]);
+}
+
+// raw = a + b + c + d; gate = sigmoid(raw[0:r]), state = gate * state + (1 - gate) * tanh(raw[r:2r]),
+// latent = tanh(raw[2r:3r])
+__global__ void ds_markov_step_kernel(const float* __restrict__ ctx_h, const float* __restrict__ ctx_f,
+                                      const float* __restrict__ bias, const float* __restrict__ sp, float* state,
+                                      float* latent, int rank) {
+    const int r = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= rank) return;
+    const auto raw = [&](int k) { return ctx_h[k] + ctx_f[k] + bias[k] + sp[k]; };
+    const float gate = 1.0f / (1.0f + expf(-raw(r)));
+    state[r] = gate * state[r] + (1.0f - gate) * tanhf(raw(rank + r));
+    latent[r] = tanhf(raw(2 * rank + r));
+}
+
+// A draft's pick in two launches: each block of the first takes a slice of the vocabulary, its scores
+// cap tanh((base + fy + fb) / cap), and leaves its largest (the lowest id of equals) and its softmax sum against it;
+// the second's one block joins the slices: the pick, its probability, and the pick as the next step's token.
+constexpr int kDsPickBlocks = 128;
+
+struct DsPart {
+    float m, s;
+    int id;
+};
+
+__global__ void ds_pick_part_kernel(const float* __restrict__ base, const float* __restrict__ fy,
+                                    const float* __restrict__ fb, int n_keep, float cap, DsPart* part) {
+    __shared__ float bm[256 / 32], bs[256 / 32];
+    __shared__ int bi[256 / 32];
+    const int per = (n_keep + gridDim.x - 1) / gridDim.x, v0 = blockIdx.x * per, v1 = min(n_keep, v0 + per);
+    float m = -INFINITY, s = 0.0f;
+    int id = 0x7fffffff;
+    for (int v = v0 + threadIdx.x; v < v1; v += blockDim.x) {
+        const float z = cap * tanhf((base[v] + fy[v] + fb[v]) / cap);
+        if (z > m) {
+            s = s * expf(m - z) + 1.0f;
+            m = z;
+            id = v;
+        } else {
+            s += expf(z - m);
+        }
+    }
+    const auto join = [](float& m, float& s, int& id, float m2, float s2, int id2) {
+        if (m2 > m || (m2 == m && id2 < id)) {
+            s = (m == -INFINITY ? 0.0f : s * expf(m - m2)) + s2;
+            m = m2;
+            id = id2;
+        } else if (m2 != -INFINITY) {
+            s += s2 * expf(m2 - m);
+        }
+    };
+    for (int o = 16; o > 0; o >>= 1) {
+        const float m2 = __shfl_xor_sync(0xffffffff, m, o), s2 = __shfl_xor_sync(0xffffffff, s, o);
+        const int id2 = __shfl_xor_sync(0xffffffff, id, o);
+        join(m, s, id, m2, s2, id2);
+    }
+    const int w = threadIdx.x >> 5;
+    if ((threadIdx.x & 31) == 0) bm[w] = m, bs[w] = s, bi[w] = id;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        for (int k = 1; k < (int) blockDim.x / 32; ++k) join(m, s, id, bm[k], bs[k], bi[k]);
+        part[blockIdx.x] = {m, s, id};
+    }
+}
+
+__global__ void ds_pick_join_kernel(const DsPart* __restrict__ part, int parts, Likeliest* out, int32_t* prev) {
+    if (threadIdx.x != 0) return;
+    float m = -INFINITY, s = 0.0f;
+    int id = 0x7fffffff;
+    for (int k = 0; k < parts; ++k) {
+        const DsPart p = part[k];
+        if (p.m > m || (p.m == m && p.id < id)) {
+            s = (m == -INFINITY ? 0.0f : s * expf(m - p.m)) + p.s;
+            m = p.m;
+            id = p.id;
+        } else if (p.m != -INFINITY) {
+            s += p.s * expf(p.m - m);
+        }
+    }
+    out->token = id;
+    out->prob = 1.0f / s;
+    *prev = id;
+}
+
+// fold rows' Q8_0 block b (values 32b .. 32b + 31 of each row) from 32 rows of the transposed fold, ft[k][v]
+__global__ void ds_fold_q8_kernel(const float* __restrict__ ft, int n_rows, int blocks, int b, uint8_t* fold) {
+    const int v = blockIdx.x * blockDim.x + threadIdx.x;
+    if (v >= n_rows) return;
+    float x[32], amax = 0.0f;
+#pragma unroll
+    for (int k = 0; k < 32; ++k) {
+        x[k] = ft[(size_t) k * n_rows + v];
+        amax = fmaxf(amax, fabsf(x[k]));
+    }
+    const float d = amax / 127.0f, id = d != 0.0f ? 1.0f / d : 0.0f;
+    uint8_t* blk = fold + ((size_t) v * blocks + b) * 34;
+    *(__half*) blk = __float2half(d);
+#pragma unroll
+    for (int k = 0; k < 32; ++k) blk[2 + k] = (uint8_t) (int8_t) roundf(x[k] * id);
+}
+
+}  // namespace
+
+void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream) {
+    if (rows <= 0) return;
+    ds_mix_kernel<<<dim3(rows, 4), 256, (size_t) n * sizeof(float), cs(stream)>>>(m, n, rows, eps);
+    launched("ds_mix");
+}
+
+void ds_rope(float* x, int heads, int rows, const float* w, float eps, float theta, const DsPos& p, uint16_t* cache,
+             int64_t cap, const float* v, uint16_t* vcache, void* stream) {
+    if (rows <= 0) return;
+    ds_rope_kernel<<<dim3(rows, heads), kDsHead, 0, cs(stream)>>>(x, heads, w, eps, theta, p, (__half*) cache,
+                                                                  (long long) cap, v, (__half*) vcache);
+    launched("ds_rope");
+}
+
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, int64_t lo, int64_t hi,
+               int rows, int heads, int kv_heads, float scale, float* score, size_t score_stride, float* out,
+               void* stream) {
+    ds_attend_kernel<<<dim3(rows, heads), 256, 0, cs(stream)>>>(q, (const __half*) keys, (const __half*) vals,
+                                                                (long long) cap, (long long) lo, (long long) hi, heads,
+                                                                kv_heads, scale, score, score_stride, out);
+    launched("ds_attend");
+}
+
+void ds_swiglu(float* g, const float* u, size_t n, void* stream) {
+    ds_swiglu_kernel<<<grid(n, 256), 256, 0, cs(stream)>>>(g, u, n);
+    launched("ds_swiglu");
+}
+
+void ds_mask_rows(float* x, const float* mask, int n, int rows, void* stream) {
+    ds_mask_rows_kernel<<<grid((size_t) n, 256), 256, 0, cs(stream)>>>(x, mask, n, rows);
+    launched("ds_mask_rows");
+}
+
+void ds_markov_in(const float* state, const uint16_t* w1, const int32_t* prev, float* in, int rank, void* stream) {
+    ds_markov_in_kernel<<<grid((size_t) rank, 256), 256, 0, cs(stream)>>>(state, w1, prev, in, rank);
+    launched("ds_markov_in");
+}
+
+void ds_markov_step(const float* ctx_h, const float* ctx_f, const float* bias, const float* sp, float* state,
+                    float* latent, int rank, void* stream) {
+    ds_markov_step_kernel<<<grid((size_t) rank, 256), 256, 0, cs(stream)>>>(ctx_h, ctx_f, bias, sp, state, latent,
+                                                                           rank);
+    launched("ds_markov_step");
+}
+
+size_t ds_pick_floats() { return kDsPickBlocks * sizeof(DsPart) / sizeof(float); }
+
+void ds_pick(const float* base, const float* fy, const float* fb, int n_keep, float cap, float* scratch, Likeliest* out,
+             int32_t* prev, void* stream) {
+    ds_pick_part_kernel<<<kDsPickBlocks, 256, 0, cs(stream)>>>(base, fy, fb, n_keep, cap, (DsPart*) scratch);
+    launched("ds_pick_part");
+    ds_pick_join_kernel<<<1, 32, 0, cs(stream)>>>((const DsPart*) scratch, kDsPickBlocks, out, prev);
+    launched("ds_pick_join");
+}
+
+void ds_fold_q8(const float* ft, int n_rows, int blocks, int b, void* fold, void* stream) {
+    ds_fold_q8_kernel<<<grid((size_t) n_rows, 256), 256, 0, cs(stream)>>>(ft, n_rows, blocks, b, (uint8_t*) fold);
+    launched("ds_fold_q8");
+}
+
 }  // namespace strata::poly

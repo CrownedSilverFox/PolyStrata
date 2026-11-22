@@ -637,7 +637,11 @@ protected:
     void shared_scratch();
     float* draft_input(const int32_t* tokens, int64_t row, const float* h, int n);
     void draft_rows(const int32_t* tokens, int first, int n);
-    void guess_block(int32_t token);
+    /// A window's guesses after `token` into h_block_ (block_n_ of them): the model's own layers over a block of
+    /// block_mask() rows, or the family's drafter (own_blocks()).
+    virtual void guess_block(int32_t token);
+    /// True: the family guesses blocks itself (guess_block()), with --window above 1.
+    virtual bool own_blocks() const { return false; }
     const Image* image_at(int64_t row) const;
     bool input(int32_t token, int64_t row, float* dst) const;
     void embed_rows(const int32_t* tokens, int64_t pos, int n, float* rows) const;

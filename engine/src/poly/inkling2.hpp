@@ -109,11 +109,24 @@ private:
     bool control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n);
     bool project(const Block& B, const float* const* x, int n, bool quantized = false);
     bool control_ffn(const float* msg, const Ctrl& c, const Block& B);
+    void guess_block(int32_t token) override;
+    bool own_blocks() const override { return ds_file_ != nullptr; }
     // only where moe_card() and layer_tail() are recorded together (whole_rec_)
     bool moe_sum_later(int n) const override { return n == 1 && whole_rec_; }
     // routed on the card in that recording: the host reads neither
     bool router_rows_to_host(int n) const override { return !(n == 1 && whole_rec_); }
     void copy_rows(const float* from, float* to, int n);
+    void tail_rows(int il, int n);
+    /// The application of layer il in pass `pass`, in the order a token runs them.
+    int visit_of(int il, int pass) const {
+        const int core = core_end_ - core_start_;
+        return il < core_start_ ? il : il < core_end_ ? core_start_ + pass * core + il - core_start_
+                                                       : il + (n_pass_ - 1) * core;
+    }
+    void ds_open();
+    void ds_load();
+    void ds_commit(int n);
+    void ds_fold();
     template <class F> void window_runs(int64_t pos, F&& f) const;
 
     std::vector<Block> blocks_;   ///< one a layer
@@ -127,6 +140,36 @@ private:
     float qk_clip_ = 0, rel_clip_ = 0, log_alpha_ = 0, log_floor_ = 1, softcap_ = 0;
     float w_scale_ = 0;
     int pass_ = 0;   ///< the core's pass the call under way is in
+    // The DSpark drafter (--draft-model, a file of architecture dflash): three dense layers over a block of the
+    // anchor token and mask rows, reading keys and values made from four of the target's features of every position
+    // it ran (the inputs of three layer runs and the final normed state), then a recurrent Markov head over the
+    // target's output matrix.  guess_block() runs it; the target checks every guess (window()).
+    struct DsLayer {
+        Dev wq, wk, wv, wo, k_ctx, v_ctx, gate, up, down;
+        const float *attn_norm = nullptr, *ffn_norm = nullptr, *dflare = nullptr, *q_norm = nullptr,
+                    *k_norm = nullptr, *k_ctx_norm = nullptr;
+        bool swa = false;
+        uint16_t *keys = nullptr, *vals = nullptr;   ///< fp16, n_kv * head_dim a cell, position p at cell p % cap
+        int64_t cap = 0;
+    };
+    static constexpr int kDsRing = 16;   ///< positions whose Markov-head context ds_ring_ keeps
+    std::unique_ptr<Shards> ds_file_;
+    std::vector<DsLayer> ds_;
+    int ds_block_ = 0, ds_window_ = 0, ds_ff_ = 0, ds_rank_ = 0, ds_visit_[3] = {};
+    float ds_theta_ = 0, ds_eps_ = 0, ds_cap_ = 0;
+    float *ds_alpha_ = nullptr, *ds_mask_ = nullptr, *ds_norm_ = nullptr, *ds_mnorm_ = nullptr, *ds_jb_ = nullptr,
+          *ds_ob_ = nullptr, *ds_wt_ = nullptr, *ds_fold_b_ = nullptr, *ds_ring_ = nullptr, *h_ds_row_ = nullptr;
+    uint16_t* ds_w1_ = nullptr;   ///< the Markov head's token rows, BF16 [vocabulary][rank]
+    Dev ds_wsp_, ds_wh_, ds_wf_, ds_fold_;
+    bool ds_folded_ = false;
+    int32_t *ds_prev_ = nullptr, *h_ds_tok_ = nullptr;
+    Likeliest* ds_pick_ = nullptr;
+    float *ds_tap_ = nullptr, *ds_mix_ = nullptr, *ds_k_ = nullptr, *ds_v_ = nullptr, *ds_x_ = nullptr,
+          *ds_y_ = nullptr, *ds_q_ = nullptr, *ds_att_ = nullptr, *ds_g_ = nullptr, *ds_u_ = nullptr, *ds_h_ = nullptr,
+          *ds_base_ = nullptr, *ds_z_ = nullptr, *ds_fy_ = nullptr, *ds_score_ = nullptr, *ds_ctxh_ = nullptr,
+          *ds_ctxf_ = nullptr, *ds_in_ = nullptr, *ds_sp_ = nullptr, *ds_state_ = nullptr, *ds_lat_ = nullptr,
+          *ds_ft_ = nullptr;
+    size_t ds_score_n_ = 0;
     void* side_ = nullptr;                             ///< fork()'s stream
     void *side_go_ = nullptr, *side_done_ = nullptr;   ///< its fork and its join
 

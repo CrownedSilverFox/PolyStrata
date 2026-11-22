@@ -545,8 +545,10 @@ struct Session {
             return false;
         };
         // a greedy pick that nothing else reads the logits for: a token at a time the card picks it.  Not with a
-        // draft block: Qwen3.6 with its MTP block wrote 0.4% slower after a short prompt (RTX 5090, UD-Q3_K_M).
-        const bool card_picks = Sampler::greedy(s) && !follow && !reads_logits && !engine.drafts();
+        // draft block that guesses a token at a time: Qwen3.6 with its MTP block wrote 0.4% slower after a short
+        // prompt (RTX 5090, UD-Q3_K_M).
+        const bool card_picks =
+            Sampler::greedy(s) && !follow && !reads_logits && (!engine.drafts() || engine.guesses_at_once());
         if (max_new > 0) {
             int32_t w[strata::spec::DraftPolicy::kMaxT], d[strata::spec::DraftPolicy::kMaxT];
             const int block_window = engine.guesses_at_once() ? most : kBlockWindow;
