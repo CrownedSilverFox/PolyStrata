@@ -3950,6 +3950,69 @@ void far_pull(const FarFetch* fetch, const int* count, int most, size_t bytes, v
         throw std::runtime_error(std::string("far_pull: ") + cudaGetErrorString(e));
 }
 
+__global__ void bell_ring_kernel(const void* const* __restrict__ slots, const int32_t* __restrict__ ids,
+                                 const float* __restrict__ w, int n_used, int skip_from, int layer,
+                                 const float* __restrict__ x, float* hx, int n, ExpertBell* bell, uint32_t* seq) {
+    __shared__ int jobs;
+    if (threadIdx.x == 0) {
+        int j = 0;
+        for (int k = 0; k < n_used && j < kBellJobs; ++k)
+            if (!slots[ids[k]] && k < skip_from) {
+                bell->e[j] = ids[k];
+                bell->w[j] = w[k];
+                ++j;
+            }
+        jobs = j;
+    }
+    __syncthreads();
+    if (jobs == 0) {
+        if (threadIdx.x == 0) seq[1] = 0;
+        return;
+    }
+    for (int i = threadIdx.x; i < n; i += blockDim.x) hx[i] = x[i];
+    __threadfence_system();   // the input and the jobs are the host's before the ring
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        bell->layer = layer;
+        bell->n = jobs;
+        __threadfence_system();
+        const uint32_t s = ++seq[0];
+        bell->ring = s;
+        __threadfence_system();
+        seq[1] = s;
+    }
+}
+
+// One block: one thread asks the bell every half microsecond or so, the others sleep at the barrier (a spinning card
+// draws power that a laptop's CPU, computing the experts meanwhile, would rather have).
+__global__ void bell_add_kernel(const ExpertBell* bell, const uint32_t* __restrict__ seq, const float* hy,
+                                float* __restrict__ acc, int n) {
+    const uint32_t s = seq[1];
+    if (s == 0) return;
+    if (threadIdx.x == 0)
+        while (bell->ack != s && !bell->abort) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+            __nanosleep(500);
+#endif
+        }
+    __syncthreads();
+    __threadfence_system();
+    for (int i = threadIdx.x; i < n; i += blockDim.x) acc[i] += *(volatile const float*) (hy + i);
+}
+
+void bell_ring(const void* const* slots, const int32_t* ids, const float* w, int n_used, int skip_from, int layer,
+               const float* x, float* hx, int n, ExpertBell* bell, uint32_t* seq, void* stream) {
+    bell_ring_kernel<<<1, 256, 0, cs(stream)>>>(slots, ids, w, n_used, skip_from, layer, x, hx, n, bell, seq);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("bell_ring: ") + cudaGetErrorString(e));
+}
+
+void bell_add(const ExpertBell* bell, const uint32_t* seq, const float* hy, float* acc, int n, void* stream) {
+    bell_add_kernel<<<1, 512, 0, cs(stream)>>>(bell, seq, hy, acc, n);
+    if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess)
+        throw std::runtime_error(std::string("bell_add: ") + cudaGetErrorString(e));
+}
+
 void copy3(const void* x0, void* y0, int n0, const void* x1, void* y1, int n1, const void* x2, void* y2, int n2,
            void* stream) {
     copy3_kernel<<<grid(n0 + n1 + n2, 256), 256, 0, cs(stream)>>>((const uint32_t*) x0, (uint32_t*) y0, n0,

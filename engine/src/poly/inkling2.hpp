@@ -116,8 +116,10 @@ private:
     bool control_ffn(const float* msg, const Ctrl& c, const Block& B);
     void guess_block(int32_t token) override;
     bool own_blocks() const override { return ds_file_ != nullptr; }
-    // only where moe_card() and layer_tail() are recorded together (whole_rec_)
-    bool moe_sum_later(int n) const override { return n == 1 && whole_rec_; }
+    // only where moe_card() and layer_tail() are recorded together (whole_rec_), and not with the doorbell, whose
+    // experts' sum comes in after the card's
+    bool moe_sum_later(int n) const override { return n == 1 && whole_rec_ && !bell_; }
+    bool bells() const override { return true; }
     // routed on the card in that recording: the host reads neither
     bool router_rows_to_host(int n) const override { return !(n == 1 && whole_rec_); }
     void copy_rows(const float* from, float* to, int n);

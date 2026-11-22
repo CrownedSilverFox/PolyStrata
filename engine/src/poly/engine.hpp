@@ -525,6 +525,9 @@ protected:
     /// buffers of them at a call's: carry_rows() blocks of rows_ rows each from `at`, or back at its own with null.
     virtual int carry_rows() const { return 0; }
     virtual void carry_at(float* at) { (void) at; }
+    /// A token's experts outside VRAM may go to the host's threads through the doorbell (h_bell_): the architecture
+    /// routes on the card (route_card()) and sums a token's experts in moe_card() when moe_sum_later() is false.
+    virtual bool bells() const { return false; }
     /// What save_layer() writes of layer il that its run under way changes: all of it where a layer runs once a token.
     virtual void save_run(int il, int64_t pos, uint8_t* dst) { save_layer(il, pos, dst); }
     /// Optional host hook called before layer_head (including when layer_head is graph-replayed).
@@ -1116,6 +1119,20 @@ protected:
     int32_t* d_use_ = nullptr;                    ///< per (layer, expert): picks of calls routed on the card
     std::vector<int32_t> h_use_;
     bool card_routes() const { return all_cached() || card_far_; }
+    // The doorbell (bells()): a token routed on the card with experts outside VRAM.  moe_card() rings h_bell_ with the
+    // ones the card lacks and multiplies the others, their misses reading zero_slot_ (d_zslots_); the host's threads
+    // compute the misses (bell_serve()) while the card goes on, and the card adds their sum (bell_add()) before the
+    // layer's tail.  No host wait inside the token, so its layers are one recording.
+    ExpertBell* h_bell_ = nullptr;                ///< pinned, the card's and the host's
+    uint32_t* d_bell_seq_ = nullptr;              ///< the card's rings so far, and the ring of the layer under way
+    uint32_t bell_seen_ = 0;                      ///< the last ring the host answered
+    void** d_zslots_ = nullptr;                   ///< d_slots_ with zero_slot_ for every expert outside VRAM
+    uint8_t* zero_slot_ = nullptr;                ///< an expert of zeros: a miss's products are 0 on the card
+    void* ev_bell_ = nullptr;
+    bool bell_ = false;                           ///< this call rings (run())
+    bool bell_on(int n) const;
+    void bell_serve();
+    void bell_job();
     uint8_t* stage_ = nullptr;                    ///< experts that are not cached, on their way through VRAM
     uint8_t* h_stage_[2] = {};                    ///< pinned; filled in turn
     void* ev_stage_[2] = {};                      ///< marks the upload out of each
