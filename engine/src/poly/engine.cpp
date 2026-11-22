@@ -1518,8 +1518,25 @@ int64_t Engine::kv_rows_for(int64_t end) const {
     return std::min<int64_t>(cap, (end + kv_ahead() + kv_grow() - 1) / kv_grow() * kv_grow());
 }
 
-int64_t Engine::kv_grow() const { return opt_.batch > 0 ? kKvGrowBatch : kKvGrow; }
-int64_t Engine::kv_ahead() const { return opt_.batch > 0 ? kKvAheadBatch : kKvAhead; }
+// The smaller steps of batch slots are for cover(), which maps more pages of a reservation.  metal_cover() copies the
+// sequence's caches into new buffers and drops every recording, and where memory is short it cuts the expert cache
+// and reads it in again, or ends the step's answers (KvFull): a slot that starts at 1,024 rows grows in the middle
+// of the answer to a 900-token prompt.  On Metal the slots keep kKvGrow's steps, as poly.10's did.
+int64_t Engine::kv_grow() const {
+#if defined(STRATA_GPU_METAL)
+    return kKvGrow;
+#else
+    return opt_.batch > 0 ? kKvGrowBatch : kKvGrow;
+#endif
+}
+
+int64_t Engine::kv_ahead() const {
+#if defined(STRATA_GPU_METAL)
+    return kKvAhead;
+#else
+    return opt_.batch > 0 ? kKvAheadBatch : kKvAhead;
+#endif
+}
 
 size_t Engine::trim_kv(int64_t end) {
     size_t freed = 0;

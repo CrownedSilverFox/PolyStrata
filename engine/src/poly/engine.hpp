@@ -771,7 +771,7 @@ protected:
     bool mind_card_vram();
     size_t trim_card_kv(int64_t end);
     int64_t kv_rows_for(int64_t end) const;   ///< the rows cover() maps for `end`
-    int64_t kv_grow() const;    ///< cover()'s step: kKvGrow, or kKvGrowBatch with batch slots
+    int64_t kv_grow() const;    ///< cover()'s step: kKvGrow, or kKvGrowBatch with batch slots off Metal
     int64_t kv_ahead() const;   ///< and the rows it maps past the call's
     void held_is_budget();
     void settle_swaps();
