@@ -6659,38 +6659,63 @@ void Engine::run(const int32_t* tokens, int n) {
         // Two recordings where the family asks for it: the card starts on the first few layers while this thread
         // still hands it the rest (a launch takes this thread about 0.1 us a kernel).
         const int first = whole_first_layers();
+        int il = lo_;
+        const auto layers = [&](int count) {
+            return [&, count] {
+                struct Whole {
+                    bool& on;
+                    bool pdl;
+                    ~Whole() { on = false, whole_pdl_scope() = pdl; }
+                } whole_rec{whole_rec_, whole_pdl_scope()};
+                whole_rec_ = true;
+                whole_pdl_scope() = whole_pdl();
+                for (int done = 0; il < hi_ && done < count; il = next_layer(il), ++done) {
+                    Layer& L = layers_[(size_t) il];
+                    layer_head(L, il, n);
+                    if (!L.moe) continue;
+                    moe_shared(L, il, n);
+                    moe_card(L, il, n);
+                    layer_tail(L, il, n);
+                }
+            };
+        };
+        const auto runs_done = [&] {   // a run of a layer each (a looped core's layers run several times a token)
+            for (int at = lo_; at < hi_; at = next_layer(at)) stats_.gpu_experts += layers_[(size_t) at].moe ? n * n_used_ : 0;
+        };
+#if defined(STRATA_GPU_METAL)
+        // Metal encodes a replay into the stream's command buffer, and the card starts on it when it is committed: in
+        // recordings of `first` layer runs each, committed one after the other, the card runs one while this thread
+        // encodes the next.  Two recordings left the card idle while the second, 44 of Inkling 2's 48 runs, was
+        // encoded, and a token took 1.4 times as long as without recordings.
+        if (first > 0) {
+            const auto part = [&](int c) {
+                std::vector<int> k = key;
+                k.push_back(INT_MIN + c);
+                return k;
+            };
+            if (!passes_.count(part(0)))
+                for (int c = 0; il < hi_; ++c) passes_[part(c)] = record(layers(first));
+            for (int c = 0;; ++c) {
+                const auto it = passes_.find(part(c));
+                if (it == passes_.end()) break;
+                ck(cudaGraphLaunch((cudaGraphExec_t) it->second, cs(st_)), "layer graph");
+                ck(gpu::metal::submit(static_cast<gpu::Stream>(st_)), "layer graph");
+            }
+            runs_done();
+            return;
+        }
+#endif
         std::vector<int> rest_key = key;
         rest_key.push_back(INT_MIN);
         void*& pass = passes_[key];
         void** rest = first > 0 ? &passes_[rest_key] : nullptr;
         if (!pass || (rest && !*rest)) {
-            int il = lo_;
-            const auto layers = [&](int count) {
-                return [&, count] {
-                    struct Whole {
-                        bool& on;
-                        bool pdl;
-                        ~Whole() { on = false, whole_pdl_scope() = pdl; }
-                    } whole_rec{whole_rec_, whole_pdl_scope()};
-                    whole_rec_ = true;
-                    whole_pdl_scope() = whole_pdl();
-                    for (int done = 0; il < hi_ && done < count; il = next_layer(il), ++done) {
-                        Layer& L = layers_[(size_t) il];
-                        layer_head(L, il, n);
-                        if (!L.moe) continue;
-                        moe_shared(L, il, n);
-                        moe_card(L, il, n);
-                        layer_tail(L, il, n);
-                    }
-                };
-            };
             pass = record(layers(rest ? first : INT_MAX));
             if (rest) *rest = record(layers(INT_MAX));
         }
         ck(cudaGraphLaunch((cudaGraphExec_t) pass, cs(st_)), "layer graph");
         if (rest) ck(cudaGraphLaunch((cudaGraphExec_t) *rest, cs(st_)), "layer graph");
-        // a run of a layer each (a looped core's layers run several times a token)
-        for (int il = lo_; il < hi_; il = next_layer(il)) stats_.gpu_experts += layers_[(size_t) il].moe ? n * n_used_ : 0;
+        runs_done();
         if (bell_) bell_serve();
         return;
     }
