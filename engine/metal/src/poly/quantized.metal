@@ -61,6 +61,20 @@ struct dot_q2_0 {   // 2-bit codes, the lowest first, minus 1
         return float(b->d)*(s-xs);
     }
 };
+struct dot_q4_K {
+    enum { kSum=1 };
+    static float run(device const block_q4_K* b,short il,thread const float* xv,float xs) {
+        const uchar2 sc=get_scale_min_k4_just2((il/4)*2,(il&3)/2,b->scales);
+        device const uint* q=reinterpret_cast<device const uint*>(b->qs+(il/4)*32+16*(il&1));   // 144-byte blocks
+        const uint sh=(il&2)?4:0;
+        float s=0;
+        for(int i=0;i<4;++i) {
+            const uchar4 c=as_type<uchar4>((q[i]>>sh)&0x0F0F0F0Fu);
+            s+=float(c[0])*xv[4*i]+float(c[1])*xv[4*i+1]+float(c[2])*xv[4*i+2]+float(c[3])*xv[4*i+3];
+        }
+        return float(b->d)*float(sc[0])*s-float(b->dmin)*float(sc[1])*xs;
+    }
+};
 struct dot_q6_K {   // dequantize_q6_K's 6-bit codes, four a word, minus 32
     enum { kSum=1 };
     static float run(device const block_q6_K* b,short il,thread const float* xv,float xs) {
@@ -205,7 +219,7 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
     M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
 #define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) M(q3_K,256) \
-    M(q4_K,256) M(q5_K,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
+    M(q5_K,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
