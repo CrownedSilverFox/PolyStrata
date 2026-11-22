@@ -624,11 +624,15 @@ __global__ void __launch_bounds__(kFastDownThreads) ink_ctrl_down_fast_kernel(Ct
 
 int g_fast_ctrl = -1;   // -1: STRATA_INK_FAST_CTRL decides (ink_set_fast_ctrl() for the kernel test)
 bool fast_ctrl_on() {
+#if defined(__HIPCC__)
+    return false;   // CUDA only: not measured on AMD cards yet
+#else
     if (g_fast_ctrl < 0) {
         const char* v = std::getenv("STRATA_INK_FAST_CTRL");
         g_fast_ctrl = v != nullptr && v[0] == '1';
     }
     return g_fast_ctrl == 1;
+#endif
 }
 
 struct GateSet {

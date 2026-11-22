@@ -53,7 +53,7 @@ float bf16_round(float x, uint16_t* b) {   // truncation to BF16 as stored; the 
     return y;
 }
 
-float run_case(int count, int rows, bool bf16, bool bench) {
+void run_case(int count, int rows, bool bf16, bool bench) {
     std::vector<std::vector<float>> cur(count), msg(count), w(count);
     std::vector<std::vector<uint16_t>> wb(count);
     std::vector<float*> dc(count), dm(count), dy0(count), dy1(count);
@@ -115,7 +115,6 @@ float run_case(int count, int rows, bool bf16, bool bench) {
     std::printf("%d controller(s), %d row(s), %s: |fast-default| %.2e (peak %.3f)  float64: default %.2e fast %.2e  %s\n",
                 count, rows, bf16 ? "BF16" : "F32", diff, peak, e0, e1, bad ? "FAIL" : "ok");
     if (bad) ++failures;
-    float us = 0;
     if (bench) {
         float t[2];
         for (int f = 0; f < 2; ++f) {
@@ -130,19 +129,24 @@ float run_case(int count, int rows, bool bf16, bool bench) {
             float ms;
             ck(cudaEventElapsedTime(&ms, a, b), "event");
             t[f] = 1000.f * ms / 500;
+            ck(cudaEventDestroy(a), "event");
+            ck(cudaEventDestroy(b), "event");
         }
         std::printf("bench %d controller(s), %d row(s), %s: default %.1f us, fast %.1f us\n", count, rows,
                     bf16 ? "BF16" : "F32", t[0], t[1]);
     }
     for (int j = 0; j < count; ++j)
-        for (void* p : {(void*) dc[j], (void*) dm[j], (void*) dw[j], (void*) dy0[j], (void*) dy1[j]}) cudaFree(p);
-    cudaStreamDestroy(st);
-    return us;
+        for (void* p : {(void*) dc[j], (void*) dm[j], (void*) dw[j], (void*) dy0[j], (void*) dy1[j]}) ck(cudaFree(p), "free");
+    ck(cudaStreamDestroy(st), "stream");
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(__HIPCC__)
+    std::printf("STRATA_INK_FAST_CTRL is CUDA only: skipped\n");
+    return 77;
+#endif
     int nd = 0;
     if (cudaGetDeviceCount(&nd) != cudaSuccess || nd == 0) {
         std::printf("no CUDA card: skipped\n");
