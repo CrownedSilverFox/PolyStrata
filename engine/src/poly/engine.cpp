@@ -3022,6 +3022,7 @@ void Engine::load(const Options& o) {
         throw std::runtime_error("--lock-experts locks every expert outside VRAM in RAM, so it does not go with "
                                  "--ram-experts-mib");
     if (opt_.tail_skip < 0) throw std::runtime_error("--tail-skip (STRATA_ROUTE_TAIL_SKIP) cannot be negative");
+    if (opt_.route_top < 0) throw std::runtime_error("--route-top cannot be negative");
     if (!(opt_.skip_weight >= 0.f && opt_.skip_weight < 1.f))
         throw std::runtime_error("--skip-weight is a share of a token's experts' weight: 0 (off) up to below 1");
     if (!(opt_.cache_bias >= 0.f && opt_.cache_bias <= 16.f))
@@ -4906,6 +4907,10 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
             for (int k = 0; k < n_used_; ++k) {
                 // a block of guesses routed among fewer experts than a token takes: the rest weigh nothing
                 if (block_pass_ && w[k] == 0.f) continue;
+                if (opt_.route_top > 0 && k >= opt_.route_top) {   // --route-top: the token's last places
+                    ++stats_.tail_experts;
+                    continue;
+                }
                 host_rel[n_host] = w_all > 0.f ? w[k] / w_all : 1.f;
                 const size_t e = (size_t) ids[k];
                 // a block's guesses are not the answer's tokens: the cache is not filled by them

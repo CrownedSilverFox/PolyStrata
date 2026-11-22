@@ -1705,10 +1705,13 @@ void usage() {
                  "  --dump-layers          print a checksum of every layer's stages to stderr\n"
                  "  --top-probs N          with --tokens: print the N most likely ids of every step to stderr\n"
                  "  --follow ID,ID,...     with --tokens: write these tokens in place of the ones picked, for\n"
-                 "                         --top-probs of the same answer under other settings\n"
+                 "                         --top-probs of the same answer under other settings (--tokens, --follow\n"
+                 "                         and --eos-ids also take @FILE: the list in that file)\n"
                  "  --tail-skip N          an expert outside VRAM that every token of a window ranks at place N+1\n"
                  "                         or later among its experts is left out: faster, and the answers move a\n"
                  "                         little (default 0 = none is; setup gives Qwen3.6 6)\n"
+                 "  --route-top N          a token's experts from place N+1 on are left out, in VRAM or not, where\n"
+                 "                         the host routes (default 0 = none is)\n"
                  "  --skip-weight F        in place of --tail-skip: an expert outside VRAM that every token of a\n"
                  "                         window weighs under F of its experts' weight is left out (default 0 = off)\n"
                  "  --cache-bias F         qwen35moe: a token's router scores get F added for each expert in VRAM\n"
@@ -1832,6 +1835,7 @@ int main(int argc, char** argv) {
         else if (a == "--expert-swaps") o.expert_swaps = std::atoi(val());
         else if (a == "--ram-experts-mib") o.ram_experts_mib = std::atoll(val());
         else if (a == "--tail-skip") o.tail_skip = std::atoi(val());
+        else if (a == "--route-top") o.route_top = std::atoi(val());
         else if (a == "--skip-weight") o.skip_weight = (float) std::atof(val());
         else if (a == "--cache-bias") o.cache_bias = (float) std::atof(val());
         else if (a == "--layer-split") o.layer_split = val();
@@ -1865,7 +1869,14 @@ int main(int argc, char** argv) {
         else if (a == "--min-p") s.min_p = std::strtof(val(), nullptr);
         else if (a == "--seed") s.seed = std::strtoull(val(), nullptr, 10);
         else if (a == "--tokens" || a == "--eos-ids" || a == "--follow") {
-            if (!parse_ids(val(), a == "--tokens" ? ids : a == "--eos-ids" ? eos : follow)) {
+            // @FILE: the list is that file's text (a long prompt's list outgrows Windows' 32K command line)
+            std::string v = val();
+            if (v.size() > 1 && v[0] == '@') {
+                std::ifstream f(v.substr(1));
+                v.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+                while (!v.empty() && (v.back() == '\n' || v.back() == '\r' || v.back() == ' ')) v.pop_back();
+            }
+            if (!parse_ids(v.c_str(), a == "--tokens" ? ids : a == "--eos-ids" ? eos : follow)) {
                 std::fprintf(stderr, "strata-poly: %s takes token ids separated by commas\n", a.c_str());
                 return 2;
             }
