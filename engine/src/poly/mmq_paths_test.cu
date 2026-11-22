@@ -11,10 +11,11 @@
 // from the same rows gathered by ids, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
 // (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.
 //
-// usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference, and an int8 product within
+// usage: poly_mmq_paths_test [--turing-int8]   (--turing-int8: the int8 path on Turing too, gemm_iq_i8_turing(); exit 0: every product within 2% RMS of the reference, and an int8 product within
 // 1e-5 RMS of its own numbers; 77: no card)
 #include "mmq.hpp"
 #include "ggml.h"
+#include "strata/kernels/iq_kernels.hpp"
 
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -62,7 +63,8 @@ Err compare(const std::vector<float>& y, const std::vector<double>& ref, int64_t
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--turing-int8") == 0) strata::kernels::gemm_iq_i8_turing(true);
     int cards = 0;
     if (cudaGetDeviceCount(&cards) != cudaSuccess || cards == 0) {
         std::puts("poly_mmq_paths_test: no card, skipped");
