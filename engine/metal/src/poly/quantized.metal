@@ -51,6 +51,16 @@ struct dot_q8_0 {
         return float(b->d)*s;
     }
 };
+struct dot_q2_0 {   // 2-bit codes, the lowest first, minus 1
+    enum { kSum=1 };
+    static float run(device const block_q2_0* b,short il,thread const float* xv,float xs) {
+        device const ushort* q=reinterpret_cast<device const ushort*>(b->qs+4*il);
+        const uint v=uint(q[0])|(uint(q[1])<<16);
+        float s=0;
+        for(int j=0;j<16;++j) s+=float((v>>(2*j))&3)*xv[j];
+        return float(b->d)*(s-xs);
+    }
+};
 // eight grid bytes (two words) times xv with the signs' bits flipping xv's
 static inline float signed_grid8(uint2 g,uint signs,thread const float* xv) {
     float s=0;
@@ -165,9 +175,9 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
 #define MV_TYPES(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q8_0,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) \
     M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
     M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
-#define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) \
-    M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) \
-    M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
+#define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) M(q3_K,256) \
+    M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) \
+    M(iq4_xs,256) M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
