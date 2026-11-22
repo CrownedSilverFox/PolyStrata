@@ -1,6 +1,6 @@
 // metal/poly_tests/mv_bench.cpp - one token's quantized products (poly_mul) on the shapes of a decode step: the experts
 // of a token (8 of them, by expert ids) and a dense projection, for every type poly_mul has.  Not a test: run by hand.
-//   poly_mv_bench [reps (at least; enough for 20 ms a column), default 200 [types "8,22,19,..." [shapes inkling|qwen|sweep|dense|many,
+//   poly_mv_bench [reps (at least; enough for 20 ms a column), default 200 [types "8,22,19,..." [shapes inkling|qwen|sweep|dense|prompt|many,
 //                 default inkling and qwen [rounds, default 5]]]]
 // inkling: Inkling 2 Mini (2,304 wide, experts of 2,304 x 1,152 with their gate and up in one call, downs of 1,152);
 // qwen: Qwen3.6-35B-A3B (2,048 wide, experts of 2,048 x 512).  Each call reads other experts or another copy of the
@@ -46,7 +46,7 @@ int main(int argc,char** argv){
     const std::string source=blocks+"#define MV_DEQ\n"+md::read_source(STRATA_POLY_QUANT_SOURCE);
     const std::string old_source=old?blocks+"#define NVFP4_ROWS 4\n"+md::read_source(old):"";
     g::Stream s;ck(g::stream_create(&s));g::metal::set_optimize(true);
-    struct Shape{const char* model;const char* name;int ni,no,used,copies;};   // used 0: a dense matrix
+    struct Shape{const char* model;const char* name;int ni,no,used,copies,xr=1;};   // used 0: a dense matrix; xr: the rows of x
     const Shape ink[]={{"inkling","experts gate|up",2304,2304,8,64},{"inkling","experts down",1152,2304,8,64},
                        {"inkling","dense 2304->4096",2304,4096,0,32},{"inkling","dense 4096->2304",4096,2304,0,32}};
     const Shape qwen[]={{"qwen","experts gate|up",2048,1024,8,128},{"qwen","experts down",512,2048,8,128},
@@ -54,6 +54,10 @@ int main(int argc,char** argv){
     std::vector<Shape> shapes;
     if(only=="sweep")shapes={ink[0],ink[1],ink[2],qwen[1]};
     if(only=="dense")shapes={ink[2],ink[3],qwen[2]};
+    // a short prompt's launches (lin() takes up to 8 tokens a launch below 32): LFM2.5's dense matrices on 8 tokens and
+    // its experts on 20 tokens of 4 experts
+    if(only=="prompt")shapes={{"lfm2.5","dense 2048->6144 x8",2048,6144,0,16,8},{"lfm2.5","dense 6144->2048 x8",6144,2048,0,16,8},
+                              {"lfm2.5","dense 2048->2048 x8",2048,2048,0,16,8},{"lfm2.5","experts x80",2048,1536,80,64,20}};
     if(only.empty()||only=="inkling")shapes.insert(shapes.end(),std::begin(ink),std::end(ink));
     if(only.empty()||only=="qwen")shapes.insert(shapes.end(),std::begin(qwen),std::end(qwen));
     std::printf("%-8s %-18s %-8s","model","shape","type");
@@ -76,29 +80,33 @@ int main(int argc,char** argv){
         Buffer dw(per*sh.copies);for(int e=0;e<sh.copies;++e)ck(g::memcpy_sync(static_cast<unsigned char*>(dw.ptr)+per*e,one.data(),per,g::kHostToDevice));
         std::vector<const void*> table(sh.copies);for(int e=0;e<sh.copies;++e)table[e]=static_cast<unsigned char*>(dw.ptr)+per*e;
         const int used=std::max(sh.used,1);
-        Buffer tab(sh.copies*sizeof(void*)),di(size_t(kMaxReps+1)*used*4),dx(values(sh.ni)),q(k::native_q8_1_bytes(sh.ni,1)),y(used*sh.no*4);
+        Buffer tab(sh.copies*sizeof(void*)),di(size_t(kMaxReps+1)*used*4),dx(values(size_t(sh.xr)*sh.ni)),q(k::native_q8_1_bytes(sh.ni,sh.xr)),
+               y(std::max(used,sh.xr)*sh.no*4);
         tab.put(table.data(),sh.copies*sizeof(void*));
-        k::native_quantize_q8_1(dx.as(),q.ptr,sh.ni,1,s);
+        k::native_quantize_q8_1(dx.as(),q.ptr,sh.ni,sh.xr,s);
         std::vector<int32_t> ids(size_t(kMaxReps+1)*used);for(size_t r=0;r<ids.size();++r)ids[r]=int((r*13+r/used*5)%sh.copies);
         di.put(ids.data(),ids.size()*4);
         auto call=[&](const Col& c,int i){
             if(!c.nr){
-                if(sh.used){k::MmvqIds a{tab.as<const void*>(),di.as<int32_t>()+size_t(i)*used,0,q.ptr,0,used,y.as(),size_t(sh.no)};k::native_mmvq_ids(type,a,used,sh.ni,sh.no,s);}
-                else k::native_mmvq(type,table[ids[size_t(i)*used]],q.ptr,y.as(),sh.ni,sh.no,1,s);
+                if(sh.used){k::MmvqIds a{tab.as<const void*>(),di.as<int32_t>()+size_t(i)*used,0,q.ptr,k::native_q8_1_bytes(sh.ni),used/sh.xr,y.as(),size_t(sh.no)};k::native_mmvq_ids(type,a,used,sh.ni,sh.no,s);}
+                else k::native_mmvq(type,table[ids[size_t(i)*used]],q.ptr,y.as(),sh.ni,sh.no,sh.xr,s);
                 return;
             }
-            md::QArgs a;a.p[1]=q.ptr;a.p[2]=y.ptr;a.ni=sh.ni;a.no=sh.no;a.rows=used;a.xstride=k::native_q8_1_bytes(sh.ni);a.ystride=sh.no;
-            if(sh.used){a.p[0]=tab.ptr;a.p[3]=di.as<int32_t>()+size_t(i)*used;a.every=used;a.kind=1;}
+            md::QArgs a;a.p[1]=q.ptr;a.p[2]=y.ptr;a.ni=sh.ni;a.no=sh.no;a.rows=sh.used?used:sh.xr;a.xstride=k::native_q8_1_bytes(sh.ni);a.ystride=sh.no;
+            if(sh.used){a.p[0]=tab.ptr;a.p[3]=di.as<int32_t>()+size_t(i)*used;a.every=used/sh.xr;a.kind=1;}
             else a.p[0]=table[ids[size_t(i)*used]];
             const std::string name="poly_mul_"+std::string(md::quant_name(type))+c.suffix;
             const int nr=c.nr>0?c.nr:type==40?4:1;
-            md::dispatch(c.lib,c.nr>0?source:old_source,name.c_str(),a,s,{uint32_t((sh.no+nr-1)/nr),uint32_t(used),1},32,
+            md::dispatch(c.lib,c.nr>0?source:old_source,name.c_str(),a,s,{uint32_t((sh.no+nr-1)/nr),uint32_t(a.rows),1},32,
                          {a.p,6,true,sh.used?a.p[0]:nullptr});
         };
         // enough calls for 20 ms a column: a short burst left the GPU's clocks low and the times twice as far apart
         int reps=reps0;
+        std::vector<double> first_us(cols.size());   // each column's first call, its pipeline made then (MV_FIRST=1 prints them)
         {
+            const auto f0=std::chrono::steady_clock::now();
             call(cols[0],0);ck(g::stream_synchronize(s));
+            first_us[0]=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-f0).count();
             const auto t0=std::chrono::steady_clock::now();
             for(int i=1;i<=reps;++i)call(cols[0],i);
             ck(g::stream_synchronize(s));
@@ -108,9 +116,11 @@ int main(int argc,char** argv){
         std::vector<double> best(cols.size(),1e30);
         std::vector<float> first;std::string wrong;   // each column's first call against the engine's: the same sums
         for(int round=0;round<rounds;++round)for(size_t v=0;v<cols.size();++v){
+            const auto f0=std::chrono::steady_clock::now();
             call(cols[v],0);ck(g::stream_synchronize(s));
+            if(!round && v)first_us[v]=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-f0).count();
             if(!round){
-                auto out=y.read(size_t(used)*sh.no);
+                auto out=y.read(size_t(std::max(used,sh.xr))*sh.no);
                 if(!v)first=out;
                 else{float top=0,d=0;for(size_t i=0;i<out.size();++i){top=std::max(top,std::fabs(first[i]));d=std::max(d,std::fabs(out[i]-first[i]));}
                      if(!(d<=1e-4f*top))wrong+=std::string(" WRONG ")+cols[v].head;}
@@ -122,7 +132,9 @@ int main(int argc,char** argv){
         }
         std::printf("%-8s %-18s %-8s",sh.model,sh.name,ggml_type_name(ggml_type(type)));
         for(double b:best)std::printf(" %8.1f",b);
-        std::printf("  %7.1f%s\n",double(per)*used/best[0]/1e3,wrong.c_str());
+        std::printf("  %7.1f%s",double(per)*used/best[0]/1e3,wrong.c_str());
+        if(std::getenv("MV_FIRST")){std::printf("  first calls");for(double f:first_us)std::printf(" %.0f",f);}
+        std::printf("\n");
         std::fflush(stdout);
     }
     // Inkling 2's q, k, v, relative positions' and gate's products of a token (3072, 1024, 1024, 384, 3072 outputs of
