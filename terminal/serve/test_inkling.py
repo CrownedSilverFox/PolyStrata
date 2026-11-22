@@ -46,6 +46,13 @@ class PreTokenizer(unittest.TestCase):
         self.assertEqual(self.pieces("你好ab"), ["你好ab"])
         self.assertEqual(self.pieces("a  \nb"), ["a", "  \n", "b"])
 
+    def test_a_piece_that_is_a_token_is_that_token(self):
+        # the model's tokenizer.json sets ignore_merges: "ab" is a token, though no merge makes it.  (In the real
+        # vocabulary "kwargs" is such a token: Hugging Face gives [87550], llama.cpp [86226, 70, 82].)
+        tok = ST.Tokenizer(["a", "b", "ab"], [], pre="inkling2")
+        self.assertTrue(tok.ignore_merges)
+        self.assertEqual(tok.encode("ab"), [2])
+
 
 class Blocks(unittest.TestCase):
     def test_thinking_then_text_however_it_arrives(self):
