@@ -926,9 +926,17 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
 
     // A token's BF16 products (the sink's, a full layer's convolution taps) are a few microseconds each of a block
     // an output, the card's memory idle: in a whole pass's recording they run beside the Q8_0 ones, a branch off
-    // the stream that it joins after them.  gemv_bf16() is lin()'s launch for them.
+    // the stream that it joins after them.  gemv_bf16() is lin()'s launch for them.  Not on Metal: a recording there
+    // is the capturing stream's alone, so the branch's launches ran once as it was made and never in its replays (the
+    // sink and the taps stayed the recording token's), and each event committed a command buffer.
     const auto plain_bf16 = [](const Dev& d) { return !d.p || (d.type == kTypeBF16 && d.scale == 1.0f); };
-    const bool branch = n == 1 && whole_rec_ && plain_bf16(B.sink) && plain_bf16(B.k_dyn) && plain_bf16(B.v_dyn);
+#if defined(STRATA_GPU_METAL)
+    constexpr bool kBranch = false;
+#else
+    constexpr bool kBranch = true;
+#endif
+    const bool branch = kBranch && n == 1 && whole_rec_ && plain_bf16(B.sink) && plain_bf16(B.k_dyn) &&
+                        plain_bf16(B.v_dyn);
     if (branch) {
         fork();
         gemv_bf16((const uint16_t*) B.sink.p, x[0], sink_, B.sink.n_in, B.sink.n_out, B.sink.n_out, 1, side_);
