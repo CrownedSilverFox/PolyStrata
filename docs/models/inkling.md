@@ -34,14 +34,14 @@ The two start with the same tokens. For UD-Q4_K_XL the first 13 after the short 
 long one are the same, and they part at a step whose two leading candidates are nearly as likely (0.35 against 0.34,
 and 0.028 against 0.028). For UD-Q3_K_XL the first 13 and the first 40 are the same.
 
-`STRATA_PREFILL_NVFP4=w4a4x2` made the RTX 5090 above read a prompt 1.5 to 1.7 times as fast. Both sizes keep
-most of their experts in NVFP4, and the setting multiplies those on the FP4 tensor cores of an RTX 50 card, with the
-prompt's numbers rounded to about 8 bits instead of 11. It is off because it changes the answers: on five prompts of
-49 to 10,081 tokens, nine of the ten answers parted from the default ones after 6 to 30 tokens (the tenth kept all
-256), each at a step whose two likeliest tokens were close. A card that holds only part of the experts was not
-measured. Three runs each, 32 tokens written after the prompt:
+On an RTX 50 card the engine multiplies the experts kept in NVFP4 (most of them, in both sizes) on the FP4 tensor
+cores while it reads a prompt, with the prompt's numbers rounded to about 8 bits instead of 11. That reads a prompt
+1.5 to 1.9 times as fast as multiplying them as halves (`STRATA_PREFILL_NVFP4=fp16`). It moves the answers a little:
+written after the halves' greedy answers to eight prompts of 19 to 10,124 tokens, 256 tokens each, it gives the same
+most likely token at 98.5% of the steps (95.3% to 100% a prompt); the halves run again give 100%. A card that holds
+only part of the experts was not measured. Three runs each, 32 tokens written after the prompt:
 
-| Size | Prompt | Default | With `w4a4x2` |
+| Size | Prompt | Halves (`fp16`) | FP4 (the default on RTX 50) |
 | --- | ---: | ---: | ---: |
 | **UD-Q4_K_XL** | 2,664 tokens | 2,450-2,490 tokens/s | 3,800-3,840 tokens/s |
 | | 10,081 tokens | 3,200-3,220 tokens/s | 5,390-5,410 tokens/s |

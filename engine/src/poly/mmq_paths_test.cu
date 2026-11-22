@@ -8,8 +8,8 @@
 // only the float rounding of its sums may differ.  Then the same products with the memory Mmq::work() asks for given
 // beforehand (Mmq::give(), as Engine::alloc() does): the same numbers, made in those buffers.  Where the path reads
 // rows by index (Mmq::reads_by_index()), the experts' product from rows quantized once and read by index is the one
-// from the same rows gathered by ids, bit for bit.  STRATA_PREFILL_NVFP4=w4a4x2 takes NVFP4 to the two-term FP4
-// products on an RTX 50 card (nvfp4_x2.hpp): run it that way too.
+// from the same rows gathered by ids, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
+// (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.
 //
 // usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference, and an int8 product within
 // 1e-5 RMS of its own numbers; 77: no card)

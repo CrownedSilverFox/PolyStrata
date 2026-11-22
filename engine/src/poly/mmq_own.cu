@@ -23,7 +23,7 @@
 // there depends on how many rows the library multiplies at once (split_exact() is false).  F32 matrices are not
 // taken: their halves would be less exact than the products the engine makes of them otherwise.
 //
-// STRATA_PREFILL_NVFP4=w4a4x2 on an RTX 50 card: an NVFP4 matrix with rows of a multiple of 128 values goes to the
+// On an RTX 50 card (STRATA_PREFILL_NVFP4 unset or w4a4x2): an NVFP4 matrix with rows of a multiple of 128 values goes to the
 // block-scaled FP4 tensor cores instead, the activations two FP4 terms under a float a row (nvfp4_x2.hpp, about 8
 // bits against a half's 11), its products straight to dst's rows and its rows read by index as the int8 ones are.
 #include "mmq.hpp"
@@ -141,13 +141,15 @@ bool by_blas(int t, int64_t rows, int64_t cols) {
     return dequantized(t) && cols % block_values(t) == 0 && (rows * cols) % 256 == 0;
 }
 
-// STRATA_PREFILL_NVFP4=w4a4x2 asks for the two-term FP4 products, and an NVFP4 matrix of rows this long takes them on
-// this card (asked last, and once: nothing of it runs without the variable)
+// The two-term FP4 products for an NVFP4 matrix of rows this long, on a card that has them: the default, and what
+// STRATA_PREFILL_NVFP4=w4a4x2 names; any other value (fp16, w4a8, w4a4, off) keeps the halves.  Inkling 2 Mini
+// UD-Q4_K_XL on the RTX 5090, following the halves' greedy answers (8 prompts of 19 to 10,124 tokens, 256 tokens each):
+// the same most likely token at 98.5% of the steps (95.3% to 100% a prompt), against 100% for the halves run again.
 bool x2_rows(int t, int64_t cols) {
 #if STRATA_POLY_X2
     static const bool asked = [] {
         const char* v = std::getenv("STRATA_PREFILL_NVFP4");
-        return v && std::string(v) == "w4a4x2";
+        return !v || !*v || std::string(v) == "w4a4x2";
     }();
     return t == 40 && cols % x2::kK == 0 && asked && nvfp4_x2_built();
 #else
