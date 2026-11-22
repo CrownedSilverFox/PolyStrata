@@ -3,11 +3,11 @@
 [English](README.md) · **简体中文** · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Türkçe](README.tr.md)
 
 <p align="center"><b>在你自己的电脑上运行大型 AI 模型</b><br>
-Qwen3.8-Flash-Next、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Flint、Qwen3.6、Clover、Ornith 1.5、Gemma 4、Tiel Coder、MiniCPM-V 和 Kolibri 1 · 免费开源</p>
+Qwen3.8-Flash-Next、Hy4-Flash、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Flint、Qwen3.6、Clover、Ornith 1.5、Gemma 4、Tiel Coder、MiniCPM-V 和 Kolibri 1 · 免费开源</p>
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="写回答时每秒的 token 数，poly.10 和这一版：Qwen3.6-35B-A3B 在 8 GB 显存的笔记本上从 83 到 92，在 RTX 5090 上从 429 到 532"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="写回答时每秒的 token 数，poly.10 和这一版：Qwen3.6-35B-A3B 在 8 GB 显存的笔记本上从 81 到 95，在 RTX 5090 上从 424 到 512"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="终端里的 Claude Code，旁边是 PolyStrata 的 API Monitor"><br>
 <sub>Claude Code 接 Qwen3.6-35B-A3B UD-Q3_K_M，在 8 GB 显卡的笔记本上，原速：给一个小程序加 <code>--json</code> 选项，写测试，跑测试。服务器启动时已经读过 Claude Code 的系统提示词（<code>"warm_start": true</code>）。</sub></p>
@@ -35,13 +35,14 @@ PolyStrata 能在普通电脑上运行通常要用服务器才能跑的大型 AI
   所以长对话占的显存很少：128K 上下文只比 32K 多占 2.6 GB。
 - **[Qwen3.6-35B-A3B](docs/models/qwen36.zh-CN.md)**：文件 13 到 23 GB。它还能看图片。
 - **[Groot 19B-A3B 261023](docs/models/groot.md)**：实验性的安装支持，用 Bartowski 的三种量化 Q4_K_M、Q6_K 和 Q8_0（12.5 到 20.2 GB），带 MTP，图片投影可选。Q4_K_M 的文字在 8 GB 的 RTX 5060 上和 Linux 下的 RTX 5090 上跑过；图片、Q6_K 和 Q8_0 还没验证。
-- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines 的模型，实验性，文件 14 或 18 GB。在 Linux 上用 32 GB 的 NVIDIA 显卡、在 Windows 上用 8 GB 的笔记本显卡跑过：只看文字，一次只答一个请求。
+- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines 的模型，实验性，文件 9 到 18 GB。在 Linux 上用 32 GB 的 NVIDIA 显卡、在 Windows 上用 8 GB 的笔记本显卡跑过：只看文字，一次只答一个请求。
 - **[Clover-35B-A3B-Preview](docs/models/clover.zh-CN.md)**：DiffuSpace 的模型，在 Qwen3.6-35B-A3B 上接着训练，还能一次写出一整块 token，文件 13 到 21 GB。只看文字。
 - **[Ornith 1.5](docs/models/ornith.zh-CN.md)**：结构和 Qwen3.6-35B-A3B 相同，权重不同，文件 14 到 24 GB。它还能看图片。
 - **[Gemma 4 26B-A4B](docs/models/gemma4.zh-CN.md)**：文件 11 到 17 GB。它还能看图片。
 - **[Tiel Coder 35B-A3B](docs/models/tiel.zh-CN.md)**：peculiar-ragdoll 为编程智能体量化的 Ornith 1.5，文件 14 到 23 GB。它还能看图片。
 - **[MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.zh-CN.md)**：OpenBMB 的模型，结构和 Qwen3.6-35B-A3B 相同，权重是自己训练的，专门做看图，文件 16 到 29 GB。
 - **[Kolibri 1](docs/models/kolibri.zh-CN.md)**：Aleph Alpha 的模型，写德语和写英语一样好，文件 29 到 48 GB，显卡小的时候大部分放在内存里。
+- **[Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)**：腾讯的 220B-A12B 模型，跑在 Strata 项目自己的引擎（`strata-hy4`）上，文件 130 到 181 GB，64 GB 内存起配 8 GB 显卡。也能看图。
 
 服务器运行时可以在已安装的模型之间切换（[做法](docs/BACKENDS.md#changing-the-model)，英文）。
 
@@ -60,25 +61,26 @@ PolyStrata 基于 Niko1221 的 [Strata](https://github.com/Niko1221/Strata)。
 
 | 模型 | 8 GB 显卡的笔记本<br>写回答 / 读提示 | RTX 5090<br>写回答 / 读提示 | 全部规格 |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 488 → 486 / 23,103 → 24,822 | [LFM2.5](docs/models/lfm25.zh-CN.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 253 → 262 / 12,699 → 15,035 | [Flint](docs/models/flint.zh-CN.md) |
-| Qwen3.6-35B-A3B | 83 → 92 / 1,795 → 2,185 | 429 → 532 / 11,210 → 15,067 | [Qwen3.6](docs/models/qwen36.zh-CN.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 280 → 306 / 9,305 → 13,826 | [Clover](docs/models/clover.zh-CN.md) |
-| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 332 → 370 / 9,356 → 14,144 | [Ornith](docs/models/ornith.zh-CN.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 369 → 377 / 8,481 → 11,287 | [Gemma 4](docs/models/gemma4.zh-CN.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 366 → 448 / 9,941 → 15,214 | [Tiel Coder](docs/models/tiel.zh-CN.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 310 → 329 / 9,695 → 14,390 | [MiniCPM-V](docs/models/minicpmv.zh-CN.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 203 → 208 / 5,032 → 5,951 | [Kolibri 1](docs/models/kolibri.zh-CN.md) |
-| GLM 5.3 Flash | 跑不了，要 32 GB 显卡 | 5 → 48 / 225 → 878 | [GLM](docs/models/glm.zh-CN.md) |
-| DeepSeek V4 Flash | 跑不了，要 32 GB 显卡 | 37 → 54 / 1,064 → 1,916 | [DeepSeek](docs/models/deepseek.zh-CN.md) |
-| Inkling 2 Mini | 35 / 417 | 128 / 2,975 | [Inkling 2 Mini](docs/models/inkling.md) |
-| Groot 19B-A3B 261023 | 75 / 2,339 | 457 / 15,321 | [Groot](docs/models/groot.md) |
+| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 486 → 492 / 23,488 → 25,160 | [LFM2.5](docs/models/lfm25.zh-CN.md) |
+| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 250 → 261 / 12,723 → 14,851 | [Flint](docs/models/flint.zh-CN.md) |
+| Qwen3.6-35B-A3B | 81 → 95 / 1,751 → 2,110 | 424 → 512 / 11,148 → 14,842 | [Qwen3.6](docs/models/qwen36.zh-CN.md) |
+| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 284 → 308 / 9,312 → 13,814 | [Clover](docs/models/clover.zh-CN.md) |
+| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 322 → 358 / 9,433 → 14,133 | [Ornith](docs/models/ornith.zh-CN.md) |
+| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 354 → 363 / 8,676 → 11,478 | [Gemma 4](docs/models/gemma4.zh-CN.md) |
+| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 368 → 437 / 9,879 → 15,079 | [Tiel Coder](docs/models/tiel.zh-CN.md) |
+| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 306 → 331 / 9,632 → 14,305 | [MiniCPM-V](docs/models/minicpmv.zh-CN.md) |
+| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5,101 → 6,009 | [Kolibri 1](docs/models/kolibri.zh-CN.md) |
+| GLM 5.3 Flash | 跑不了，要 32 GB 显卡 | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.zh-CN.md) |
+| DeepSeek V4 Flash | 跑不了，要 32 GB 显卡 | 28 → 50 / 1,049 → 1,895 | [DeepSeek](docs/models/deepseek.zh-CN.md) |
+| Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
+| Hy4-Flash | 跑不了，要 64 GB 内存 | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
 
-每格是同一台电脑上 poly.10 → 这一版：两边交替各跑三次，取中位数，`--tail-skip 0`。Inkling 2 Mini 和 Groot 是这一版新加的。工作站上 LFM2.5、Qwen3.6、Ornith 1.5、Gemma 4 和 Tiel Coder 的写回答取自前一天另一台 RTX 5090 云主机，这一版在那台上写得更快；每对的两个数都出自那台。
+每格是同一台电脑上 poly.10 → 这一版：两边交替各跑三次，取中位数。Inkling 2 Mini、Groot 和 Hy4-Flash 是这一版新加的。
 
 笔记本：RTX 4070 Laptop（8 GB）、Core i7-14700HX、32 GB 内存。工作站：RTX 5090（32 GB）、Xeon Platinum 8470Q（25 vCPU）、90-120 GB 内存。Flint 在笔记本上是 UD-Q3_K_XL（32 GB 内存时安装程序选的规格），在工作站上是 UD-Q4_K_XL。Kolibri 1 两台上都是 Q2_K；安装程序在工作站上会选 Q4_K_M，这个规格没测。
 
-Qwen3.8-Flash-Next 用的是 [Strata](https://github.com/Niko1221/Strata) 的引擎，由 Strata 项目在 RTX 5070（12 GB）、64 GB 内存的电脑上测得：IQ2_XS 写 79、读 32K 提示 2,090（[全部规格](docs/models/qwen38.zh-CN.md)）。
+Qwen3.8-Flash-Next 和 Hy4-Flash 用的是 [Strata](https://github.com/Niko1221/Strata) 的引擎，由 Strata 项目测得。Qwen3.8-Flash-Next 在 RTX 5070（12 GB）、64 GB 内存的电脑上：IQ2_XS 写 79、读 32K 提示 2,090（[全部规格](docs/models/qwen38.zh-CN.md)）。Hy4-Flash 在 RTX 5090 上：写 90 到 111，读 128K 提示 1,694（[它的发布说明](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)）。
 
 用 PolyStrata 自己引擎的这十一个模型，都是用它自带的跑分测的，你也可以在自己的电脑上跑：
 `python polystrata.py benchmark --model <name> --prompt-tokens 24000`
@@ -150,7 +152,8 @@ Qwen3.6-35B-A3B 读完 32,000 个 token 的提示后，0.1.45-poly.6 占 17.9 Gi
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.zh-CN.md) | 同上；AMD 是测试版 | 配 8 GB 显卡约 25 GB | 16-29 GB | Windows、Linux |
 | [Kolibri 1](docs/models/kolibri.zh-CN.md) | NVIDIA RTX 20 系列起，8 GB 起 | 配 8 GB 显卡约 33 GB | 29-48 GB | Windows、Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md)（实验性） | CUDA/HIP 共用的后端；Q4_K_M 的文字在 8 GB 的 RTX 5060 上跑过（实测峰值显存 7.05 GiB、内存 21.8 GiB） | Q4_K_M 配 8 GB 显卡约 17 GB，安装程序估的 | 12.5-20.2 GB；看图再加 0.9 GB | Windows、Linux；图片、Q6_K、Q8_0 没验证 |
-| [Inkling 2 Mini](docs/models/inkling.md)（实验性） | NVIDIA，8 GB 起；在 RTX 5090 和 RTX 4070 Laptop（8 GB，UD-Q3_K_XL）上跑过 | UD-Q4_K_XL 配 8 GB 显卡约 21 GB，安装程序估的 | 14 或 18 GB | Windows、Linux |
+| [Inkling 2 Mini](docs/models/inkling.md)（实验性） | NVIDIA，8 GB 起；在 RTX 5090 和 RTX 4070 Laptop（8 GB，UD-Q3_K_XL）上跑过 | UD-Q4_K_XL 配 8 GB 显卡约 21 GB，安装程序估的 | 9-18 GB | Windows、Linux |
+| [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)（Strata 项目的引擎） | NVIDIA V100 到 RTX 50，8 GB 起；AMD RX 6000 到 9000 和 Strix Halo；Intel Arc | SQ-64 要 64 GB 起，SQ-96 要 96 GB，SQ-128 要 128 GB | 130-181 GB，放在 SSD 上 | Windows、Linux、Mac |
 
 内存是安装程序的估算；显卡越大，要的内存越少。其他的都由安装程序搞定：在 Windows 上它直接下载编译好的引擎，CPU 不支持 AVX2、在 AMD 显卡上运行 PolyStrata 自己的模型，或你这份代码的引擎比最新 release 新时，才在本机编译，缺工具会问你要不要装。两到三张显卡可以分担同一个模型（[多 GPU](docs/MULTI_GPU.md)）。较老的显卡、Intel Arc、Apple 芯片的 Mac（Qwen3.8-Flash-Next，测试版还有 Qwen3.6 和 LFM2.5）、Strix Halo、不支持 AVX2 的老处理器：[完整列表](docs/INSTALL.md#what-you-need)。每个模型的显卡、内存和各规格的细节在它自己的页面里。
 
@@ -217,7 +220,8 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.zh-CN.md) | Q4_K_M | mix_q3gud_im | Q6_K |
 | [Kolibri 1](docs/models/kolibri.zh-CN.md) | 内存约 48 GB 起 Q4_K_M | Q2_K | Q3_K_M |
 | [Groot 19B-A3B 261023](docs/models/groot.md) | Q4_K_M | — | Q6_K, Q8_0 |
-| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | — |
+| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | UD-Q2_K_XL |
+| [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) | 内存 64 GB 起 SQ-64，96 GB 起 SQ-96，128 GB 起 SQ-128 |  |  |
 
 每个规格是什么、下载多大、配不同显卡要多少内存、和最大规格比答案差多少：各模型的页面，从“速度有多快？”的表里点模型名。
 

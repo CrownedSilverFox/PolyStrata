@@ -3,11 +3,11 @@
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · **Português** · [Türkçe](README.tr.md)
 
 <p align="center"><b>Rode modelos de IA grandes no seu próprio PC</b><br>
-Qwen3.8-Flash-Next, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, Qwen3.6, Clover, Ornith 1.5, Gemma 4, Tiel Coder, MiniCPM-V e Kolibri 1 · gratuito e de código aberto</p>
+Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, Qwen3.6, Clover, Ornith 1.5, Gemma 4, Tiel Coder, MiniCPM-V e Kolibri 1 · gratuito e de código aberto</p>
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens por segundo ao escrever uma resposta, poly.10 e esta versão: o Qwen3.6-35B-A3B vai de 83 a 92 em um notebook com placa de 8 GB e de 429 a 532 em uma RTX 5090"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens por segundo ao escrever uma resposta, poly.10 e esta versão: o Qwen3.6-35B-A3B vai de 81 a 95 em um notebook com placa de 8 GB e de 424 a 512 em uma RTX 5090"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Claude Code em um terminal ao lado do API Monitor do PolyStrata"><br>
 <sub>Claude Code com Qwen3.6-35B-A3B UD-Q3_K_M no notebook com a placa de 8 GB, em tempo real: ele adiciona uma opção <code>--json</code> a um programa pequeno, escreve um teste e roda os testes. O servidor tinha lido o prompt de sistema do Claude Code ao iniciar (<code>"warm_start": true</code>).</sub></p>
@@ -42,7 +42,7 @@ notebook com uma placa de 8 GB, e o Groot num PC com uma RTX 5060 de 8 GB.
 - **[Groot 19B-A3B 261023](docs/models/groot.md)**, integração experimental no instalador para três quantizações do
   Bartowski, Q4_K_M, Q6_K e Q8_0 (12,5 a 20,2 GB), com MTP e um projetor de imagens opcional. O Q4_K_M com texto rodou
   numa RTX 5060 de 8 GB e numa RTX 5090 no Linux; imagens, Q6_K e Q8_0 ainda estão pendentes.
-- **[Inkling 2 Mini](docs/models/inkling.md)** da Thinking Machines, experimental: um arquivo de 14 ou 18 GB. Rodou no
+- **[Inkling 2 Mini](docs/models/inkling.md)** da Thinking Machines, experimental: um arquivo de 9 a 18 GB. Rodou no
   Linux com uma placa NVIDIA de 32 GB e no Windows com uma placa de notebook de 8 GB: só texto, um pedido de cada vez.
 - **[Clover-35B-A3B-Preview](docs/models/clover.pt-BR.md)** da DiffuSpace, o Qwen3.6-35B-A3B treinado mais para
   escrever também um bloco de tokens de uma vez: um arquivo de 13 a 21 GB. Ele só lê texto.
@@ -55,6 +55,8 @@ notebook com uma placa de 8 GB, e o Groot num PC com uma RTX 5060 de 8 GB.
   feito para ler imagens: um arquivo de 16 a 29 GB.
 - **[Kolibri 1](docs/models/kolibri.pt-BR.md)** da Aleph Alpha, que escreve alemão tão bem quanto inglês: um arquivo de
   29 a 48 GB, que fica quase todo na RAM ao lado de uma placa pequena.
+- **[Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)** da Tencent, 220B-A12B, no motor próprio do projeto Strata (`strata-hy4`): um arquivo de 130 a
+  181 GB, a partir de 64 GB de RAM com uma placa de 8 GB. Também lê imagens.
 
 O servidor pode trocar entre os modelos instalados enquanto está rodando
 ([como](docs/BACKENDS.md#changing-the-model), em inglês).
@@ -74,25 +76,26 @@ A tabela mostra o tamanho que o instalador escolhe para cada modelo, em tokens p
 
 | Modelo | Notebook com placa de 8 GB<br>escreve / lê | RTX 5090<br>escreve / lê | Todos os tamanhos |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 488 → 486 / 23,103 → 24,822 | [LFM2.5](docs/models/lfm25.pt-BR.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 253 → 262 / 12,699 → 15,035 | [Flint](docs/models/flint.pt-BR.md) |
-| Qwen3.6-35B-A3B | 83 → 92 / 1,795 → 2,185 | 429 → 532 / 11,210 → 15,067 | [Qwen3.6](docs/models/qwen36.pt-BR.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 280 → 306 / 9,305 → 13,826 | [Clover](docs/models/clover.pt-BR.md) |
-| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 332 → 370 / 9,356 → 14,144 | [Ornith](docs/models/ornith.pt-BR.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 369 → 377 / 8,481 → 11,287 | [Gemma 4](docs/models/gemma4.pt-BR.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 366 → 448 / 9,941 → 15,214 | [Tiel Coder](docs/models/tiel.pt-BR.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 310 → 329 / 9,695 → 14,390 | [MiniCPM-V](docs/models/minicpmv.pt-BR.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 203 → 208 / 5,032 → 5,951 | [Kolibri 1](docs/models/kolibri.pt-BR.md) |
-| GLM 5.3 Flash | não roda: precisa de uma placa de 32 GB | 5 → 48 / 225 → 878 | [GLM](docs/models/glm.pt-BR.md) |
-| DeepSeek V4 Flash | não roda: precisa de uma placa de 32 GB | 37 → 54 / 1,064 → 1,916 | [DeepSeek](docs/models/deepseek.pt-BR.md) |
-| Inkling 2 Mini | 35 / 417 | 128 / 2,975 | [Inkling 2 Mini](docs/models/inkling.md) |
-| Groot 19B-A3B 261023 | 75 / 2,339 | 457 / 15,321 | [Groot](docs/models/groot.md) |
+| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 486 → 492 / 23,488 → 25,160 | [LFM2.5](docs/models/lfm25.pt-BR.md) |
+| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 250 → 261 / 12,723 → 14,851 | [Flint](docs/models/flint.pt-BR.md) |
+| Qwen3.6-35B-A3B | 81 → 95 / 1,751 → 2,110 | 424 → 512 / 11,148 → 14,842 | [Qwen3.6](docs/models/qwen36.pt-BR.md) |
+| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 284 → 308 / 9,312 → 13,814 | [Clover](docs/models/clover.pt-BR.md) |
+| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 322 → 358 / 9,433 → 14,133 | [Ornith](docs/models/ornith.pt-BR.md) |
+| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 354 → 363 / 8,676 → 11,478 | [Gemma 4](docs/models/gemma4.pt-BR.md) |
+| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 368 → 437 / 9,879 → 15,079 | [Tiel Coder](docs/models/tiel.pt-BR.md) |
+| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 306 → 331 / 9,632 → 14,305 | [MiniCPM-V](docs/models/minicpmv.pt-BR.md) |
+| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5,101 → 6,009 | [Kolibri 1](docs/models/kolibri.pt-BR.md) |
+| GLM 5.3 Flash | não roda: precisa de uma placa de 32 GB | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.pt-BR.md) |
+| DeepSeek V4 Flash | não roda: precisa de uma placa de 32 GB | 28 → 50 / 1,049 → 1,895 | [DeepSeek](docs/models/deepseek.pt-BR.md) |
+| Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
+| Hy4-Flash | não roda: precisa de 64 GB de RAM | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
 
-Cada célula é poly.10 → esta versão no mesmo PC: a mediana de três execuções de cada uma, alternadas, com `--tail-skip 0`. Inkling 2 Mini e Groot são novos nesta versão. Na estação de trabalho, a escrita de LFM2.5, Qwen3.6, Ornith 1.5, Gemma 4 e Tiel Coder vem de outra máquina na nuvem com uma RTX 5090, medida no dia anterior, onde esta versão escreveu mais rápido; os dois números de cada par são dessa máquina.
+Cada célula é poly.10 → esta versão no mesmo PC: a mediana de três execuções de cada uma, alternadas. Inkling 2 Mini, Groot e Hy4-Flash são novos nesta versão.
 
 Notebook: RTX 4070 Laptop (8 GB), Core i7-14700HX, 32 GB de RAM. Estação de trabalho: RTX 5090 (32 GB), Xeon Platinum 8470Q (25 vCPU), 90 a 120 GB de RAM. O Flint é UD-Q3_K_XL no notebook, o tamanho que o instalador escolhe com 32 GB de RAM, e UD-Q4_K_XL na estação de trabalho. O Kolibri 1 é Q2_K nos dois; na estação de trabalho o instalador escolhe o Q4_K_M, que não foi medido.
 
-O Qwen3.8-Flash-Next roda no motor do projeto [Strata](https://github.com/Niko1221/Strata) e foi medido por esse projeto num PC com uma RTX 5070 (12 GB) e 64 GB de RAM: IQ2_XS escreve a 79 e lê um prompt de 32K a 2,090 ([todos os tamanhos](docs/models/qwen38.pt-BR.md)).
+O Qwen3.8-Flash-Next e o Hy4-Flash rodam nos motores do projeto [Strata](https://github.com/Niko1221/Strata) e foram medidos por esse projeto. Qwen3.8-Flash-Next num PC com uma RTX 5070 (12 GB) e 64 GB de RAM: IQ2_XS escreve a 79 e lê um prompt de 32K a 2,090 ([todos os tamanhos](docs/models/qwen38.pt-BR.md)). Hy4-Flash numa RTX 5090: escreve entre 90 e 111 e lê um prompt de 128K a 1,694 ([a versão dele](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)).
 
 Os onze modelos do motor próprio do PolyStrata foram medidos com o benchmark dele, que você pode rodar no seu PC:
 `python polystrata.py benchmark --model <name> --prompt-tokens 24000`
@@ -175,7 +178,8 @@ Como foi medido: [docs/BACKENDS.md](docs/BACKENDS.md#less-of-the-pcs-ram-and-vra
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.pt-BR.md) | igual ao de cima; AMD em beta | cerca de 25 GB ao lado de uma placa de 8 GB | 16 a 29 GB | Windows, Linux |
 | [Kolibri 1](docs/models/kolibri.pt-BR.md) | NVIDIA RTX série 20 ou mais nova, 8 GB ou mais | cerca de 33 GB ao lado de uma placa de 8 GB | 29 a 48 GB | Windows, Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md) (experimental) | backends CUDA/HIP compartilhados; Q4_K_M com texto rodou numa RTX 5060 de 8 GB (pico medido de 7,05 GiB de VRAM, 21,8 GiB de RAM) | cerca de 17 GB ao lado de uma placa de 8 GB para Q4_K_M, estimativa do instalador | 12,5 a 20,2 GB; imagens somam 0,9 GB | Windows, Linux; imagens, Q6_K e Q8_0 não testados |
-| [Inkling 2 Mini](docs/models/inkling.md) (experimental) | NVIDIA, 8 GB ou mais; rodou numa RTX 5090 e numa RTX 4070 Laptop (8 GB, UD-Q3_K_XL) | cerca de 21 GB ao lado de uma placa de 8 GB para UD-Q4_K_XL, estimativa do instalador | 14 ou 18 GB | Windows, Linux |
+| [Inkling 2 Mini](docs/models/inkling.md) (experimental) | NVIDIA, 8 GB ou mais; rodou numa RTX 5090 e numa RTX 4070 Laptop (8 GB, UD-Q3_K_XL) | cerca de 21 GB ao lado de uma placa de 8 GB para UD-Q4_K_XL, estimativa do instalador | 9 a 18 GB | Windows, Linux |
+| [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) (motor do projeto Strata) | NVIDIA V100 a RTX 50, 8 GB ou mais; AMD RX 6000 a 9000 e Strix Halo; Intel Arc | 64 GB ou mais para SQ-64, 96 GB para SQ-96, 128 GB para SQ-128 | 130 a 181 GB, num SSD | Windows, Linux, Mac |
 
 A RAM é a estimativa do instalador; uma placa maior precisa de menos. O instalador cuida de todo o resto: no Windows ele baixa o motor já compilado e só compila no seu PC num processador sem AVX2, para os modelos próprios do PolyStrata numa placa AMD, ou quando o motor da sua cópia é mais novo que a última versão, e oferece instalar as ferramentas que faltam. Duas ou três placas podem dividir um modelo ([multi-GPU](docs/MULTI_GPU.md)). Placas de vídeo mais antigas, Intel Arc, Macs com Apple Silicon (Qwen3.8-Flash-Next, e Qwen3.6 e LFM2.5 como beta), Strix Halo e processadores antigos sem AVX2: [a lista completa](docs/INSTALL.md#what-you-need). A placa, a RAM e os tamanhos de cada modelo em detalhe estão na página dele.
 
@@ -246,7 +250,8 @@ O mesmo modelo vem em vários tamanhos, mais ou menos comprimidos: os menores s�
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.pt-BR.md) | Q4_K_M | mix_q3gud_im | Q6_K |
 | [Kolibri 1](docs/models/kolibri.pt-BR.md) | Q4_K_M a partir de cerca de 48 GB de RAM | Q2_K | Q3_K_M |
 | [Groot 19B-A3B 261023](docs/models/groot.md) | Q4_K_M | — | Q6_K, Q8_0 |
-| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | — |
+| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | UD-Q2_K_XL |
+| [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) | SQ-64 a partir de 64 GB de RAM, SQ-96 a partir de 96 GB, SQ-128 a partir de 128 GB |  |  |
 
 O que é cada tamanho, o download, a RAM que ele precisa ao lado de outras placas e quão perto chega do maior: a página de cada modelo, com link na tabela de “Qual é a velocidade?”.
 

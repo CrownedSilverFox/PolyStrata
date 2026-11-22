@@ -3,11 +3,11 @@
 [English](README.md) · [简体中文](README.zh-CN.md) · **日本語** · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Türkçe](README.tr.md)
 
 <p align="center"><b>大きな AI モデルを、手元の PC で動かす</b><br>
-Qwen3.8-Flash-Next、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Flint、Qwen3.6、Clover、Ornith 1.5、Gemma 4、Tiel Coder、MiniCPM-V、Kolibri 1 · 無料のオープンソース</p>
+Qwen3.8-Flash-Next、Hy4-Flash、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Flint、Qwen3.6、Clover、Ornith 1.5、Gemma 4、Tiel Coder、MiniCPM-V、Kolibri 1 · 無料のオープンソース</p>
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="回答を書く速さ（トークン/秒）、poly.10 とこのバージョン：Qwen3.6-35B-A3B は 8 GB のノート PC で 83 から 92、RTX 5090 で 429 から 532"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="回答を書く速さ（トークン/秒）、poly.10 とこのバージョン：Qwen3.6-35B-A3B は 8 GB のノート PC で 81 から 95、RTX 5090 で 424 から 512"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="ターミナルの Claude Code と、その横の PolyStrata の API Monitor"><br>
 <sub>Claude Code と Qwen3.6-35B-A3B UD-Q3_K_M、8 GB のカードのノート PC で、実時間：小さなプログラムに <code>--json</code> オプションを足し、テストを書いて実行します。サーバーは起動時に Claude Code のシステムプロンプトを読んであります（<code>"warm_start": true</code>）。</sub></p>
@@ -38,13 +38,14 @@ GLM 5.3 Flash と DeepSeek V4 Flash 以外は Windows でも動きます。ま�
   ほとんどの層は直前の 513 トークンしか見ないので、長い会話でも VRAM をあまり使いません。128K のコンテキストでも 32K より 2.6 GB 多いだけです。
 - **[Qwen3.6-35B-A3B](docs/models/qwen36.ja.md)**：ファイルは 13〜23 GB。画像も読めます。
 - **[Groot 19B-A3B 261023](docs/models/groot.md)**：実験的なインストーラー対応。Bartowski の量子化 Q4_K_M、Q6_K、Q8_0 の 3 つ（12.5〜20.2 GB）で、MTP と画像プロジェクター（任意）付きです。Q4_K_M のテキストは 8 GB の RTX 5060 と、Linux の RTX 5090 で動きました。画像、Q6_K、Q8_0 はまだ確かめていません。
-- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines のモデル、実験的。ファイルは 14 GB か 18 GB です。Linux の 32 GB の NVIDIA カードと、Windows の 8 GB のノート PC 用カードで動きました。テキストのみで、リクエストは一度に 1 つです。
+- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines のモデル、実験的。ファイルは 9〜18 GB です。Linux の 32 GB の NVIDIA カードと、Windows の 8 GB のノート PC 用カードで動きました。テキストのみで、リクエストは一度に 1 つです。
 - **[Clover-35B-A3B-Preview](docs/models/clover.ja.md)**：DiffuSpace のモデル。Qwen3.6-35B-A3B をさらに学習させ、トークンのまとまりを一度に書けるようにしたもの。ファイルは 13〜21 GB。読めるのはテキストだけです。
 - **[Ornith 1.5](docs/models/ornith.ja.md)**：構造は Qwen3.6-35B-A3B と同じで、重みが違います。ファイルは 14〜24 GB。画像も読めます。
 - **[Gemma 4 26B-A4B](docs/models/gemma4.ja.md)**：ファイルは 11〜17 GB。画像も読めます。
 - **[Tiel Coder 35B-A3B](docs/models/tiel.ja.md)**：peculiar-ragdoll がコーディングエージェント向けに量子化した Ornith 1.5。ファイルは 14〜23 GB。画像も読めます。
 - **[MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.ja.md)**：OpenBMB のモデル。Qwen3.6-35B-A3B と同じ構造で、重みは独自のもの。画像を読むために作られています。ファイルは 16〜29 GB。
 - **[Kolibri 1](docs/models/kolibri.ja.md)**：Aleph Alpha のモデル。英語と同じようにドイツ語も書けます。ファイルは 29〜48 GB で、小さいカードではほとんどが RAM に置かれます。
+- **[Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)**：Tencent の 220B-A12B モデル。Strata プロジェクト独自のエンジン（`strata-hy4`）で動きます。ファイルは 130〜181 GB で、RAM 64 GB から 8 GB のカードと組み合わせて動きます。画像も読めます。
 
 サーバーは動かしたまま、インストール済みのモデルを切り替えられます（[方法](docs/BACKENDS.md#changing-the-model)、英語）。
 
@@ -63,25 +64,26 @@ PolyStrata は Niko1221 の [Strata](https://github.com/Niko1221/Strata) をも�
 
 | モデル | 8 GB のカードのノート PC<br>書き出し / 読み込み | RTX 5090<br>書き出し / 読み込み | 全サイズ |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 488 → 486 / 23,103 → 24,822 | [LFM2.5](docs/models/lfm25.ja.md) |
-| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 253 → 262 / 12,699 → 15,035 | [Flint](docs/models/flint.ja.md) |
-| Qwen3.6-35B-A3B | 83 → 92 / 1,795 → 2,185 | 429 → 532 / 11,210 → 15,067 | [Qwen3.6](docs/models/qwen36.ja.md) |
-| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 280 → 306 / 9,305 → 13,826 | [Clover](docs/models/clover.ja.md) |
-| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 332 → 370 / 9,356 → 14,144 | [Ornith](docs/models/ornith.ja.md) |
-| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 369 → 377 / 8,481 → 11,287 | [Gemma 4](docs/models/gemma4.ja.md) |
-| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 366 → 448 / 9,941 → 15,214 | [Tiel Coder](docs/models/tiel.ja.md) |
-| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 310 → 329 / 9,695 → 14,390 | [MiniCPM-V](docs/models/minicpmv.ja.md) |
-| Kolibri 1 | 50 → 55 / 736 → 746 | 203 → 208 / 5,032 → 5,951 | [Kolibri 1](docs/models/kolibri.ja.md) |
-| GLM 5.3 Flash | 動きません（32 GB のカードが必要） | 5 → 48 / 225 → 878 | [GLM](docs/models/glm.ja.md) |
-| DeepSeek V4 Flash | 動きません（32 GB のカードが必要） | 37 → 54 / 1,064 → 1,916 | [DeepSeek](docs/models/deepseek.ja.md) |
-| Inkling 2 Mini | 35 / 417 | 128 / 2,975 | [Inkling 2 Mini](docs/models/inkling.md) |
-| Groot 19B-A3B 261023 | 75 / 2,339 | 457 / 15,321 | [Groot](docs/models/groot.md) |
+| LFM2.5-24B-A2B | 89 → 81 / 3,617 → 3,452 | 486 → 492 / 23,488 → 25,160 | [LFM2.5](docs/models/lfm25.ja.md) |
+| Flint 40B-A2.5B | 60 → 56 / 2,112 → 2,273 | 250 → 261 / 12,723 → 14,851 | [Flint](docs/models/flint.ja.md) |
+| Qwen3.6-35B-A3B | 81 → 95 / 1,751 → 2,110 | 424 → 512 / 11,148 → 14,842 | [Qwen3.6](docs/models/qwen36.ja.md) |
+| Clover-35B-A3B-Preview | 62 → 62 / 1,721 → 1,973 | 284 → 308 / 9,312 → 13,814 | [Clover](docs/models/clover.ja.md) |
+| Ornith 1.5 | 70 → 76 / 1,758 → 2,036 | 322 → 358 / 9,433 → 14,133 | [Ornith](docs/models/ornith.ja.md) |
+| Gemma 4 26B-A4B | 77 → 76 / 1,914 → 1,896 | 354 → 363 / 8,676 → 11,478 | [Gemma 4](docs/models/gemma4.ja.md) |
+| Tiel Coder 35B-A3B | 71 → 81 / 1,791 → 2,171 | 368 → 437 / 9,879 → 15,079 | [Tiel Coder](docs/models/tiel.ja.md) |
+| MiniCPM-V 4.7 35B-A3B | 60 → 71 / 1,740 → 1,982 | 306 → 331 / 9,632 → 14,305 | [MiniCPM-V](docs/models/minicpmv.ja.md) |
+| Kolibri 1 | 50 → 55 / 736 → 746 | 199 → 207 / 5,101 → 6,009 | [Kolibri 1](docs/models/kolibri.ja.md) |
+| GLM 5.3 Flash | 動きません（32 GB のカードが必要） | 6 → 52 / 260 → 855 | [GLM](docs/models/glm.ja.md) |
+| DeepSeek V4 Flash | 動きません（32 GB のカードが必要） | 28 → 50 / 1,049 → 1,895 | [DeepSeek](docs/models/deepseek.ja.md) |
+| Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
+| Hy4-Flash | 動きません（64 GB の RAM が必要） | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
 
-各セルは同じ PC での poly.10 → このバージョンです。交互に 3 回ずつ走らせた中央値で、`--tail-skip 0` です。Inkling 2 Mini と Groot はこのバージョンで加わりました。ワークステーションの LFM2.5、Qwen3.6、Ornith 1.5、Gemma 4、Tiel Coder の書き出しは前日に別の RTX 5090 のクラウドマシンで測った値で、そちらのほうがこのバージョンの書き出しが速かったものです。どの組も 2 つの数はそのマシンのものです。
+各セルは同じ PC での poly.10 → このバージョンです。交互に 3 回ずつ走らせた中央値です。Inkling 2 Mini、Groot、Hy4-Flash はこのバージョンで加わりました。
 
 ノート PC：RTX 4070 Laptop（8 GB）、Core i7-14700HX、RAM 32 GB。ワークステーション：RTX 5090（32 GB）、Xeon Platinum 8470Q（25 vCPU）、RAM 90〜120 GB。Flint はノート PC では UD-Q3_K_XL（RAM 32 GB でインストーラーが選ぶサイズ）、ワークステーションでは UD-Q4_K_XL です。Kolibri 1 はどちらも Q2_K です。ワークステーションでインストーラーが選ぶ Q4_K_M は測っていません。
 
-Qwen3.8-Flash-Next は [Strata](https://github.com/Niko1221/Strata) プロジェクトのエンジンで動き、そのプロジェクトが RTX 5070（12 GB）、RAM 64 GB の PC で測りました：IQ2_XS で書き出し 79、32K プロンプトの読み込み 2,090（[全サイズ](docs/models/qwen38.ja.md)）。
+Qwen3.8-Flash-Next と Hy4-Flash は [Strata](https://github.com/Niko1221/Strata) プロジェクトのエンジンで動き、そのプロジェクトが測りました。Qwen3.8-Flash-Next は RTX 5070（12 GB）、RAM 64 GB の PC で IQ2_XS の書き出し 79、32K プロンプトの読み込み 2,090（[全サイズ](docs/models/qwen38.ja.md)）。Hy4-Flash は RTX 5090 で書き出し 90〜111、128K プロンプトの読み込み 1,694（[リリースノート](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)）。
 
 PolyStrata 独自のエンジンで動く 11 個のモデルは、付属のベンチマークで測りました。あなたの PC でも実行できます：
 `python polystrata.py benchmark --model <name> --prompt-tokens 24000`
@@ -162,7 +164,8 @@ RTX PRO 6000、エンジンの RAM を 12 GB と 10 GB に制限（16 GB の PC 
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.ja.md) | 同上、AMD はベータ | 8 GB のカードで約 25 GB | 16〜29 GB | Windows、Linux |
 | [Kolibri 1](docs/models/kolibri.ja.md) | NVIDIA RTX 20 シリーズ以降、8 GB 以上 | 8 GB のカードで約 33 GB | 29〜48 GB | Windows、Linux |
 | [Groot 19B-A3B 261023](docs/models/groot.md)（実験的） | CUDA/HIP 共通のバックエンド。Q4_K_M のテキストを 8 GB の RTX 5060 で実行（実測のピークは VRAM 7.05 GiB、RAM 21.8 GiB） | Q4_K_M で 8 GB のカードなら約 17 GB（インストーラーの見積もり） | 12.5〜20.2 GB、画像で 0.9 GB 増 | Windows、Linux。画像、Q6_K、Q8_0 は未確認 |
-| [Inkling 2 Mini](docs/models/inkling.md)（実験的） | NVIDIA、8 GB 以上。RTX 5090 と RTX 4070 Laptop（8 GB、UD-Q3_K_XL）で動作 | UD-Q4_K_XL で 8 GB のカードなら約 21 GB（インストーラーの見積もり） | 14 GB か 18 GB | Windows、Linux |
+| [Inkling 2 Mini](docs/models/inkling.md)（実験的） | NVIDIA、8 GB 以上。RTX 5090 と RTX 4070 Laptop（8 GB、UD-Q3_K_XL）で動作 | UD-Q4_K_XL で 8 GB のカードなら約 21 GB（インストーラーの見積もり） | 9〜18 GB | Windows、Linux |
+| [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18)（Strata プロジェクトのエンジン） | NVIDIA V100〜RTX 50、8 GB 以上。AMD RX 6000〜9000、Strix Halo。Intel Arc | SQ-64 は 64 GB 以上、SQ-96 は 96 GB、SQ-128 は 128 GB | 130〜181 GB、SSD に置く | Windows、Linux、Mac |
 
 RAM はインストーラーの見積もりで、カードが大きいほど少なくて済みます。ほかはすべてインストーラーが用意します。Windows ではビルド済みのエンジンをダウンロードし、AVX2 のないプロセッサー、AMD のカードで動かす PolyStrata 独自のモデル、手元のエンジンが最新リリースより新しいときだけ PC でコンパイルします（足りないツールは入れるか聞きます）。2〜3 枚のカードで 1 つのモデルを分担できます（[マルチ GPU](docs/MULTI_GPU.md)）。古いグラフィックカード、Intel Arc、Apple シリコンの Mac（Qwen3.8-Flash-Next、ベータ版として Qwen3.6 と LFM2.5）、Strix Halo、AVX2 のない古いプロセッサー：[詳しい一覧](docs/INSTALL.md#what-you-need)。各モデルのカード、RAM、サイズの詳細はそれぞれのページにあります。
 
@@ -232,7 +235,8 @@ PolyStrata のインストール、起動、停止もできます。
 | [MiniCPM-V 4.7 35B-A3B](docs/models/minicpmv.ja.md) | Q4_K_M | mix_q3gud_im | Q6_K |
 | [Kolibri 1](docs/models/kolibri.ja.md) | RAM 約 48 GB から Q4_K_M | Q2_K | Q3_K_M |
 | [Groot 19B-A3B 261023](docs/models/groot.md) | Q4_K_M | — | Q6_K, Q8_0 |
-| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | — |
+| [Inkling 2 Mini](docs/models/inkling.md) | UD-Q4_K_XL | UD-Q3_K_XL | UD-Q2_K_XL |
+| [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) | RAM 64 GB から SQ-64、96 GB から SQ-96、128 GB から SQ-128 |  |  |
 
 各サイズの中身、ダウンロード量、ほかのカードでの必要 RAM、最大サイズとの差：各モデルのページ（「どのくらい速い？」の表のモデル名から）。
 
