@@ -1471,7 +1471,8 @@ __global__ void ds_rope_kernel(float* x, int heads, const float* __restrict__ w,
 // the card (a recorded block takes any): a window layer's window before the block and the block, a full layer every
 // position.  The split: the keys over kDsSplits, a whole number of tiles each.
 constexpr int kDsRows = 24;    // a kv head's query rows at most: 8 block rows of 3 heads
-constexpr int kDsTile = 64;    // keys a tile
+constexpr int kDsTile = 32;    // keys a tile, read into shared memory at once
+static_assert(kDsTile == 32, "ds_part_kernel scores a tile's keys a lane each");
 constexpr int kDsSplits = 64;  // splits at most
 constexpr int kDsPart = kDsHead + 2;   // a row's part: its values' weighted sum, its max, its sum
 
@@ -1486,6 +1487,8 @@ __global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __ha
                                                       long long cap, DsPos p, int nb, int window, int heads,
                                                       int kv_heads, float scale, float* part) {
     __shared__ __align__(16) float qs[kDsRows][kDsHead];
+    __shared__ half2 ks[kDsTile][kDsHead / 2 + 1];   // a key a row, a word longer: a warp's lanes read 32 rows
+    __shared__ __align__(16) __half vs[kDsTile][kDsHead];
     __shared__ float sc[kDsRows][kDsTile];
     __shared__ float mrun[kDsRows], lrun[kDsRows], corr[kDsRows];
     const int g = blockIdx.x, s = blockIdx.y, tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
@@ -1509,15 +1512,23 @@ __global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __ha
     __syncthreads();
     for (long long t0 = k0; t0 < k1; t0 += kDsTile) {
         const int nt = (int) min((long long) kDsTile, k1 - t0);
-        for (int j = warp; j < kDsTile; j += 8) {
-            if (j >= nt) continue;
-            const __half* k = keys + (size_t) ((lo + t0 + j) % cap) * cell + at_g + lane * 4;
-            const float2 a = __half22float2(*(const half2*) k), b = __half22float2(*(const half2*) (k + 2));
-            for (int r = 0; r < R; ++r) {
-                const float4 qr = *(const float4*) (qs[r] + lane * 4);
-                const float x = warp_sum(qr.x * a.x + qr.y * a.y + qr.z * b.x + qr.w * b.y);
-                if (lane == 0) sc[r][j] = x;
+        for (int i = tid; i < nt * (kDsHead / 8); i += blockDim.x) {   // the tile's keys and values, 8 halves a load
+            const int j = i / (kDsHead / 8), c = i % (kDsHead / 8) * 8;
+            const size_t at = (size_t) ((lo + t0 + j) % cap) * cell + at_g + c;
+            const uint4 kw = *(const uint4*) (keys + at);
+            ks[j][c / 2] = *(const half2*) &kw.x, ks[j][c / 2 + 1] = *(const half2*) &kw.y;
+            ks[j][c / 2 + 2] = *(const half2*) &kw.z, ks[j][c / 2 + 3] = *(const half2*) &kw.w;
+            *(uint4*) &vs[j][c] = *(const uint4*) (vals + at);
+        }
+        __syncthreads();
+        for (int r = warp; r < R && lane < nt; r += 8) {   // a warp a query row, a lane a key
+            float x = 0.0f;
+#pragma unroll 16
+            for (int c = 0; c < kDsHead / 2; ++c) {
+                const float2 k = __half22float2(ks[lane][c]), qv = *(const float2*) &qs[r][2 * c];
+                x += qv.x * k.x + qv.y * k.y;
             }
+            sc[r][lane] = x;
         }
         __syncthreads();
         if (tid < R) {
@@ -1541,7 +1552,7 @@ __global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __ha
         for (int i = 0; i < kDsRows / 2; ++i)
             if (r0 + 2 * i < R) acc[i] *= corr[r0 + 2 * i];
         for (int j = 0; j < nt; ++j) {
-            const float v = __half2float(vals[(size_t) ((lo + t0 + j) % cap) * cell + at_g + d]);
+            const float v = __half2float(vs[j][d]);
 #pragma unroll
             for (int i = 0; i < kDsRows / 2; ++i)
                 if (r0 + 2 * i < R) acc[i] += sc[r0 + 2 * i][j] * v;
@@ -1836,34 +1847,38 @@ __device__ __forceinline__ void scr_x(const QB* x, int nb, int* xi, float* xs, f
     }
 }
 
-// tile blockIdx.x: approx[r][copy row] = the head copy's score of q8_1 row r of x (r < rows), four warps splitting the
-// row, lane = copy row; the copy is read once for all the rows
+// tiles kScrBaseTiles blockIdx.x on: approx[r][copy row] = the head copy's score of q8_1 row r of x (r < rows), four
+// warps splitting the row, lane = copy row; the copy is read once for all the rows, the rows once for the tiles
+constexpr int kScrBaseTiles = 4;
 template <int N_IN>
 __global__ void __launch_bounds__(128) scr_base_kernel(const uint4* __restrict__ wq, const uint32_t* __restrict__ sc,
-                                                       const QB* x, int rows, int64_t n_pad, float* approx) {
+                                                       const QB* x, int rows, int64_t n_tiles, int64_t n_pad,
+                                                       float* approx) {
     constexpr int NB = N_IN / 32, kNw4 = scr_nw4(N_IN), NW = kNw4 / 4;
     __shared__ __align__(16) int xi[kDsDraftsMax][N_IN / 4];
     __shared__ float xs[kDsDraftsMax][NB], xdd[kDsDraftsMax][NB];
     __shared__ float red[kDsDraftsMax][4][32];
     const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
-    const int64_t tile = blockIdx.x;
-    const size_t base = ((size_t) tile * kNw4 + warp * NW) * 32 + lane;
-    uint4 w[NW];
-    uint32_t s[NW];
-#pragma unroll
-    for (int j = 0; j < NW; ++j) {
-        w[j] = __ldcs(wq + base + (size_t) j * 32);
-        s[j] = __ldcs(sc + base + (size_t) j * 32);
-    }
     for (int r = 0; r < rows; ++r) scr_x(x + (size_t) r * NB, NB, xi[r], xs[r], xdd[r], tid, 128);
-    __syncthreads();
+    for (int64_t tile = (int64_t) blockIdx.x * kScrBaseTiles;
+         tile < min(n_tiles, (int64_t) (blockIdx.x + 1) * kScrBaseTiles); ++tile) {
+        const size_t base = ((size_t) tile * kNw4 + warp * NW) * 32 + lane;
+        uint4 w[NW];
+        uint32_t s[NW];
 #pragma unroll
-    for (int r = 0; r < kDsDraftsMax; ++r)
-        if (r < rows) red[r][warp][lane] = scr_acc<NW>(w, s, warp * NW, xi[r], xs[r], xdd[r]);
-    __syncthreads();
-    const int64_t row = tile * 32 + lane;
-    for (int r = warp; r < rows; r += 4)
-        approx[r * n_pad + row] = red[r][0][lane] + red[r][1][lane] + red[r][2][lane] + red[r][3][lane];
+        for (int j = 0; j < NW; ++j) {
+            w[j] = __ldcs(wq + base + (size_t) j * 32);
+            s[j] = __ldcs(sc + base + (size_t) j * 32);
+        }
+        __syncthreads();   // the rows are in, and red is free again
+#pragma unroll
+        for (int r = 0; r < kDsDraftsMax; ++r)
+            if (r < rows) red[r][warp][lane] = scr_acc<NW>(w, s, warp * NW, xi[r], xs[r], xdd[r]);
+        __syncthreads();
+        const int64_t row = tile * 32 + lane;
+        for (int r = warp; r < rows; r += 4)
+            approx[r * n_pad + row] = red[r][0][lane] + red[r][1][lane] + red[r][2][lane] + red[r][3][lane];
+    }
 }
 
 // a warp a tile of 32 copy rows (lane = row): the fold copy's score of the latent plus the head term and the bias,
@@ -2198,8 +2213,9 @@ void ds_screen_order(const float* by_token, int64_t n_rows, float* by_row, void*
 
 void ds_head_base(const DsScreen& h, const void* hq, int rows, float* approx, void* stream) {
     if (rows < 1 || rows > kDsDraftsMax) throw std::logic_error("ds_head_base: 1 to 7 rows");
-    scr_base_kernel<2304><<<(unsigned) scr_tiles(h.n_rows), 128, 0, cs(stream)>>>(
-        (const uint4*) h.head_sc, (const uint32_t*) scr_scales(h.head_sc, h.n_rows, 2304), (const QB*) hq, rows,
+    const int64_t tiles = scr_tiles(h.n_rows);
+    scr_base_kernel<2304><<<(unsigned) ((tiles + kScrBaseTiles - 1) / kScrBaseTiles), 128, 0, cs(stream)>>>(
+        (const uint4*) h.head_sc, (const uint32_t*) scr_scales(h.head_sc, h.n_rows, 2304), (const QB*) hq, rows, tiles,
         ds_screen_rows(h.n_rows), approx);
     launched("ds_head_base");
 }
