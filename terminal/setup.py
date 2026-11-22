@@ -10842,6 +10842,9 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         cfg["tool_call_recovery"] = True
         ok("its tool calls are JSON inside the wrapper: they are read with the recovery (tool_call_recovery in the "
            "config)")
+    if multi and fam.get("one_card"):                  # the engine has no layer split for this family yet: it would
+        multi = []                                     # exit with "Inkling 2 runs on one card", so one card is set
+        warn(f"{title} runs on one card so far (--layer-split is not supported for it yet): using {gpu_name(gpu)}")
     if multi:                                          # the server passes --layer-split and orders the cards
         cfg["gpu"], cfg["gpus_asked"] = multi, True
         cfg["layer_split"] = a.layer_split or "auto"
