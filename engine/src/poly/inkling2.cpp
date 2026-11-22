@@ -548,7 +548,7 @@ void Inkling2::assign_scratch() {
         ch3_[j] = fbuf(few * rank_);
         gain3_[j] = fbuf(few * n_embd_);
         forget3_[j] = fbuf(few * n_embd_);
-        xq3_[j] = fbuf((kernels::native_q8_1_bytes(n_embd_) + sizeof(float) - 1) / sizeof(float));
+        xq3_[j] = fbuf((few * kernels::native_q8_1_bytes(n_embd_) + sizeof(float) - 1) / sizeof(float));
     }
     mixf_ = fbuf(e);
     q_ = fbuf(heads);
@@ -691,7 +691,7 @@ bool Inkling2::control_ffn(const float* msg, const Ctrl& c, const Block& B) {
 // inputs are one buffer until a later pass's controllers make them differ.  False, with nothing launched, where
 // lin() does them: more tokens, or matrices native_mmvq_many() does not take.
 bool Inkling2::project(const Block& B, const float* const* x, int n, bool quantized) {
-    if (n != 1) return false;
+    if (n >= kStageRows) return false;
     const Dev* w[5] = {&B.wq, &B.wk, &B.wv, &B.rel, &B.gate};
     float* y[5] = {q_, kraw_, vraw_, rr_, gate_};
     const int from[5] = {0, 1, 2, 0, 0};
@@ -709,6 +709,20 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
             ++nx;
         }
         slot[j] = k;
+    }
+    if (n > 1) {   // a window's: each input quantized once, in one launch, as lin() quantizes it
+        if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_ * n, st_);
+        bool done[5] = {};   // two products of one input a launch (lin_pair())
+        for (int i = 0; i < 5; ++i) {
+            if (done[i]) continue;
+            int j = i + 1;
+            while (j < 5 && (done[j] || slot[from[j]] != slot[from[i]])) ++j;
+            if (j < 5) lin_pair(*w[i], *w[j], x[from[i]], y[i], y[j], n, qs[slot[from[i]]]);
+            else lin(*w[i], x[from[i]], y[i], n, qs[slot[from[i]]]);
+            done[i] = true;
+            if (j < 5) done[j] = true;
+        }
+        return true;
     }
     kernels::NativeMmvqMany m{};
     for (int i = 0; i < 5; ++i) {
@@ -929,10 +943,27 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
                  snap_bits_);
         ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_, snap_of(past_v(S)), rec_n_,
                  snap_bits_);
-        ink_clip(q_, fp(B.q_clip), qk_clip_, head_dim_, n_head_, n, pos_, alpha, log_floor_, st_, at);
-        ink_clip(k_, nullptr, qk_clip_, head_dim_, n_kv_, n, pos_, 0.f, 1.f, st_);
-        ink_head_rms(v_, head_dim_, n_kv_, n, rms_eps_, st_);
-        ink_clip(rr_, fp(B.rel_clip), rel_clip_, n_rel_, n_head_, n, pos_, alpha, log_floor_, st_, at);
+        InkClips c;   // q, k, v, rr: one launch
+        float* xs[4] = {q_, k_, v_, rr_};
+        const float* sc[4] = {fp(B.q_clip), nullptr, nullptr, fp(B.rel_clip)};
+        const float thr[4] = {qk_clip_, qk_clip_, 0.f, rel_clip_}, al[4] = {alpha, 0.f, 0.f, alpha};
+        const float fl[4] = {log_floor_, 1.f, 1.f, log_floor_};
+        const int dims[4] = {head_dim_, head_dim_, head_dim_, n_rel_}, hs[4] = {n_head_, n_kv_, n_kv_, n_head_};
+        for (int j = 0; j < 4; ++j) {
+            c.x[j] = xs[j];
+            c.scale[j] = sc[j];
+            c.thr[j] = thr[j];
+            c.alpha[j] = al[j];
+            c.floor[j] = fl[j];
+            c.dim[j] = dims[j];
+            c.heads[j] = hs[j];
+        }
+        c.rms[2] = true;
+        c.eps = rms_eps_;
+        c.pos = pos_;
+        c.at = at;
+        c.rows = n;
+        ink_clips(c, st_);
         if (at) {
             store_f16_at(k_, S.keys, kv, at, n, B.swa ? ring_ : 0, st_);
             store_f16_at(v_, S.vals, kv, at, n, B.swa ? ring_ : 0, st_);

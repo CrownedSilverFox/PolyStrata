@@ -95,6 +95,20 @@ void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int r
 /// Each head's `dim` values divided by their RMS (eps inside the root, no weight).
 void ink_head_rms(float* x, int dim, int heads, int rows, float eps, void* stream);
 
+/// Four of ink_clip() (rms false) or ink_head_rms() (rms true; eps), on `rows` tokens, in one launch: the same bits.
+struct InkClips {
+    float* x[4] = {};
+    const float* scale[4] = {};
+    float thr[4] = {}, alpha[4] = {}, floor[4] = {1.f, 1.f, 1.f, 1.f};
+    int dim[4] = {}, heads[4] = {};
+    bool rms[4] = {};
+    float eps = 0.f;
+    long long pos = 0;
+    const long long* at = nullptr;
+    int rows = 0;
+};
+void ink_clips(const InkClips& c, void* stream);
+
 /// x *= sigmoid(gate), n values.
 void ink_mul_sigmoid(float* x, const float* gate, size_t n, void* stream);
 

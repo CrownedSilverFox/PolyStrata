@@ -658,6 +658,21 @@ __global__ void ink_conv_snaps_kernel(const float* x, const float* state, float*
         conv_state_into(x, state, snap + size_t(j) * stride, channels, taps, __ffs(b), c);
 }
 
+// A channel a thread, a call of a few tokens: what ink_conv_kernel, ink_conv_snaps_kernel and ink_conv_state_kernel
+// do in turn, the same bits in one launch
+__global__ void ink_conv_few_kernel(const float* x, float* state, const float* __restrict__ w,
+                                    const float* __restrict__ dyn, float* out, float* snap, size_t stride,
+                                    unsigned bits, int channels, int heads, int taps, int rows, float norm) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= channels) return;
+    for (int t = 0; t < rows; ++t)
+        out[size_t(t) * channels + c] = conv_value(x, state, w, dyn, channels, heads, taps, t, c, norm);
+    int j = 0;
+    for (unsigned b = bits; b; b &= b - 1, ++j)
+        conv_state_into(x, state, snap + size_t(j) * stride, channels, taps, __ffs(b), c);
+    conv_state_at(x, state, channels, taps, rows, c);
+}
+
 // a channel a thread
 __global__ void ink_conv_state_kernel(const float* __restrict__ x, float* state, int channels, int taps, int rows) {
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
@@ -672,6 +687,19 @@ __global__ void ink_clip_kernel(float* x, const float* __restrict__ scale, float
     const int row = blockIdx.x / heads, head = blockIdx.x % heads;
     clip_head(x + (size_t(row) * heads + head) * dim, scale ? scale + size_t(head) * dim : nullptr, thr, dim, alpha,
               floor_, at ? at[2 * row] : pos + row, part);
+}
+
+// ink_clip() and ink_head_rms() of InkClips' four jobs in one launch, a block a token's head as each of them
+__global__ void ink_clips_kernel(InkClips c) {
+    __shared__ float part[128 / WARP];
+    int b = blockIdx.x, j = 0;
+    while (j < 3 && b >= c.rows * c.heads[j]) b -= c.rows * c.heads[j++];
+    const int row = b / c.heads[j], head = b % c.heads[j];
+    float* v = c.x[j] + (size_t(row) * c.heads[j] + head) * c.dim[j];
+    if (c.rms[j]) rms_head(v, c.dim[j], c.eps, part);
+    else
+        clip_head(v, c.scale[j] ? c.scale[j] + size_t(head) * c.dim[j] : nullptr, c.thr[j], c.dim[j], c.alpha[j],
+                  c.floor[j], c.at ? c.at[2 * row] : c.pos + row, part);
 }
 
 __global__ void ink_head_rms_kernel(float* x, int dim, int heads, float eps) {
@@ -1241,6 +1269,12 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
     if (taps < 2 || taps > 8) throw std::invalid_argument("ink_conv: 2 to 8 taps");
     if (rows <= 0) return;
     const float norm = 1.0f / std::sqrt((float) ((dyn ? 2 : 1) * taps + 1));
+    if (rows <= 8) {   // a window's: 384 launches fewer in Inkling 2 Mini's pass
+        ink_conv_few_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(
+            x, state, w, dyn, out, snap, snap_stride, snap ? snap_bits : 0u, channels, heads, taps, rows, norm);
+        launched("ink_conv");
+        return;
+    }
     ink_conv_kernel<<<grid((size_t) rows * channels, 256), 256, 0, cs(stream)>>>(x, state, w, dyn, out, channels,
                                                                                   heads, taps, rows, norm);
     launched("ink_conv");
@@ -1287,6 +1321,12 @@ void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int r
     ink_clip_kernel<<<rows * heads, 128, 0, cs(stream)>>>(x, scale, thr, dim, heads, (long long) pos, alpha, floor,
                                                           at);
     launched("ink_clip");
+}
+
+void ink_clips(const InkClips& c, void* stream) {
+    if (c.rows <= 0) return;
+    ink_clips_kernel<<<c.rows * (c.heads[0] + c.heads[1] + c.heads[2] + c.heads[3]), 128, 0, cs(stream)>>>(c);
+    launched("ink_clips");
 }
 
 void ink_head_rms(float* x, int dim, int heads, int rows, float eps, void* stream) {
