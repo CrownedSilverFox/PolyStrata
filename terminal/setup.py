@@ -877,6 +877,9 @@ FAMILIES = {
     # less, and the third is by name (poly_default()).  "windows": installed by setup and run there, on one PC.
     # "ran_on_gb": the smallest card it has run on, 32 GB without the key.  "tail_skip": the engine's --tail-skip,
     # for the family whose answers it moves no more than the Strata project's default moves its own (docs/BACKENDS.md).
+    # "small_card_args": engine flags for a card that does not hold every expert of the size (poly_held_gb()), where a
+    # token is bound by the bytes it reads from VRAM and by the experts the CPU computes; a card that holds them all
+    # runs as before.
     # "laptop_tps": tokens/s written after a prompt that fills each context on the 8 GB laptop, where the family's
     # differ from the others'.
     # "batch_gb": the VRAM the engine's prompt batch takes for a second 1,024 tokens, measured on the RTX 5090; a card
@@ -935,6 +938,10 @@ FAMILIES = {
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": False, "experimental": True,
                 "windows": True, "ran_on_gb": 8, "row_bytes": 32768, "one_request": True,
+                # UD-Q3_K_XL on the RTX 4070 Laptop (8 GB), the README's benchmark, medians of 3 rounds: 43.7 -> 55.8
+                # tokens/s written in the short chat, 439 -> 466 read and 33.6 -> 41.9 written after the long prompt;
+                # the same most likely token as without them at 96.7% of 1,280 steps, the default run again at 98.3%
+                "small_card_args": ["--attn-requant", "q5_0", "--loop-bf16", "--tail-skip", "4", "--expert-swaps", "0"],
                 "models": {"UD-Q4_K_XL": {"about": "4-bit experts (NVFP4, Unsloth Dynamic), 8-bit where they write",
                                           "download_gb": 17.6, "ram_gb": 21, "arena_gb": 15.797846016,
                                           "vram_beside_gb": 3.7},
@@ -10776,6 +10783,10 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
            "that much less)")
     if fam.get("tail_skip"):
         args += ["--tail-skip", str(fam["tail_skip"])]
+    if fam.get("small_card_args") and not multi and poly_held_gb(d, vram) < d["arena_gb"]:
+        args += fam["small_card_args"]
+        ok(f"this card holds part of {model}'s experts: {' '.join(fam['small_card_args'])} (fewer bytes a token, "
+           "and the answers move a little)")
     if kv:
         args += ["--kv", kv]
         ok(f"attention caches stored as {kv} (--kv in the config, docs/Q8_KV.md; --kv fp16 at setup takes it out)")

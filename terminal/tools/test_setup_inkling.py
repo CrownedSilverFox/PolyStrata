@@ -56,11 +56,25 @@ class Main(unittest.TestCase):
                 self.assertEqual(self.verified, [(file, *FAM["sha256"][file])])
                 args = cfg["args"]
                 self.assertEqual(Path(args[args.index("--model") + 1]), self.t / "models" / f"inkling-{size}" / file)
-                for flag in ("--draft-model", "--tail-skip", "--prompt-batch", "--batch"):
+                # a card that holds every expert runs the file as it is (small_card_args: none)
+                for flag in ("--draft-model", "--tail-skip", "--prompt-batch", "--batch", "--attn-requant",
+                             "--loop-bf16", "--expert-swaps"):
                     self.assertNotIn(flag, args)
                 self.assertEqual(cfg["parallel"], 1)
                 self.assertNotIn("vision", cfg)
                 self.assertNotIn("--parallel", out)                               # not offered
+
+    def test_a_card_that_holds_part_of_the_experts_gets_the_small_card_flags(self):
+        # an 8 GB card: Q5_0 attention, BF16 loop controllers, tail skip 4, no expert swaps
+        code, out, _ = self.main(family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
+        self.assertEqual(code, 0, out)
+        args = json.loads((self.t / "strata-inkling-ud-q3_k_xl.json").read_text())["args"]
+        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_0")
+        self.assertIn("--loop-bf16", args)
+        self.assertEqual(args[args.index("--tail-skip") + 1], "4")
+        self.assertEqual(args[args.index("--expert-swaps") + 1], "0")
+        self.assertEqual(args.count("--tail-skip"), 1)
+        self.assertIn("holds part of", out)
 
     def test_requests_at_once_are_not_taken(self):
         code, out, _ = self.main(("--parallel", "4"), family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=32607 / 1024)
