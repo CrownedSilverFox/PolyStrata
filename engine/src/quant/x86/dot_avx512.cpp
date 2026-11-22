@@ -420,7 +420,8 @@ const DotKernel kTable[] = {
     ENTRY(Q4_0, Q8_0, q4_0_q8_0), ENTRY(Q4_1, Q8_1, q4_1_q8_1), ENTRY(Q5_0, Q8_0, q5_0_q8_0), ENTRY(Q5_1, Q8_1, q5_1_q8_1),
     ENTRY(Q8_0, Q8_0, q8_0_q8_0), ENTRY(IQ4_NL, Q8_0, iq4_nl_q8_0), ENTRY(MXFP4, Q8_0, mxfp4_q8_0),
     ENTRY(NVFP4, Q8_0, nvfp4_q8_0),
-    ENTRY_ZMM(Q4_K, Q8_K, q4_K_q8_K), ENTRY_ZMM(Q5_K, Q8_K, q5_K_q8_K), ENTRY_ZMM(Q6_K, Q8_K, q6_K_q8_K),
+    // (PolyStrata) Q4_K and Q5_K keep the AVX2 kernel: their 512-bit ones gave the same bits 8-16% slower on a Xeon Platinum 8473C
+    ENTRY_ZMM(Q6_K, Q8_K, q6_K_q8_K),
     ENTRY_ZMM(IQ4_XS, Q8_K, iq4_xs_q8_K), ENTRY_ZMM(IQ3_S, Q8_K, iq3_s_q8_K),
 };
 #undef ENTRY_ZMM
