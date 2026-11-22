@@ -10,6 +10,7 @@
 #include "strata/gpu/metal.hpp"
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <random>
 namespace k=strata::kernels;
 namespace p=strata::poly;
@@ -68,6 +69,36 @@ int main(int argc,char** argv){
                 bad+=compare(y.read(rows*no),product(q8_rows(),experts,{1,3,0,2}),label,1e-4f);
             }
         }
+    }
+    // native_mmvq_many: five matrices of a type (Inkling 2's q, k, v, relative positions' and gate's outputs, and a
+    // launch of fewer outputs), three inputs among them, in one launch, against the five native_mmvq() calls: the same
+    // bits.  Q8_0 also at Inkling 2's width.
+    for(int type:types)for(int ni:{256,2304})for(bool big:{true,false}){
+        if(ni%int(ggml_blck_size(ggml_type(type))) || (ni==2304 && type!=8))continue;
+        const int outs[5]={big?3072:96,big?1024:32,big?1024:32,big?384:12,big?3072:96},from[5]={0,1,2,0,0};
+        k::NativeMmvqMany m{};std::vector<std::unique_ptr<Buffer>> keep;
+        auto xs=values(3*ni,.8f);Buffer dx(xs),qx(3*k::native_q8_1_bytes(ni));
+        k::native_quantize_q8_1(dx.as(),qx.ptr,ni,3,stream);
+        std::vector<std::unique_ptr<Buffer>> ys,refs;
+        for(int j=0;j<5;++j){
+            const size_t size=k::native_mmvq_weight_bytes(type,ni,outs[j]);std::vector<unsigned char> w(size);
+            if(type==40){std::mt19937 rng(j);for(size_t i=0;i<size;++i)w[i]=uint8_t(i%36<4?0x20+rng()%32:rng());}
+            else{auto t=ggml_type(type);ggml_quantize_init(t);auto src=values(size_t(outs[j])*ni,.5f+.1f*j);std::vector<float> imp(ni,1);
+                 ggml_quantize_chunk(t,src.data(),w.data(),0,outs[j],ni,imp.data());}
+            keep.push_back(std::make_unique<Buffer>(size));keep.back()->put(w.data(),size);
+            ys.push_back(std::make_unique<Buffer>(outs[j]*4));refs.push_back(std::make_unique<Buffer>(outs[j]*4));
+            m.w[j]=keep.back()->ptr;m.x_q8_1[j]=static_cast<unsigned char*>(qx.ptr)+from[j]*k::native_q8_1_bytes(ni);m.y[j]=ys.back()->as();m.n_out[j]=outs[j];
+            k::native_mmvq(type,m.w[j],m.x_q8_1[j],refs.back()->as(),ni,outs[j],1,stream);
+        }
+        m.count=5;
+        if(!k::native_mmvq_many_fits(type,m,ni)){std::printf("%s: native_mmvq_many_fits false\n",ggml_type_name(ggml_type(type)));++bad;continue;}
+        k::native_mmvq_many(type,m,ni,stream);ck(g::stream_synchronize(stream));
+        int differ=0;size_t n=0;
+        for(int j=0;j<5;++j){auto got=ys[j]->read(outs[j]),want=refs[j]->read(outs[j]);n+=got.size();
+                             for(int i=0;i<outs[j];++i)differ+=std::memcmp(&got[i],&want[i],4)!=0;}
+        std::printf("%s many, %d wide, %d outputs: %d of %zu outputs differ in their bits from native_mmvq's\n",
+                    ggml_type_name(ggml_type(type)),ni,big?8576:268,differ,n);
+        bad+=differ;
     }
     p::metal_detail::allow_mm_rows(true);
     ck(g::stream_destroy(stream));ggml_quantize_free();return bad?1:0;

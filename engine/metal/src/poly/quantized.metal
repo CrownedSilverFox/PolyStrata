@@ -156,10 +156,19 @@ struct dot_iq1_s {   // dl (grid + 1) + ml: dl (the grid's sum) + (dl + ml) xs
 template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),typename Dot,int NR>
 kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_position_in_grid]],
                      uint lane [[thread_index_in_threadgroup]]) {
-    uint row=group.y; ulong yrow=row;
+    uint row=group.y,gx=group.x,mj=0; ulong yrow=row;
+    int no=a.no;
     device const uchar* w=static_cast<device uchar*>(a.p[0]);
     device float* out_y=static_cast<device float*>(a.p[2]);
-    if(a.kind==1) { w=static_cast<device const uchar* device const*>(a.p[0])[static_cast<device int*>(a.p[3])[row]]+a.offset; }
+    if(a.kind==9) {   // native_mmvq_many: matrix j's outputs, NR a group, after the groups of the ones before it
+        constant uint* outputs=reinterpret_cast<constant uint*>(&a.stride);   // n_out[j], 32 bits each (quantized.cpp)
+        while(mj+1<uint(a.count) && gx>=(outputs[mj]+NR-1)/NR) gx-=(outputs[mj++]+NR-1)/NR;
+        w=static_cast<device const uchar*>(a.p[3*mj]);
+        out_y=static_cast<device float*>(a.p[3*mj+2]);
+        no=int(outputs[mj]);
+        yrow=0;
+    }
+    else if(a.kind==1) { w=static_cast<device const uchar* device const*>(a.p[0])[static_cast<device int*>(a.p[3])[row]]+a.offset; }
     else if(a.kind==2 || a.kind==6) {
         if(a.kind==6 && a.p[4]) row+=static_cast<device int*>(a.p[4])[group.z];
         if(row>=uint(a.rows)) return;
@@ -194,10 +203,10 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
         if(a.kind==4)xrow=static_cast<device int*>(a.p[3])[row];
         else yrow=static_cast<device int*>(a.p[3])[row];
     }
-    device const uchar* x=a.kind==8
-        ? static_cast<device const uchar*>(a.p[3*row+1])
+    device const uchar* x=a.kind==8 || a.kind==9
+        ? static_cast<device const uchar*>(a.p[3*(a.kind==8?row:mj)+1])
         : static_cast<device uchar*>(a.p[1])+ulong(xrow/a.every)*a.xstride;
-    const int o0=int(group.x)*NR,nr=min(NR,a.no-o0);   // fewer in the last group
+    const int o0=int(gx)*NR,nr=min(NR,no-o0);   // fewer in the last group
     const ulong per=a.ni/QK;
     device const Block* weights=reinterpret_cast<device const Block*>(w)+ulong(o0)*per;
     float acc[NR]={};

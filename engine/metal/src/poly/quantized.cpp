@@ -74,10 +74,17 @@ void qrun(const std::string& name,const QArgs& a,void* s,gpu::metal::Grid groups
     const bool mul=name.starts_with("poly_mul_");
     // groups.x: the outputs.  4 a threadgroup where the launch has 8,192 outputs or more; fewer leave the GPU too few
     // threadgroups (a dense 2,304 x 4,096 matrix: 13% slower on the M5 Ultra), so there 1 (poly_mv_bench)
-    if(mul && uint64_t(groups.x)*groups.y*groups.z>=8192) groups.x=(groups.x+3)/4;
-    else if(mul) kernel+="_1";
+    const int nr=mul && uint64_t(groups.x)*groups.y*groups.z>=8192?4:1;
+    if(mul && nr==1) kernel+="_1";
+    if(mul && a.kind==9) {   // native_mmvq_many: each matrix's outputs in groups of nr
+        const uint64_t packed[4]={a.stride,a.xstride,a.ystride,a.offset};
+        groups.x=0;
+        for(int j=0;j<a.count;++j) groups.x+=(uint32_t(packed[j/2]>>(32*(j%2)))+nr-1)/nr;
+    }
+    else if(mul) groups.x=(groups.x+nr-1)/nr;
     const bool indirect = mul && (a.kind==1 || a.kind==4 || a.kind==5);
-    dispatch("poly_quantized",source,kernel.c_str(),a,s,groups,32,{a.p,a.kind==8?size_t(3*a.count):6,true,indirect?a.p[0]:nullptr});
+    dispatch("poly_quantized",source,kernel.c_str(),a,s,groups,32,
+             {a.p,a.kind==8 || a.kind==9?size_t(3*a.count):6,true,indirect?a.p[0]:nullptr});
 }
 const char* quant_name(int t) {
     switch(t) {
@@ -136,6 +143,26 @@ bool native_mmvq_ids(int t,const MmvqIds& a,int count,int ni,int no,void* s) {
     QArgs q;q.p[0]=a.table;q.p[1]=a.x;q.p[2]=a.y;q.p[3]=a.ids;q.ni=ni;q.no=no;q.rows=count;
     q.xstride=a.x_stride;q.ystride=a.y_stride;q.offset=a.offset;q.every=a.x_every;q.kind=1;
     qrun(std::string("poly_mul_")+quant_name(t),q,s,{uint32_t(no),uint32_t(count),1});return true;
+}
+// Any type poly_mul has: the matrices' outputs one after another in one launch (kind 9), each output the sum
+// native_mmvq() gives it
+bool native_mmvq_many_fits(int t,const NativeMmvqMany& m,int ni) {
+    if(!native_mmvq_supported(t) || m.count<1 || m.count>8 || ni<=0 || ni%block_values(t)) return false;
+    for(int j=0;j<m.count;++j) if(!m.w[j] || !m.x_q8_1[j] || !m.y[j] || m.n_out[j]<=0) return false;
+    return true;
+}
+void native_mmvq_many(int t,const NativeMmvqMany& m,int ni,void* s) {
+    if(!native_mmvq_many_fits(t,m,ni)) throw std::invalid_argument("native_mmvq_many: not these matrices");
+    QArgs q;q.ni=ni;q.rows=1;q.count=m.count;q.kind=9;
+    uint64_t packed[4]={};   // n_out[j], 32 bits each, in the four 64-bit fields kind 9 does not otherwise read
+    uint32_t total=0;
+    for(int j=0;j<m.count;++j) {
+        q.p[3*j]=m.w[j];q.p[3*j+1]=m.x_q8_1[j];q.p[3*j+2]=m.y[j];
+        packed[j/2]|=uint64_t(uint32_t(m.n_out[j]))<<(32*(j%2));
+        total+=uint32_t(m.n_out[j]);
+    }
+    q.stride=packed[0];q.xstride=packed[1];q.ystride=packed[2];q.offset=packed[3];
+    qrun(std::string("poly_mul_")+quant_name(t),q,s,{total,1,1});
 }
 }
 namespace strata::poly {
