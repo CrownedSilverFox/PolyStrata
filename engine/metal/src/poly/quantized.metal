@@ -25,7 +25,9 @@ kernel void poly_tohalf(constant QArgs& a [[buffer(0)]],uint2 tg [[threadgroup_p
     const float4 v=a.xstride%4?float4(x[0],x[1],x[2],x[3]):*reinterpret_cast<device const float4*>(x);
     *reinterpret_cast<device half4*>(static_cast<device half*>(a.p[1])+ulong(row)*a.ni+k)=half4(v);
 }
-template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&)>
+// NR outputs a SIMD group (group.x * NR on), the rows' values read once for them: NVFP4's 4 (quantized.cpp's
+// kNvfp4Rows), 1 for the others
+template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),int NR=1>
 kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_position_in_grid]],
                      uint lane [[thread_index_in_threadgroup]],uint3 shape [[threads_per_threadgroup]]) {
     uint row=group.y; ulong yrow=row;
@@ -66,26 +68,35 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
         if(a.kind==4)xrow=static_cast<device int*>(a.p[3])[row];
         else yrow=static_cast<device int*>(a.p[3])[row];
     }
-    device const Block* weights=reinterpret_cast<device const Block*>(w)+ulong(group.x)*(a.ni/QK);
+    device const Block* weights=reinterpret_cast<device const Block*>(w)+ulong(group.x)*NR*(a.ni/QK);
     device const uchar* x=a.kind==8
         ? static_cast<device const uchar*>(a.p[3*row+1])
         : static_cast<device uchar*>(a.p[1])+ulong(xrow/a.every)*a.xstride;
-    float acc=0;
+    const int nr=NR==1?1:min(NR,a.no-int(group.x)*NR);   // fewer in the last group
+    const ulong per=a.ni/QK;
+    float acc[NR]={};
     for(int start=lane*16;start<a.ni;start+=32*16) {
-        float4x4 deq; Deq(weights+start/QK,short((start%QK)/16),deq);
-        if(a.kind==3){
-            for(int j=0;j<16;++j) acc+=float(half(deq[j/4][j%4]))*float(reinterpret_cast<device const half*>(x)[start+j]);
-            continue;
+        float xv[16];
+        if(a.kind==3) for(int j=0;j<16;++j) xv[j]=float(reinterpret_cast<device const half*>(x)[start+j]);
+        else {
+            device const uchar* block=x+(start/32)*36;
+            float d=float(*reinterpret_cast<device const half*>(block));
+            for(int j=0;j<16;++j) xv[j]=d*float(reinterpret_cast<device const char*>(block+4)[start%32+j]);
         }
-        device const uchar* block=x+(start/32)*36;
-        float d=float(*reinterpret_cast<device const half*>(block));
-        for(int j=0;j<16;++j) acc+=deq[j/4][j%4]*(d*float(reinterpret_cast<device const char*>(block+4)[start%32+j]));
+        for(int r=0;r<nr;++r) {
+            float4x4 deq; Deq(weights+r*per+start/QK,short((start%QK)/16),deq);
+            if(a.kind==3) for(int j=0;j<16;++j) acc[r]+=float(half(deq[j/4][j%4]))*xv[j];
+            else for(int j=0;j<16;++j) acc[r]+=deq[j/4][j%4]*xv[j];
+        }
     }
-    acc=simd_sum(acc);
-    if(!lane) out_y[yrow*a.ystride+group.x]=acc;
+    for(int r=0;r<nr;++r) {
+        const float sum=simd_sum(acc[r]);
+        if(!lane) out_y[yrow*a.ystride+group.x*NR+r]=sum;
+    }
 }
-#define MUL(name,QK) template [[host_name("poly_mul_" #name)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>>) poly_mul<block_##name,QK,dequantize_##name<float4x4>>;
-MUL(q4_0,32) MUL(q4_1,32) MUL(q5_0,32) MUL(q5_1,32) MUL(q8_0,32) MUL(q2_0,64) MUL(mxfp4,32) MUL(nvfp4,64)
+#define MUL_(name,QK,NR) template [[host_name("poly_mul_" #name)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>,NR>) poly_mul<block_##name,QK,dequantize_##name<float4x4>,NR>;
+#define MUL(name,QK) MUL_(name,QK,1)
+MUL(q4_0,32) MUL(q4_1,32) MUL(q5_0,32) MUL(q5_1,32) MUL(q8_0,32) MUL(q2_0,64) MUL(mxfp4,32) MUL_(nvfp4,64,NVFP4_ROWS)
 MUL(q2_K,256) MUL(q3_K,256) MUL(q4_K,256) MUL(q5_K,256) MUL(q6_K,256)
 MUL(iq2_xxs,256) MUL(iq2_xs,256) MUL(iq3_xxs,256) MUL(iq1_s,256) MUL(iq4_nl,32)
 MUL(iq3_s,256) MUL(iq2_s,256) MUL(iq4_xs,256) MUL(iq1_m,256)

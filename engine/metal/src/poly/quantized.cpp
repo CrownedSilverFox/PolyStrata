@@ -18,7 +18,12 @@ std::string block_source() {
            read_source(STRATA_POLY_QUANT_COMMON)+read_source(STRATA_POLY_DEQUANT_SOURCE);
 }
 int64_t block_values(int t) { return quant::type_info(t)->blck; }
-std::string quant_source() { return block_source()+read_source(STRATA_POLY_QUANT_SOURCE); }
+// poly_mul_nvfp4's outputs a SIMD group, one read of the rows' values for them all (the others take 1): 4 made one
+// token's experts at Inkling 2 Mini's shapes 21-30% faster than 1 on the M5 Ultra, 2 and 8 less so
+constexpr int kNvfp4Rows=4;
+std::string quant_source() {
+    return block_source()+"#define NVFP4_ROWS "+std::to_string(kNvfp4Rows)+"\n"+read_source(STRATA_POLY_QUANT_SOURCE);
+}
 const std::string& mm_source() {
     static const std::string source=block_source()+read_source(STRATA_POLY_MM_SOURCE);
     return source;
@@ -70,6 +75,7 @@ bool mm_gemm(const void* a,const void* b,float* y,int m,int n,int k,bool f32,voi
 }
 void qrun(const std::string& name,const QArgs& a,void* s,gpu::metal::Grid groups) {
     static const auto source=quant_source();
+    if(name=="poly_mul_nvfp4") groups.x=(groups.x+kNvfp4Rows-1)/kNvfp4Rows;   // groups.x: the outputs
     const bool indirect = name.starts_with("poly_mul_") && (a.kind==1 || a.kind==4 || a.kind==5);
     dispatch("poly_quantized",source,name.c_str(),a,s,groups,32,{a.p,a.kind==8?size_t(3*a.count):6,true,indirect?a.p[0]:nullptr});
 }
