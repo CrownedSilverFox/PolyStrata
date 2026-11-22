@@ -434,14 +434,21 @@ def setup_poly(a, info: dict, data: Path, elsewhere: list) -> int:
     if a.model and a.model not in sizes:
         S.fail(f"{fam['title']} has no {a.model} file", "choose one of: " + ", ".join(sizes))
     # Unified memory is shared by the mapped weights, GPU buffers and macOS.
-    # Prefer a smaller download; do not apply the discrete-VRAM sizing rule.
-    model = a.model or min(sizes, key=lambda m: sizes[m]["download_gb"])
+    # Prefer a smaller download; do not apply the discrete-VRAM sizing rule.  A family that names the sizes run on a
+    # Mac ("mac_measured", largest first) gets the first of them that fits this Mac's memory.
+    measured = fam.get("mac_measured") or ()
+    fits = lambda m: sizes[m]["download_gb"] + OVERHEAD_GB <= info["ram_gb"] * GIB_GB   # noqa: E731
+    smallest = min(sizes, key=lambda m: sizes[m]["download_gb"])
+    model = a.model or next((m for m in measured if m in sizes and fits(m)), smallest)
     if not a.model and not a.yes:
         names = list(sizes)
         for i, m in enumerate(names, 1):
-            S.say(f"  {i}) {m}: {sizes[m]['download_gb']:.1f} GB")
+            S.say(f"  {i}) {m}: {sizes[m]['download_gb']:.1f} GB"
+                  + (", not measured on a Mac" if measured and m not in measured else ""))
         model = names[int(S.ask("Which size?", [str(i) for i in range(1, len(names)+1)],
                                 str(names.index(model)+1), a.yes))-1]
+    if measured and model not in measured:
+        S.warn(f"{model} has not been measured on a Mac ({' and '.join(measured)} have)")
     d = sizes[model]
     S.warn("strata-poly on Metal is experimental: kernel parity checks pass; broader full-model validation is pending (docs/MAC.md)")
     if d["download_gb"] + OVERHEAD_GB > info["ram_gb"] * GIB_GB:
@@ -451,6 +458,17 @@ def setup_poly(a, info: dict, data: Path, elsewhere: list) -> int:
     if ctx <= 0:
         S.fail("--context must be positive")
     vision = a.vision == "yes"
+    # a family whose picture tower has no Metal kernels ("mac_vision_cpu") reads pictures on the CPU: yes, gpu and cpu
+    # all mean that, and with none of them it is asked, as on a PC (no by default)
+    cpu_tower = bool(fam.get("vision") and fam.get("mac_vision_cpu"))
+    if cpu_tower:
+        if a.vision in ("yes", "gpu", "cpu"):
+            vision = True
+        elif a.vision is None:
+            vision = S.ask("Should the model also read pictures? (its image encoder, on the CPU: a few seconds a "
+                           "picture)", ["y", "n"], "n", a.yes) == "y"
+        if vision and a.vision == "gpu":
+            S.warn(f"{fam['title']}'s picture reader has no Metal kernels: it reads pictures on the CPU")
     if vision and not fam.get("vision"):
         S.fail(f"{fam['title']} has no image encoder")
     models_root = Path(a.models_dir) if a.models_dir else data / "models"
@@ -535,9 +553,15 @@ def setup_poly(a, info: dict, data: Path, elsewhere: list) -> int:
         cfg["open_browser"] = a.browser
     if a.parallel is not None:
         cfg["parallel"] = max(1, a.parallel)
+    if fam.get("one_request"):   # the engine keeps one sequence's state for it (setup.py writes the same)
+        if (a.parallel or 1) >= 2:
+            S.warn(f"--parallel {a.parallel}: {fam['title']} answers one request at a time on this engine")
+        cfg["parallel"] = 1
     if vision:
         cfg["vision"] = {"exe": str(vexe), "mmproj": str(mmproj), "model": str(files[0]),
-                         "gpu": True, "max_tokens": a.vision_tokens or fam.get("vision_most", 1024)}
+                         "gpu": not cpu_tower, "max_tokens": a.vision_tokens or fam.get("vision_most", 1024)}
+        if cpu_tower:
+            cfg["vision"]["threads"] = info.get("perf_cores") or max(1, (os.cpu_count() or 8) // 2)
     S.poly_kv_whole(cfg)
     cfg_path = config_path(tag)
     previous = P.read_config(cfg_path)

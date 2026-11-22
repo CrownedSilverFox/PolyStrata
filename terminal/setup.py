@@ -932,14 +932,17 @@ FAMILIES = {
     # request at a time ("one_request": setup writes "parallel": 1).  "vram_beside_gb" is the peak VRAM measured on an RTX 5090 with no expert on the card, a 10,081-token
     # prompt read 1,024 tokens at a time at a 32K context (2,916 MiB), plus the rows of the context's other tokens.
     "inkling": {"title": "Inkling 2 Mini", "by": "Thinking Machines; quantized by Unsloth",
-                "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux or Windows, reads "
-                         "pictures; a 17.6 GB file, or 13.6 or 9.1 GB",
+                "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux or Windows, or a Mac (beta), "
+                         "reads pictures; a 17.6 GB file, or 13.6 or 9.1 GB",
                 "hf": hf("unsloth/Inkling-2-Mini-GGUF") + "Mainline_Support/", "file": "Inkling-2-Mini-{q}.gguf",
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": True, "experimental": True,
                 "windows": True, "ran_on_gb": 8, "row_bytes": 32768, "one_request": True,
-                # the picture reader: Unsloth's mmproj (strata-vision's inkling2v tower), beside the GGUFs' folder
-                "mmproj_hf": hf("unsloth/Inkling-2-Mini-GGUF"), "mmproj": "mmproj-F16.gguf",
+                # the picture reader: Unsloth's mmproj (strata-vision's inkling2v tower), beside the GGUFs' folder.  On
+                # a Mac the tower has no Metal kernels: setup_mac.py runs it on the CPU ("mac_vision_cpu")
+                "mmproj_hf": hf("unsloth/Inkling-2-Mini-GGUF"), "mmproj": "mmproj-F16.gguf", "mac_vision_cpu": True,
+                # the sizes run on a Mac (an M5 Ultra, 256 GB): setup_mac.py takes the first that fits the Mac's memory
+                "mac_measured": ("UD-Q3_K_XL", "UD-Q2_K_XL"),
                 "vision_gb": 0.7, "vision_vram_gb": 1.3,
                 # UD-Q3_K_XL on the RTX 4070 Laptop (8 GB), the README's benchmark, medians of 3 rounds: 43.7 -> 55.8
                 # tokens/s written in the short chat, 439 -> 466 read and 33.6 -> 41.9 written after the long prompt;

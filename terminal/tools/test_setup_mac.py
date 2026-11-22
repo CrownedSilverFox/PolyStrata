@@ -819,12 +819,69 @@ class SmallerModelSetup(unittest.TestCase):
                 self.assertEqual(Path(cfg["log"]).parent, setup.home())
                 self.assertEqual(registry.find(registry.discover(setup.home()), cfg["model_name"])["config"], str(saved))
                 self.assertEqual(Path(cfg["exe"]).name, "strata-poly")
-                self.assertEqual(cfg["parallel"], 3)
+                self.assertEqual(cfg["parallel"], 1 if fam.get("one_request") else 3)
                 self.assertIn("--conversation-cache-mib", cfg["args"])
                 self.assertEqual(cfg["args"][cfg["args"].index("--model")+1], str(root/names[0]))
                 if spec.get("draft_model"):
                     self.assertIn("--draft-model", cfg["args"])
                 self.assertNotIn("--pack", cfg["args"])
+
+    def test_inkling_takes_a_measured_size_that_fits_and_reads_pictures_on_the_cpu(self):
+        from contextlib import ExitStack
+        family = "inkling"
+        fam = setup.FAMILIES[family]
+        mmproj_name = fam["mmproj"]
+        # (unified memory in GB, what --vision asks) -> the size, the "vision" section's gpu, max_tokens, threads
+        cases = [(256, "yes", "UD-Q3_K_XL"), (32, "gpu", "UD-Q3_K_XL"), (24, "cpu", "UD-Q2_K_XL"), (16, "no", "UD-Q2_K_XL")]
+        for ram, vision, want in cases:
+            with self.subTest(ram=ram, vision=vision), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+                root = Path(tmp)
+                for m in setup.family_models(family):
+                    (root / setup.model_file(fam, m, 1)).write_bytes(b"fixture")
+                (root / mmproj_name).write_bytes(b"fixture")
+                def patch(obj, name, **kw):
+                    return stack.enter_context(mock.patch.object(obj, name, **kw))
+                patch(M, "ROOT", new=root)
+                patch(setup, "_CONTROL_HOME", new=root)
+                patch(setup, "feed_models_setup")
+                patch(M, "mac_configs", return_value=[])
+                patch(M, "mac_info", return_value={"chip": "M5 Ultra", "ram_gb": ram, "macos": "26.0", "arm64": True,
+                                                   "clt": "/tools", "perf_cores": 24})
+                patch(setup, "data_folder", return_value=(root, []))
+                patch(setup, "free_gb", return_value=1000)
+                patch(setup, "pip_install")
+                patch(setup, "llama_override", return_value=root / "llama")
+                patch(M, "build_engine", return_value=root / "strata-poly")
+                patch(M, "build_vision", return_value=root / "strata-vision")
+                patch(setup, "download", side_effect=AssertionError("model download"))
+                patch(setup, "done", return_value=True)
+                patch(setup, "verify_sha256")
+                patch(setup, "check_shards")
+                patch(setup, "run")
+                patch(setup, "find_in", return_value=None)
+                patch(M.shutil, "copyfile")
+                write = patch(setup, "write_setup_config")
+                patch(setup, "write_run_script", return_value=root / "run.sh")
+                patch(M, "start", side_effect=AssertionError("server start"))
+                warns = patch(setup, "warn")
+                for fn in ("say", "ok", "step"):
+                    patch(setup, fn)
+                rc = M.main(["--family", family, "--gguf-dir", str(root), "--yes", "--no-start", "--no-download-models",
+                             "--vision", vision, "--parallel", "2"])
+                self.assertEqual(rc, 0)
+                cfg = write.call_args.args[1]
+                self.assertEqual(cfg["args"][cfg["args"].index("--model") + 1], str(root / setup.model_file(fam, want, 1)))
+                self.assertEqual(cfg["parallel"], 1)   # one request at a time, whatever was asked
+                if vision == "no":
+                    self.assertNotIn("vision", cfg)
+                    continue
+                # the inkling2v tower has no Metal kernels: the CPU tower, a prompt batch's 1,024 rows at most
+                self.assertEqual(cfg["vision"]["gpu"], False)
+                self.assertEqual(cfg["vision"]["max_tokens"], 1024)
+                self.assertEqual(cfg["vision"]["threads"], 24)
+                self.assertEqual(Path(cfg["vision"]["mmproj"]), root / mmproj_name)
+                if vision == "gpu":
+                    self.assertTrue(any("no Metal kernels" in str(c.args[0]) for c in warns.call_args_list))
 
     def test_no_download_models_also_covers_missing_draft(self):
         import argparse
