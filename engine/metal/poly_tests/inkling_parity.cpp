@@ -437,6 +437,54 @@ int situ_gates() {
     ink_control3_gate(cs, ms, chs, gws, fws, outs, ne, rank, nullptr, 3, false);
     bad += compare(C.read(ne), want[0], "ink_control3_gate 0", 1e-4f) + compare(O1.read(ne), want[1], "ink_control3_gate 1", 1e-4f) +
            compare(O2.read(ne), want[2], "ink_control3_gate 2", 1e-4f);
+
+    // the controllers' norms and down products (ink_ctrl_down()), 2 rows, F32; then gemv_set() of their gain and
+    // forget products
+    const int rows2 = 2;
+    auto c2 = values((size_t) rows2 * ne, 1.3f), g2 = values((size_t) rows2 * ne, .7f);
+    std::vector<std::vector<float>> down, dref;
+    for (int j = 0; j < 3; ++j) down.push_back(values((size_t) rank * 2 * ne, .02f * (j + 1)));
+    for (int j = 0; j < 3; ++j) {
+        std::vector<float> want2((size_t) rows2 * rank);
+        for (int r = 0; r < rows2; ++r) {
+            std::vector<float> cat(2 * (size_t) ne);
+            norm_ref(c2.data() + (size_t) r * ne, nullptr, cat.data(), ne, 1e-6f);
+            norm_ref(g2.data() + (size_t) r * ne, nullptr, cat.data() + ne, ne, 1e-6f);
+            for (int o = 0; o < rank; ++o) {
+                double acc = 0;
+                for (int i = 0; i < 2 * ne; ++i) acc += down[j][(size_t) o * 2 * ne + i] * cat[i];
+                want2[(size_t) r * rank + o] = float(acc);
+            }
+        }
+        dref.push_back(want2);
+    }
+    Buffer CC(c2), GG(g2), D0(down[0]), D1(down[1]), D2(down[2]), H0(rows2 * rank * 4), H1(rows2 * rank * 4),
+        H2(rows2 * rank * 4);
+    const float* cc[3] = {CC.as(), CC.as(), CC.as()};
+    const float* gg[3] = {GG.as(), GG.as(), GG.as()};
+    const void* dd[3] = {D0.as(), D1.as(), D2.as()};
+    float* hh[3] = {H0.as(), H1.as(), H2.as()};
+    if (!ink_ctrl_down(cc, gg, dd, hh, 3, ne, rank, rows2, nullptr, false)) {
+        std::printf("ink_ctrl_down: not taken\n");
+        return bad + 1;
+    }
+    bad += compare(H0.read(rows2 * rank), dref[0], "ink_ctrl_down 0", 1e-4f) +
+           compare(H1.read(rows2 * rank), dref[1], "ink_ctrl_down 1", 1e-4f) +
+           compare(H2.read(rows2 * rank), dref[2], "ink_ctrl_down 2", 1e-4f);
+    std::vector<float> gref((size_t) rows2 * ne);
+    for (int r = 0; r < rows2; ++r)
+        for (int i = 0; i < ne; ++i) {
+            double acc = 0;
+            for (int k = 0; k < rank; ++k) acc += gw[0][(size_t) i * rank + k] * dref[0][(size_t) r * rank + k];
+            gref[(size_t) r * ne + i] = float(acc);
+        }
+    Buffer GO(rows2 * ne * 4), FO(rows2 * ne * 4);
+    const float* sw[2] = {G0.as(), F0.as()};
+    const float* sx[2] = {H0.as(), H0.as()};
+    float* sy[2] = {GO.as(), FO.as()};
+    const int so[2] = {ne, ne};
+    gemv_set(sw, sx, sy, so, 2, rank, rows2, nullptr);
+    bad += compare(GO.read(gref.size()), gref, "gemv_set", 1e-4f);
     return bad;
 }
 

@@ -62,9 +62,11 @@ inline void norm_row(device const float* x, device const float* w, device float*
 // ---- the mixes over the residual streams (ink_mix(), ink_mix_many(), ink_mix_norm()) ----
 // p[0..5] the states, p[6 + job] a job's queries (nq of n), p[18 + 4 job + j] its outputs, p[66] the norm's weight,
 // p[67] its output (out[0]'s rms_norm()), p[68] that quantized (one row); n: states, queries, n_embd; f[0] the norm's
-// eps.  A row and a job a threadgroup (grid rows x jobs).
+// eps.  A row and a job a threadgroup (grid rows x jobs), a row of up to 4 values a thread: each thread reads its
+// values of the states once and keeps them, and the first output's, for the outputs and the norm.
 kernel void ink_mix(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_position_in_grid]],
                     uint tid [[thread_index_in_threadgroup]], uint2 shape [[threads_per_threadgroup]]) {
+    constexpr int H = 4;
     const uint nt = shape.x;
     threadgroup float part[30][32];
     threadgroup float coef[6][4];
@@ -72,15 +74,18 @@ kernel void ink_mix(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_positi
     const int ns = a.n[0], nq = a.n[1], n = a.n[2];
     const ulong row = ulong(g.x) * n;
     device const float* q = P<float>(a, 6 + g.y);
-    float sum[6][5];
+    float x[H][6], sum[6][5];
     for (int s = 0; s < 6; ++s)
         for (int k = 0; k < 5; ++k) sum[s][k] = 0;
-    for (int i = tid; i < n; i += nt) {
+    for (int h = 0; h < H; ++h) {
+        const int i = tid + h * nt;
+        if (i >= n) break;
         float qv[4];
         for (int j = 0; j < 4; ++j) qv[j] = j < nq ? q[ulong(j) * n + i] : 0.0f;
         for (int s = 0; s < 6; ++s) {
             if (s < ns) {
                 const float v = P<float>(a, s)[row + i];
+                x[h][s] = v;
                 sum[s][0] += v * v;
                 for (int j = 0; j < 4; ++j) sum[s][1 + j] += v * qv[j];
             }
@@ -115,18 +120,27 @@ kernel void ink_mix(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_positi
         for (int s = 0; s < ns; ++s) coef[s][j] = v[s] / total * inv[s];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (int i = tid; i < n; i += nt) {
-        float x[6];
-        for (int s = 0; s < 6; ++s) x[s] = s < ns ? P<float>(a, s)[row + i] : 0.0f;
+    float o0[H], ss = 0;
+    for (int h = 0; h < H; ++h) {
+        const int i = tid + h * nt;
+        if (i >= n) break;
         for (int j = 0; j < nq; ++j) {
             float acc = 0;
-            for (int s = 0; s < ns; ++s) acc += coef[s][j] * x[s];
+            for (int s = 0; s < ns; ++s) acc += coef[s][j] * x[h][s];
             P<float>(a, 18 + 4 * g.y + j)[row + i] = acc;
+            if (j == 0) o0[h] = acc, ss += acc * acc;
         }
     }
     if (!a.p[67]) return;
-    norm_row(P<float>(a, 18 + 4 * g.y) + row, P<float>(a, 66), P<float>(a, 67) + row, P<uchar>(a, 68), n, a.f[0], npart,
-             tid, nt);
+    const float inv = rsqrt(tg_sum(ss, npart, tid, nt) / n + a.f[0]);
+    device const float* w = P<float>(a, 66);
+    for (int h = 0; h < H; ++h) {
+        const int i = tid + h * nt;
+        if (i >= n) break;
+        const float v = o0[h] * inv * (w ? w[i] : 1.0f);
+        P<float>(a, 67)[row + i] = v;
+        if (a.p[68]) q8_put(P<uchar>(a, 68), i, v);
+    }
 }
 
 // ink_norm_many_q8(): job j (grid y) p[j] x, p[3 + j] w, p[6 + j] y, p[9 + j] q8; n[0] n; f[0] eps.  With n[1] the
@@ -150,31 +164,54 @@ kernel void ink_norm_q8(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_po
     norm_row(P<float>(a, j), P<float>(a, 3 + j), P<float>(a, 6 + j), P<uchar>(a, 9 + j), n, a.f[0], part, tid, nt);
 }
 
-// ink_ctrl_down(): controller j's output o (threadgroup x = j * rank + o) of row y: [rms(cur) | rms(msg)] (eps 1e-6,
-// no weight) times its down matrix's row o (2 n values, F32 or BF16).  p[j] cur, p[3 + j] msg, p[6 + j] down,
-// p[9 + j] ch; n: n_embd, rank, bf16.
+// ink_ctrl_down(): controller j's outputs o .. o + O - 1 (threadgroup x = (j * rank + o) / O, O = n[3], 8 at most) of
+// row y: [rms(cur) | rms(msg)] (eps 1e-6, no weight) times its down matrix's rows (2 n values, F32 or BF16).  p[j]
+// cur, p[3 + j] msg, p[6 + j] down, p[9 + j] ch; n: n_embd, rank, bf16, O.  Each thread keeps its normed inputs (up to
+// 24) for the O rows.
 kernel void ink_ctrl_down(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_position_in_grid]],
                           uint tid [[thread_index_in_threadgroup]], uint2 shape [[threads_per_threadgroup]]) {
+    constexpr int H = 24;
     const uint nt = shape.x;
-    threadgroup float part[32];
-    const int n = a.n[0], rank = a.n[1], j = g.x / rank, o = g.x % rank;
+    threadgroup float part[32], dots[8][32];
+    const int n = a.n[0], rank = a.n[1], O = a.n[3], j = (g.x * O) / rank, o0 = (g.x * O) % rank;
     const bool bf = a.n[2] != 0;
     const ulong row = ulong(g.y) * n;
     device const float* cur = P<float>(a, j) + row;
     device const float* msg = P<float>(a, 3 + j) + row;
+    float xs[H];
     float sa = 0, sb = 0;
-    for (int i = tid; i < n; i += nt) {
-        sa += cur[i] * cur[i];
-        sb += msg[i] * msg[i];
+    for (int h = 0; h < H; ++h) {
+        const int i = tid + h * nt;
+        if (i >= 2 * n) break;
+        xs[h] = i < n ? cur[i] : msg[i - n];
+        if (i < n) sa += xs[h] * xs[h];
+        else sb += xs[h] * xs[h];
     }
     const float ia = 1.0f / sqrt(tg_sum(sa, part, tid, nt) / float(n) + 1e-6f);
     const float ib = 1.0f / sqrt(tg_sum(sb, part, tid, nt) / float(n) + 1e-6f);
-    const ulong w0 = ulong(o) * 2 * n;
-    float acc = 0;
-    for (int i = tid; i < n; i += nt)
-        acc += wval(a, 6 + j, w0 + i, bf) * (cur[i] * ia) + wval(a, 6 + j, w0 + n + i, bf) * (msg[i] * ib);
-    acc = tg_sum(acc, part, tid, nt);
-    if (tid == 0) P<float>(a, 9 + j)[ulong(g.y) * rank + o] = acc;
+    for (int h = 0; h < H; ++h) {
+        const int i = tid + h * nt;
+        if (i >= 2 * n) break;
+        xs[h] *= i < n ? ia : ib;
+    }
+    for (int k = 0; k < O; ++k) {
+        if (o0 + k >= rank) break;
+        const ulong w0 = ulong(o0 + k) * 2 * n;
+        float acc = 0;
+        for (int h = 0; h < H; ++h) {
+            const int i = tid + h * nt;
+            if (i >= 2 * n) break;
+            acc += wval(a, 6 + j, w0 + i, bf) * xs[h];
+        }
+        acc = simd_sum(acc);
+        if ((tid & 31) == 0) dots[k][tid >> 5] = acc;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (int(tid) < O && o0 + int(tid) < rank) {
+        float acc = 0;
+        for (uint w = 0; w < nt / 32; ++w) acc += dots[tid][w];
+        P<float>(a, 9 + j)[ulong(g.y) * rank + o0 + tid] = acc;
+    }
 }
 
 // gemv_set(): matrix j's p[j] (F32, or BF16 with n[9]) on input p[6 + j] into p[12 + j], n[j] outputs each, n[7]
@@ -516,7 +553,7 @@ kernel void ink_situ(constant SituArgs& a [[buffer(0)]], uint2 g [[thread_positi
 // ink_attn_join, else the softmax's extra term of score 0 and the gate are taken here.
 inline long ink_pos(constant Args& a, int t) { return a.p[8] ? P<long>(a, 8)[2 * t] : a.pos + t; }
 
-template <int PER>
+template <int PER>   // a lane's values of a head: dim / 8
 kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[threadgroup(0)]],
                      uint3 grp [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]],
                      uint sg [[simdgroup_index_in_threadgroup]], uint groups [[simdgroups_per_threadgroup]]) {
@@ -531,11 +568,16 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
         hi = min(hi, first + span - 1);
         lo = first;
     }
+    const uint slot = lane >> 3, l8 = lane & 7;   // four keys at a time, 8 lanes side by side on a key
     const ulong head0 = ulong(t) * nh + ulong(g) * per;
-    float q[4][PER], r[4], sink[4];
+    float q[4][PER], r[4][4], sink[4];
     for (int hp = 0; hp < 4; ++hp) {
-        for (int c = 0; c < PER; ++c) q[hp][c] = hp < per ? P<float>(a, 0)[(head0 + hp) * dim + lane * PER + c] * a.f[0] : 0;
-        r[hp] = hp < per && int(lane) < nrel ? P<float>(a, 1)[(head0 + hp) * nrel + lane] : 0;
+        for (int c = 0; c < PER; ++c)
+            q[hp][c] = hp < per ? P<float>(a, 0)[(head0 + hp) * dim + l8 * PER + c] * a.f[0] : 0;
+        for (int c = 0; c < 4; ++c) {
+            const int k = l8 * 4 + c;
+            r[hp][c] = hp < per && k < nrel ? P<float>(a, 1)[(head0 + hp) * nrel + k] : 0;
+        }
         sink[hp] = hp < per ? P<float>(a, 2)[head0 + hp] : 0;
     }
     float m[4], l[4], acc[4][PER];
@@ -547,25 +589,54 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
     device const half* keys = P<half>(a, 3);
     device const half* vals = P<half>(a, 4);
     device const float* rel = P<float>(a, 5);
-    for (long j = lo + long(sg); j <= hi; j += long(groups)) {
-        const ulong at = (ulong(ring > 0 ? j % ring : j) * nkv + g) * dim + lane * PER;
-        float k[PER], v[PER];
+    const long step = long(groups) * 4;
+    for (long j0 = lo + long(sg) * 4; j0 <= hi; j0 += step) {   // the same steps for the SIMD group's lanes
+        const long j = j0 + slot;
+        const bool valid = j <= hi;
+        float k[PER], v[PER], rb[4];
+        const ulong at = (ulong(ring > 0 ? (valid ? j : hi) % ring : (valid ? j : hi)) * nkv + g) * dim + l8 * PER;
         for (int c = 0; c < PER; ++c) {
             k[c] = float(keys[at + c]);
             v[c] = float(vals[at + c]);
         }
         const long dist = p - j;
-        const float rb = int(lane) < nrel && dist < extent ? rel[ulong(dist) * nrel + lane] : 0.0f;
+        for (int c = 0; c < 4; ++c) {
+            const int i = l8 * 4 + c;
+            rb[c] = valid && i < nrel && dist < extent ? rel[ulong(dist) * nrel + i] : 0.0f;
+        }
         for (int hp = 0; hp < 4; ++hp) {
             if (hp >= per) break;
-            float d = rb * r[hp];
+            float d = 0;
+            for (int c = 0; c < 4; ++c) d += rb[c] * r[hp][c];
             for (int c = 0; c < PER; ++c) d += q[hp][c] * k[c];
-            d = simd_sum(d) - sink[hp];
+            d += simd_shuffle_xor(d, 1);
+            d += simd_shuffle_xor(d, 2);
+            d += simd_shuffle_xor(d, 4);
+            if (!valid) continue;
+            d -= sink[hp];
             const float next = max(m[hp], d), keep = exp(m[hp] - next), w = exp(d - next);
             l[hp] = l[hp] * keep + w;
             m[hp] = next;
             for (int c = 0; c < PER; ++c) acc[hp][c] = acc[hp][c] * keep + w * v[c];
         }
+    }
+    // the four keys' softmaxes into one, the lanes of one value side by side across them
+    for (int hp = 0; hp < 4; ++hp) {
+        if (hp >= per) break;
+        float top = max(m[hp], simd_shuffle_xor(m[hp], 8));
+        top = max(top, simd_shuffle_xor(top, 16));
+        const float f = m[hp] == -INFINITY ? 0.0f : exp(m[hp] - top);
+        float lt = l[hp] * f;
+        lt += simd_shuffle_xor(lt, 8);
+        lt += simd_shuffle_xor(lt, 16);
+        for (int c = 0; c < PER; ++c) {
+            float x = acc[hp][c] * f;
+            x += simd_shuffle_xor(x, 8);
+            x += simd_shuffle_xor(x, 16);
+            acc[hp][c] = x;
+        }
+        m[hp] = top;
+        l[hp] = lt;
     }
     // each SIMD group's per heads: their maxima, their sums, then their dim sums
     const int stride = 2 + dim;
@@ -575,7 +646,8 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
             o[0] = m[hp];
             o[1] = l[hp];
         }
-        for (int c = 0; c < PER; ++c) o[2 + lane * PER + c] = acc[hp][c];
+        if (slot == 0)
+            for (int c = 0; c < PER; ++c) o[2 + l8 * PER + c] = acc[hp][c];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (sg >= uint(per)) return;
@@ -586,7 +658,7 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
     float total = 0;
     for (uint s = 0; s < groups; ++s) {
         threadgroup float* o = sh + (ulong(s) * per + hp) * stride;
-        total += o[1] * exp(o[0] - top);
+        if (o[1] > 0) total += o[1] * exp(o[0] - top);
     }
     const ulong head = head0 + hp;
     if (splits > 1) {
@@ -599,7 +671,7 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
             float sum = 0;
             for (uint s = 0; s < groups; ++s) {
                 threadgroup float* o = sh + (ulong(s) * per + hp) * stride;
-                sum += o[2 + d] * exp(o[0] - top);
+                if (o[1] > 0) sum += o[2 + d] * exp(o[0] - top);
             }
             run[2 + d] = sum;
         }
@@ -611,7 +683,7 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
         float sum = 0;
         for (uint s = 0; s < groups; ++s) {
             threadgroup float* o = sh + (ulong(s) * per + hp) * stride;
-            sum += o[2 + d] * exp(o[0] - top);
+            if (o[1] > 0) sum += o[2 + d] * exp(o[0] - top);
         }
         float y = sum / total;
         if (gate) y *= sigm(gate[head * dim + d]);
@@ -619,9 +691,9 @@ kernel void ink_attn(constant Args& a [[buffer(0)]], threadgroup float* sh [[thr
         if (a.p[10]) q8_put(P<uchar>(a, 10), int(head * dim) + d, y);
     }
 }
-typedef decltype(ink_attn<4>) ink_attn_t;
-template [[host_name("ink_attn_128")]] kernel ink_attn_t ink_attn<4>;
-template [[host_name("ink_attn_64")]] kernel ink_attn_t ink_attn<2>;
+typedef decltype(ink_attn<16>) ink_attn_t;
+template [[host_name("ink_attn_128")]] kernel ink_attn_t ink_attn<16>;
+template [[host_name("ink_attn_64")]] kernel ink_attn_t ink_attn<8>;
 
 // The splits' runs of a token's head into its output, with the extra term of score 0 and the gate.  A SIMD group a
 // token's head (grid n_head x rows).

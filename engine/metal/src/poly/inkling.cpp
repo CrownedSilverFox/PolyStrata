@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -116,6 +117,7 @@ void mix(const InkStates& states, const float* const* query, int n_query, float*
     if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > 4 || jobs < 1 || jobs > 12)
         throw std::invalid_argument("ink_mix: 1 to 6 states, 1 to 4 queries, 1 to 12 jobs");
     if (rows <= 0) return;
+    if (n_embd > 4 * 1024) throw std::invalid_argument("ink_mix: rows of up to 4,096 values");
     Args a;
     for (int s = 0; s < states.n; ++s) a.p[s] = states.p[s];
     for (int k = 0; k < jobs; ++k) {
@@ -129,7 +131,7 @@ void mix(const InkStates& states, const float* const* query, int n_query, float*
     a.n[1] = n_query;
     a.n[2] = n_embd;
     a.f[0] = eps;
-    run("ink_mix", a, stream, {uint32_t(rows), uint32_t(jobs), 1}, 256);
+    run("ink_mix", a, stream, {uint32_t(rows), uint32_t(jobs), 1}, 1024);
 }
 }  // namespace
 
@@ -183,11 +185,17 @@ void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, in
 bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
                    int count, int n_embd, int rank, int rows, void* stream, bool bf16) {
     if (count < 1 || count > 3) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
+    static const int per_group = [] {   // STRATA_INK_DOWN_ROWS: outputs a threadgroup (1, 2, 4 or 8)
+        const char* v = std::getenv("STRATA_INK_DOWN_ROWS");
+        const int n = v ? std::atoi(v) : 2;
+        return n == 1 || n == 2 || n == 4 || n == 8 ? n : 2;
+    }();
+    if (rank % per_group != 0 || 2 * n_embd > 24 * 256) return false;   // 24 values a thread
     if (rows <= 0) return true;
     Args a;
     for (int j = 0; j < count; ++j) a.p[j] = cur[j], a.p[3 + j] = msg[j], a.p[6 + j] = down[j], a.p[9 + j] = ch[j];
-    a.n[0] = n_embd, a.n[1] = rank, a.n[2] = bf16;
-    run("ink_ctrl_down", a, stream, {uint32_t(count * rank), uint32_t(rows), 1}, 256);
+    a.n[0] = n_embd, a.n[1] = rank, a.n[2] = bf16, a.n[3] = per_group;
+    run("ink_ctrl_down", a, stream, {uint32_t(count * rank / per_group), uint32_t(rows), 1}, 256);
     return true;
 }
 
@@ -430,19 +438,28 @@ void ink_attend(const InkAttn& c, void* stream) {
     static bool tried = false;
     constexpr size_t kRunFloats = size_t(4) << 20;
     const size_t per_run = (size_t) c.rows * c.n_head * (c.dim + 2);
+    // A few tokens' keys go to runs of about 128 a threadgroup (up to 32 runs), a SIMD group walking 4 keys at a
+    // time: 2 steps for a window's 1,024 keys, where one threadgroup a key head took 16.  On the M5 Ultra runs of 0
+    // (none up to 2,048 keys), 128 and 256 keys, and 1, 2 or 8 down products a threadgroup in ink_ctrl_down, wrote a
+    // short chat at 71.7 to 73.1 tok/s, within the machine's noise; 128 and 2 were the fastest.
+    static const int64_t run_keys = [] {   // STRATA_INK_RUN_KEYS: keys a run (0: one threadgroup up to 2,048 keys)
+        const char* v = std::getenv("STRATA_INK_RUN_KEYS");
+        return v ? (int64_t) std::atoll(v) : (int64_t) 128;
+    }();
     int splits = 1;
-    if (c.rows < 32 && keys > 2048) {
+    if (c.rows < 32 && (run_keys > 0 ? keys > run_keys : keys > 2048)) {
         if (!tried) {
             tried = true;
             if (gpu::malloc_device_raw(&scratch, kRunFloats * 4) != gpu::kSuccess) scratch = nullptr;
         }
-        if (scratch) splits = (int) std::min<size_t>({(size_t) (keys + 1023) / 1024, 32, kRunFloats / per_run});
+        const int64_t per = run_keys > 0 ? run_keys : 1024;
+        if (scratch) splits = (int) std::min<size_t>({(size_t) ((keys + per - 1) / per), 32, kRunFloats / per_run});
     }
     a.n[8] = splits;
     a.p[9] = splits > 1 ? scratch : nullptr;
     const int per = c.n_head / c.n_kv;
     const int most = (int) std::min<size_t>(16, size_t(32768) / ((size_t) per * (c.dim + 2) * 4));
-    const int groups = std::max(per, std::min<int>(most, (int) ((keys + 31) / 32 / splits)));
+    const int groups = std::max(per, std::min<int>(most, (int) ((keys + splits * 16 - 1) / (splits * 16))));
     const size_t shared = ((size_t) groups * per * (c.dim + 2) * 4 + 15) / 16 * 16;
     run(c.dim == 128 ? "ink_attn_128" : "ink_attn_64", a, stream, {uint32_t(c.n_kv), uint32_t(c.rows), uint32_t(splits)},
         uint32_t(32 * groups), shared);
@@ -541,12 +558,7 @@ void ds_head_pick(const DsScreen&, const void*, const void*, const float*, int, 
 
 }  // namespace strata::poly
 
-// The window's products of up to five matrices on a token in one launch: not on Metal, where lin() does each
 namespace strata::kernels {
-bool native_mmvq_many_fits(int, const NativeMmvqMany&, int) { return false; }
-void native_mmvq_many(int, const NativeMmvqMany&, int, void*) {
-    throw std::invalid_argument("Metal has no native_mmvq_many()");
-}
 void native_quantize_q8_1_many(const float* const* x, void* const* x_q8_1, int count, int n_in, void* stream) {
     for (int j = 0; j < count; ++j) native_quantize_q8_1(x[j], x_q8_1[j], n_in, 1, stream);
 }
