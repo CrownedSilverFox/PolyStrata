@@ -2808,8 +2808,11 @@ void Engine::follow(int written) {
     if (freeze_experts_) return;
     const size_t ne = (size_t) n_expert_;
 #if !defined(STRATA_GPU_METAL)
-    // card_far_ or the doorbell: the calls routed on the card counted their picks on the card (moe_card())
-    if ((card_far_ || h_bell_) && d_use_) {
+    // card_far_ or the doorbell: the calls routed on the card counted their picks on the card (moe_card()).  The
+    // doorbell counts only in the calls that rang (bell_counts_): with every expert in VRAM it never does, and this
+    // copy, which waits for the card, would hold every token's launches until the one before it is done.
+    if ((card_far_ || bell_counts_) && d_use_) {
+        bell_counts_ = false;
         const size_t count = layers_.size() * ne;
         h_use_.resize(count);
         ck(cudaMemcpy(h_use_.data(), d_use_, count * sizeof(int32_t), cudaMemcpyDeviceToHost), "expert uses");
@@ -6631,6 +6634,7 @@ void Engine::run(const int32_t* tokens, int n) {
     // shown it routes there (Layer::card).  With the doorbell (bells()) a token's misses go to this thread's
     // workers from inside the launches, which bell_serve() answers once they are all handed to the card.
     bell_ = bell_on(n);
+    bell_counts_ |= bell_;
     struct BellOff {
         bool& on;
         ~BellOff() { on = false; }

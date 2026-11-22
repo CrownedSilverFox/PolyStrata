@@ -1131,6 +1131,7 @@ protected:
     uint8_t* zero_slot_ = nullptr;                ///< an expert of zeros: a miss's products are 0 on the card
     void* ev_bell_ = nullptr;
     bool bell_ = false;                           ///< this call rings (run())
+    bool bell_counts_ = false;                    ///< a call since follow() last read d_use_ rang: picks to read
     bool bell_on(int n) const;
     void bell_serve();
     void bell_job();
