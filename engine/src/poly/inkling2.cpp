@@ -747,8 +747,7 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
     float* y[5] = {q_, kraw_, vraw_, rr_, gate_};
     const int from[5] = {0, 1, 2, 0, 0};
 #if defined(STRATA_GPU_METAL)
-    // Metal has no launch of several matrices (native_mmvq_many()): a product a launch, of whatever type its matrix
-    // is, on the inputs quantized once (lin() quantized its own for each when the five were not of one type)
+    // On Metal the five need not be of one type: a launch for each type among them (below)
     constexpr bool kOneType = false;
 #else
     constexpr bool kOneType = true;
@@ -768,6 +767,36 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
         }
         slot[j] = k;
     }
+#if defined(STRATA_GPU_METAL)
+    // A token's: native_mmvq_many() of the matrices of each type among the five (Unsloth's files mix Q8_0 with K-quants
+    // and i-quants in a layer), on the inputs quantized once; a type it does not take, lin() of each.
+    if (n == 1) {
+        if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
+        bool done[5] = {};
+        for (int i = 0; i < 5; ++i) {
+            if (done[i]) continue;
+            kernels::NativeMmvqMany m{};
+            int at[5], c = 0;
+            for (int j = i; j < 5; ++j) {
+                if (done[j] || w[j]->type != w[i]->type) continue;
+                m.w[c] = w[j]->p;
+                m.x_q8_1[c] = qs[slot[from[j]]];
+                m.y[c] = y[j];
+                m.n_out[c] = w[j]->n_out;
+                at[c++] = j;
+                done[j] = true;
+            }
+            m.count = c;
+            if (w[i]->type != kTypeF32 && w[i]->type != kTypeBF16 &&
+                kernels::native_mmvq_many_fits((int) w[i]->type, m, n_embd_)) {
+                kernels::native_mmvq_many((int) w[i]->type, m, n_embd_, st_);
+                continue;
+            }
+            for (int k = 0; k < c; ++k) lin(*w[at[k]], x[from[at[k]]], y[at[k]], n, qs[slot[from[at[k]]]]);
+        }
+        return true;
+    }
+#endif
     if (n > 1 || !kOneType) {   // a window's: each input quantized once, in one launch, as lin() quantizes it
         if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_ * n, st_);
         bool done[5] = {};   // two products of one input a launch (lin_pair())
