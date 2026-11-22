@@ -1153,7 +1153,7 @@ __global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kerne
     for (int n = 0; n < 16; ++n) o[n][0] = o[n][1] = o[n][2] = o[n][3] = 0.0f;
     // the block's tokens attend positions [lo, hi): from the first one's window to the last one
     const long long hi = a.pos + min(t0 + kFlashTokens, a.rows);
-    const long long lo = a.window > 0 ? max(0LL, a.pos + t0 - a.window + 1) : 0;
+    const long long lo = a.window > 0 ? max(0LL, (long long) (a.pos + t0 - a.window + 1)) : 0;
     const __half* kc = reinterpret_cast<const __half*>(a.keys);
     const __half* vc = reinterpret_cast<const __half*>(a.vals);
     const auto fetch = [&](int buf, long long k0) {
