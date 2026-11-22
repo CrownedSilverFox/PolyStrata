@@ -1868,6 +1868,8 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     if (o.kv_format == KvFmt::kQ4_0 || o.kv_resident > 0)
         throw std::runtime_error("--kv q4_0 and --kv-resident have no Metal kernels yet");
 #endif
+    if (o.kv_format == KvFmt::kFp8 && name != "inkling2_loop")
+        throw std::runtime_error("--kv fp8 is Inkling 2's; this is a '" + name + "' model");
     // int8 and int8k are Gemma 4's: their readers are not the arithmetic q8_0's are, so a model takes one
     // family or the other rather than a choice between them.
     if (name != "gemma4" && (o.kv_format == KvFmt::kInt8 || o.kv_format == KvFmt::kInt8K))

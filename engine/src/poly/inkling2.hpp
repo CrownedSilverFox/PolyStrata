@@ -150,6 +150,8 @@ private:
     float w_scale_ = 0;
     uint32_t attn_type_ = 0;   ///< --attn-requant's type for the attention's matrices; 0: the file's
     bool ctrl_bf16_ = false;   ///< --loop-bf16: the loop controllers' matrices in BF16
+    bool kv8_ = false;         ///< the attention caches in FP8 E4M3 (load_geometry()); else fp16
+    size_t kv_row() const { return kv8_ ? ink_kv8_row(n_kv_, head_dim_) : (size_t) n_kv_ * head_dim_ * sizeof(uint16_t); }
     int pass_ = 0;   ///< the core's pass the call under way is in
     // The DSpark drafter (--draft-model, a file of architecture dflash): three dense layers over a block of the
     // anchor token and mask rows, reading keys and values made from four of the target's features of every position

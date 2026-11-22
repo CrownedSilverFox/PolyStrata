@@ -1652,7 +1652,8 @@ void usage() {
                  "                         int8 / int8k (Gemma 4's:\n"
                  "                         the same Q8_0 rule with the codes and their deltas in two arrays, so a\n"
                  "                         reader takes four codes to a load; int8k keeps the keys' side\n"
-                 "                         quantized and the values' in fp16)\n"
+                 "                         quantized and the values' in fp16); fp8 (Inkling 2's: the caches in\n"
+                 "                         8 bits, about 0.7 GB less VRAM at a 32K context)\n"
 #if defined(STRATA_GPU_METAL)
                  "                         Metal default: q8_0 for a compatible Qwen35MoE geometry, else fp16\n"
 #endif
@@ -1830,8 +1831,9 @@ int main(int argc, char** argv) {
             else if (fmt == "q4_0") o.kv_format = KvFmt::kQ4_0;
             else if (fmt == "int8") o.kv_format = KvFmt::kInt8;
             else if (fmt == "int8k") o.kv_format = KvFmt::kInt8K;
+            else if (fmt == "fp8") o.kv_format = KvFmt::kFp8;
             else {
-                std::fprintf(stderr, "strata-poly: --kv %s: unknown format (use fp16, q8_0, q4_0, int8 or int8k)\n",
+                std::fprintf(stderr, "strata-poly: --kv %s: unknown format (use fp16, q8_0, q4_0, int8, int8k or fp8)\n",
                              fmt.c_str());
                 std::exit(2);
             }

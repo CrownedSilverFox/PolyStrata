@@ -13,6 +13,9 @@
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
+#if !defined(__HIPCC__)
+#include <cuda_fp8.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -144,6 +147,30 @@ __device__ __forceinline__ float block_max(float x, float* part) {
     for (int k = 1; k < int(blockDim.x) / WARP; ++k) m = fmaxf(m, part[k]);
     __syncthreads();
     return m;
+}
+
+// ---- the attention caches in FP8 E4M3 (InkAttn::kv8): a row the n_kv heads' dim codes, then a float scale a head,
+// the head's largest magnitude over 448, so that its codes span E4M3's range ----
+__device__ __forceinline__ size_t kv8_row(int n_kv, int dim) { return (size_t) n_kv * dim + (size_t) n_kv * 4; }
+
+#if !defined(__HIPCC__)
+__device__ __forceinline__ uint8_t e4m3_of(float x) { return (uint8_t) __nv_cvt_float_to_fp8(x, __NV_SATFINITE, __NV_E4M3); }
+__device__ __forceinline__ float e4m3_val(uint8_t c) { return __half2float(__half(__nv_cvt_fp8_to_halfraw(c, __NV_E4M3))); }
+#else
+__device__ __forceinline__ uint8_t e4m3_of(float) { return 0; }   // (ink_kv8_ok() is false under HIP)
+__device__ __forceinline__ float e4m3_val(uint8_t) { return 0.0f; }
+#endif
+
+// A head of dim values v (a thread's values those of i = tid, tid + blockDim.x, ...) into row `cell` of an FP8
+// cache, head h of its n_kv.  Every thread of the block takes part (block_max()).
+__device__ void kv8_store(const float* v, uint8_t* cache, long long cell, int n_kv, int dim, int h, float* part) {
+    float a = 0.0f;
+    for (int i = threadIdx.x; i < dim; i += blockDim.x) a = fmaxf(a, fabsf(v[i]));
+    a = block_max(a, part);
+    const float sc = a > 0.0f ? a / 448.0f : 1.0f, inv = 1.0f / sc;
+    uint8_t* row = cache + (size_t) cell * kv8_row(n_kv, dim);
+    for (int i = threadIdx.x; i < dim; i += blockDim.x) row[(size_t) h * dim + i] = e4m3_of(v[i] * inv);
+    if (threadIdx.x == 0) reinterpret_cast<float*>(row + (size_t) n_kv * dim)[h] = sc;
 }
 
 constexpr int kQueries = 4;
@@ -720,6 +747,10 @@ __global__ void ink_clips_kernel(InkClips c) {
     if (!c.cache[j]) return;   // each thread its own values, as clip_head() and rms_head() left them
     long long cell = (c.at ? c.at[0] : c.pos) + row;
     if (c.ring > 0) cell %= c.ring;
+    if (c.kv8) {
+        kv8_store(v, (uint8_t*) c.cache[j], cell, c.heads[j], c.dim[j], head, part);
+        return;
+    }
     __half* to = (__half*) c.cache[j] + (size_t) cell * c.heads[j] * c.dim[j] + (size_t) head * c.dim[j];
     for (int i = threadIdx.x; i < c.dim[j]; i += blockDim.x) to[i] = __float2half(v[i]);
 }
@@ -801,10 +832,10 @@ __global__ void ink_qkv_kernel(QkvArgs g) {
         float* head = out + size_t(h) * a.dim;
         if (is_v) rms_head(head, a.dim, a.eps, part);
         else clip_head(head, nullptr, a.qk_thr, a.dim, 0.0f, 1.0f, p, part);
-        if (i < a.dim) {
-            const long long row = a.ring > 0 ? p % a.ring : p;
+        const long long row = a.ring > 0 ? p % a.ring : p;
+        if (a.kv8) kv8_store(head, (uint8_t*) (is_v ? a.vals : a.keys), row, a.n_kv, a.dim, h, part);
+        else if (i < a.dim)
             ((__half*) (is_v ? a.vals : a.keys))[size_t(row) * channels + size_t(h) * a.dim + i] = __float2half(head[i]);
-        }
         return;
     }
     b -= 2 * a.n_kv;
@@ -842,6 +873,16 @@ static_assert(kMaxPer * kValueKeys <= 32, "a warp's weights are a lane each");
 
 // A lane's share of a head's row of the cache, which the warp reads side by side: n halves (2 or 4) of the row's
 // 32 * n, as floats.  The rest of out is 0.
+// lane_halves() of an FP8 cache: row `row`'s head g, its codes times its scale
+__device__ __forceinline__ void lane_fp8(const void* cache, long long row, int n_kv, int dim, int g, int lane, int n,
+                                         float* out) {
+    const uint8_t* r = (const uint8_t*) cache + (size_t) row * kv8_row(n_kv, dim);
+    const float sc = reinterpret_cast<const float*>(r + (size_t) n_kv * dim)[g];
+    const uint8_t* p = r + (size_t) g * dim + lane * n;
+#pragma unroll
+    for (int c = 0; c < kLaneHalves; ++c) out[c] = c < n ? e4m3_val(p[c]) * sc : 0.0f;
+}
+
 __device__ __forceinline__ void lane_halves(const __half* head, int lane, int n, float* out) {
     const __half2* p = (const __half2*) (head + lane * n);
 #pragma unroll
@@ -892,7 +933,8 @@ __global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
 #pragma unroll
     for (int u = 0; u < kScoreKeys; ++u) {
         if (j0 + u < j1) {
-            lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, k[u]);
+            if (a.kv8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, lane, lh, k[u]);
+            else lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, k[u]);
             const long long dist = p - (lo + j0 + u);
             rb[u] = lane < a.n_rel && dist < a.extent ? a.rel_bias[size_t(dist) * a.n_rel + lane] : 0.0f;
             if (++row == a.ring) row = 0;
@@ -970,7 +1012,8 @@ __global__ void __launch_bounds__(1024) ink_value_kernel(InkAttn a, int t0, int 
 #pragma unroll
     for (int u = 0; u < kValueKeys; ++u) {
         if (j0 + u < j1) {
-            lane_halves((const __half*) a.vals + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, v[u]);
+            if (a.kv8) lane_fp8(a.vals, row, a.n_kv, a.dim, g, lane, lh, v[u]);
+            else lane_halves((const __half*) a.vals + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, v[u]);
             if (++row == a.ring) row = 0;
         }
     }
@@ -1118,6 +1161,25 @@ __global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kerne
             const int r = i / (DIM / 8), c = 8 * (i % (DIM / 8));
             const long long key = k0 + r;
             const bool whole = key >= lo && key < hi;   // the others are zeros, which no weight reads
+            if (a.kv8) {   // eight codes of the key and of the value, as halves times their head's scale
+                uint4 kh = make_uint4(0, 0, 0, 0), vh = make_uint4(0, 0, 0, 0);
+                if (whole) {
+                    const size_t rb = (size_t) (a.ring > 0 ? key % a.ring : key) * kv8_row(a.n_kv, DIM);
+                    for (int side = 0; side < 2; ++side) {
+                        const uint8_t* row = (const uint8_t*) (side ? a.vals : a.keys) + rb;
+                        const float sc = reinterpret_cast<const float*>(row + (size_t) a.n_kv * DIM)[g];
+                        const uint2 q = *reinterpret_cast<const uint2*>(row + (size_t) g * DIM + c);
+                        const uint8_t* b = reinterpret_cast<const uint8_t*>(&q);
+                        uint32_t h[4];
+#pragma unroll
+                        for (int e = 0; e < 4; ++e) h[e] = ink_h2(e4m3_val(b[2 * e]) * sc, e4m3_val(b[2 * e + 1]) * sc);
+                        (side ? vh : kh) = make_uint4(h[0], h[1], h[2], h[3]);
+                    }
+                }
+                *reinterpret_cast<uint4*>(&ks[buf][r][c]) = kh;
+                *reinterpret_cast<uint4*>(&vs[buf][r][c]) = vh;
+                continue;
+            }
             const size_t at = whole ? (size_t(a.ring > 0 ? key % a.ring : key) * a.n_kv + g) * DIM + c : 0;
             ink_cp16(&ks[buf][r][c], kc + at, whole);
             ink_cp16(&vs[buf][r][c], vc + at, whole);
@@ -1689,6 +1751,19 @@ bool ink_attend_batch(const InkAttn& a, void* stream) {
     }
     launched("ink_flash");
     return true;
+#endif
+}
+
+bool ink_kv8_ok() {
+#if defined(__HIPCC__)
+    return false;
+#else
+    static const bool ok = [] {
+        const char* v = std::getenv("STRATA_INK_FLASH");
+        cudaFuncAttributes f{};
+        return !(v && v[0] == '0') && cudaFuncGetAttributes(&f, ink_flash_kernel<1>) == cudaSuccess && f.ptxVersion >= 80;
+    }();
+    return ok;
 #endif
 }
 

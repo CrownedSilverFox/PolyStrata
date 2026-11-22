@@ -53,8 +53,9 @@ struct KvFull : std::runtime_error {
 /// deltas in two arrays, which a reader can take four codes to a load, and int8k keeps only the keys' side
 /// quantized.  q8_0 is qwen35moe's; int8 and int8k are Gemma 4's - the two readers are not the same arithmetic,
 /// so a model has one or the other rather than a choice between them.  Auto is resolved from model
-/// geometry before allocation on Metal; other backends default to fp16.  q4_0 is 4-bit block_q4_0.
-enum class KvFmt { kAuto = -1, kFp16 = 0, kQ8_0 = 1, kInt8 = 2, kInt8K = 3, kQ4_0 = 4 };
+/// geometry before allocation on Metal; other backends default to fp16.  q4_0 is 4-bit block_q4_0.  fp8 is Inkling
+/// 2's: E4M3 codes and a float scale a head and row.
+enum class KvFmt { kAuto = -1, kFp16 = 0, kQ8_0 = 1, kInt8 = 2, kInt8K = 3, kQ4_0 = 4, kFp8 = 5 };
 
 struct Options {
 #if defined(STRATA_GPU_METAL)

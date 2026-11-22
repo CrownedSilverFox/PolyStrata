@@ -37,7 +37,7 @@ void Inkling2::load_geometry() {
     opt_.draft = false;
     need(opt_.batch == 0, "Inkling 2 runs one sequence (--batch is not supported for it yet)");
     need(opt_.layer_split.empty(), "Inkling 2 runs on one card (--layer-split is not supported for it yet)");
-    need(opt_.kv_format == KvFmt::kFp16, "Inkling 2's attention caches are fp16");
+    need(opt_.kv_format == KvFmt::kFp16 || opt_.kv_format == KvFmt::kFp8, "Inkling 2's attention caches are fp16 or fp8");
     load_shape();
     auto find = [&](const char* key) { return meta_in(*gg_, key); };
     auto first_u = [&](const char* key) {   // a number, or a list's first where every layer has the same
@@ -97,6 +97,13 @@ void Inkling2::load_geometry() {
     attn_type_ = a == "q4_0" ? 2 : a == "q5_0" ? 6 : a == "iq4_nl" ? 20 : 0;
     if (attn_type_) guess_type_ = attn_type_;
     ctrl_bf16_ = opt_.loop_bf16;
+    // --kv fp8: the attention caches in FP8 E4M3 with a scale a row's head, about half the bytes of fp16, as Strata
+    // v0.2.19's Inkling engine has them on small cards (ink_cuda_backend.cu): at 32K tokens the eight full-attention
+    // runs' caches are 1 GiB in fp16, VRAM the expert cache does without.  Only where the flash kernel reads prompts
+    // (attend_batch() reads fp16 only).
+    kv8_ = opt_.kv_format == KvFmt::kFp8;
+    need(!kv8_ || (ink_kv8_ok() && head_dim_ == 128 && n_rel_ == 16),
+         "--kv fp8 needs ink_attend_batch(): an NVIDIA card from Ampere on, STRATA_INK_FLASH not 0");
 
     const MetaValue* pattern = find("attention.sliding_window_pattern");
     need(pattern && pattern->type == MetaType::ARRAY && (int) pattern->items.size() >= n_layer_,
@@ -530,7 +537,7 @@ int Inkling2::widest() const { return std::max(n_head_ * head_dim_, 2 * n_embd_)
 void Inkling2::alloc_caches() {
     ring_ = std::min(opt_.max_context, window_ + rows_);
     keep_ = std::min(window_, ring_);
-    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    const size_t row = kv_row();
     float* st = state_;
     for (Slot& s : slots_) {
         if (!runs(s.il)) continue;
@@ -981,6 +988,7 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         c.n_rel = n_rel_;
         c.taps = taps_;
         c.ring = B.swa ? ring_ : 0;
+        c.kv8 = kv8_;
         ink_qkv(c, st_);
     } else {
         if (n <= kConvFew) {   // a window's K and V convolutions in one launch
@@ -1018,6 +1026,7 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         c.cache[1] = S.keys;   // and the keys and values to their caches
         c.cache[2] = S.vals;
         c.ring = B.swa ? ring_ : 0;
+        c.kv8 = kv8_;
         ink_clips(c, st_);
     }
     InkAttn a;
@@ -1043,12 +1052,14 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     a.ring = B.swa ? ring_ : 0;
     a.scale = 1.f / std::sqrt((float) head_dim_);
     a.gate = gate_;   // the output gate in the join's launch, or the flash kernel's
+    a.kv8 = kv8_;
     if (n >= kStageRows && ink_attend_batch(a, st_)) {
         // a prompt batch on the tensor cores with no score written out: attend_batch()'s path below wrote 1.6e11
         // scores of a 30,954-token read and read them back, 8.9 of its 16.8 s of attention on the RTX 4070 Laptop
     } else if (n >= kStageRows) {
         // a prompt batch: the engine's products on the tensor cores, which round the queries and the softmax's
         // weights to halves; the sink's own term of the softmax has score 0 (zeros_)
+        if (kv8_) throw std::logic_error("Inkling 2: FP8 caches need ink_attend_batch()");
         AttnBias bias;
         bias.r = rr_;
         bias.sink = sink_;
@@ -1225,7 +1236,7 @@ void Inkling2::window_runs(int64_t pos, F&& f) const {
 
 // What the window slots have of the sequence: the rows the next token attends, keys then values.
 size_t Inkling2::extra_bytes() const {
-    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    const size_t row = kv_row();
     size_t n = 0;
     for (const Slot& s : slots_) n += blocks_[(size_t) s.il].swa ? 1 : 0;
     return n * 2 * (size_t) keep_ * row;
@@ -1246,7 +1257,7 @@ void Inkling2::save_run(int il, int64_t pos, uint8_t* dst) { save_slots(il, pass
 // A layer's slots (pass < 0), or its slot of that pass: each one's convolution inputs at their place in the state,
 // and a window slot's rows behind the state, after the window slots before it.
 void Inkling2::save_slots(int il, int pass, int64_t pos, uint8_t* dst) {
-    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t), whole = 2 * (size_t) keep_ * row;
+    const size_t row = kv_row(), whole = 2 * (size_t) keep_ * row;
     const Slot* only = pass < 0 ? nullptr : &slots_[(size_t) slot_of(il, pass)];
     size_t rings = 0;
     for (const Slot& s : slots_) {
@@ -1273,7 +1284,7 @@ void Inkling2::save_slots(int il, int pass, int64_t pos, uint8_t* dst) {
 }
 
 void Inkling2::load_extra(const uint8_t* src, int64_t pos) {
-    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    const size_t row = kv_row();
     for (const Slot& s : slots_) {
         if (!blocks_[(size_t) s.il].swa) continue;
         for (uint16_t* cache : {s.keys, s.vals}) {
@@ -1291,14 +1302,14 @@ void Inkling2::load_extra(const uint8_t* src, int64_t pos) {
 size_t Inkling2::card_row_bytes() const {
     size_t n = 0;
     for (const Slot& s : slots_) n += blocks_[(size_t) s.il].swa ? 0 : 1;
-    return n * 2 * (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    return n * 2 * kv_row();
 }
 
 void Inkling2::save_card_rows(int64_t first, int64_t n, uint8_t* dst) {
     if (first < 0 || n < 0 || first + n > opt_.max_context)
         throw std::logic_error("save_rows: the rows are outside the context");
     ck(cudaStreamSynchronize(cs(st_)), "save rows");
-    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    const size_t row = kv_row();
     for (const Slot& s : slots_) {
         if (blocks_[(size_t) s.il].swa || !s.keys || n == 0) continue;
         for (const uint16_t* cache : {s.keys, s.vals}) {
@@ -1315,7 +1326,7 @@ void Inkling2::load_card_rows(const uint8_t* src, int64_t from, int64_t count, i
         throw std::logic_error("load_rows: the rows are outside what was saved");
     cover(first + n);
     ck(cudaStreamSynchronize(cs(st_)), "load rows");
-    const size_t row = (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
+    const size_t row = kv_row();
     for (const Slot& s : slots_) {
         if (blocks_[(size_t) s.il].swa || !s.keys || n == 0) continue;
         for (uint16_t* cache : {s.keys, s.vals}) {

@@ -69,6 +69,9 @@ Reading is the slow part on a small card. The model's looped layers make every b
 experts that are not on the card again. With `--prompt-batch 2048` the same prompt was read at 539 tokens/s (one
 run).
 
+`--kv fp8` keeps the attention caches in 8 bits instead of 16, which leaves about 0.7 GB more VRAM for the experts at
+a 32K context.
+
 ## What you need
 
 | | |
