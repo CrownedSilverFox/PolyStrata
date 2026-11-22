@@ -1,4 +1,4 @@
-// tests/quant/lowbit_avx2_test.cpp - the AVX2 Q2_0 x Q8_0 dot (x86/dot_avx2.cpp) against the kernels whose bits it must give,
+// tests/quant/q2_0_avx2_test.cpp - the AVX2 Q2_0 x Q8_0 dot (x86/dot_avx2.cpp) against the kernels whose bits it must give,
 // on data where the float order shows: random fp16 scales on every block, activations quantized from random floats of random size, and raw
 // random activation blocks.  Q2_0 against the Generic kernel (also the Avx2 contract's Q2_0 bits).  No ggml.
 // Exit 0 pass, 1 fail, 77 skip (no AVX2 on this CPU, or not x86).
@@ -109,7 +109,7 @@ const Case kCases[] = {
 
 int main() {
     if (!sq::isa_ok(sq::Isa::Avx2)) {
-        std::printf("lowbit_avx2_test: SKIPPED (this CPU has no AVX2, or is not x86)\n");
+        std::printf("q2_0_avx2_test: SKIPPED (this CPU has no AVX2, or is not x86)\n");
         return 77;
     }
     for (const Case& c : kCases) {
@@ -127,6 +127,6 @@ int main() {
         }
         compare(k, ref, c.rows);
     }
-    std::printf("lowbit_avx2_test: %s\n", g_fail ? "FAIL" : "PASS");
+    std::printf("q2_0_avx2_test: %s\n", g_fail ? "FAIL" : "PASS");
     return g_fail ? 1 : 0;
 }
