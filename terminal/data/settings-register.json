@@ -939,9 +939,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:811",
-    "docs/AMD_HIP.md:814",
-    "docs/AMD_HIP.md:829"
+    "docs/AMD_HIP.md:825",
+    "docs/AMD_HIP.md:828",
+    "docs/AMD_HIP.md:843"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -1238,26 +1238,26 @@
    "launch_sets": [
     {
      "file": "app/host/server/native-resources.mjs",
-     "line": 179,
+     "line": 183,
      "value": "String(gib)"
     },
     {
      "file": "app/host/server/native-resources.mjs",
-     "line": 180,
+     "line": 184,
      "value": "${gib}"
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:474",
+    "docs/AMD_HIP.md:488",
     "docs/BATCHING.md:439",
     "docs/DETAILS.md:308",
     "docs/DETAILS.md:311",
     "docs/MULTI_GPU.md:167",
     "docs/PREFILL_HEAD_ALIAS.md:135",
     "docs/SECOND_GPU.md:24",
-    "docs/STRIX_HALO.md:42",
-    "docs/STRIX_HALO.md:179",
+    "docs/STRIX_HALO.md:49",
+    "docs/STRIX_HALO.md:186",
     "docs/bench-results/2026-10-11-community-rtx3090-5600x-arena-pin-by-need/README.md:8"
    ],
    "first_commit": "4058aa782b",
@@ -1685,14 +1685,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5029,
+     "line": 5047,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:79",
-    "docs/STRIX_HALO.md:115"
+    "docs/STRIX_HALO.md:122"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -2022,7 +2022,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 1418,
+     "line": 1478,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -2465,7 +2465,7 @@
    "reads": [
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1865,
+     "line": 1887,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -2705,6 +2705,156 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_BENCH_GAP_US",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 410,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 410,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_BENCH_K",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 425,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 425,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_BENCH_MAXT",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 409,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 409,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_BENCH_NO512",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 408,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "off",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_BENCH_PLANAR",
    "backends": [
     "sycl"
@@ -2894,7 +3044,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3144,
+     "line": 3176,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -3419,7 +3569,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:405"
+    "docs/AMD_HIP.md:419"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -3700,7 +3850,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3214,
+     "line": 3246,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -3722,6 +3872,374 @@
    "status": "research",
    "owner": "poly",
    "note": "[reviewed] measuring only: =1 prints, at the start, how many MiB of the experts outside VRAM cover 70 to 99% of their use (engine/src/poly/engine.cpp, Engine::load)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_ACT",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2056,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/hy4_graph.hip.h",
+     "line": 1333,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_COLD_CACHE_MB",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2773,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "256",
+   "engine_sets": [
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 582
+    },
+    {
+     "file": "engine/src/hy4flash/run/cpu_experts_test.cpp",
+     "line": 584
+    }
+   ],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_COLD_IO",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2776,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/sycl/sy_graph.h",
+     "line": 173,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [
+    {
+     "file": "engine/src/hy4flash/sycl/sy_graph.h",
+     "line": 174
+    }
+   ],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_COLD_READERS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2775,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "0",
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_COLLAPSE",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2002,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "off",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_KERNEL",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2023,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2042,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_PF",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2197,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_PIN",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2071,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2208,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_SCHED",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2195,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_CPUEXP_SPIN_US",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 2206,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
    "retire_after": "",
    "retired_in": ""
   },
@@ -3879,14 +4397,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5027,
+     "line": 5045,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:77",
-    "docs/STRIX_HALO.md:113"
+    "docs/STRIX_HALO.md:120"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -4230,7 +4748,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:601",
+    "docs/AMD_HIP.md:615",
     "docs/INTEL.md:407",
     "docs/bench-results/2026-10-05-community-arc-b65/BUILD.md:3",
     "docs/bench-results/2026-10-05-community-arc-b65/BUILD.md:93",
@@ -4356,7 +4874,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:275",
+    "docs/AMD_HIP.md:289",
     "docs/DETAILS.md:378",
     "docs/MULTI_GPU.md:255",
     "docs/OLDER_GPUS.md:309",
@@ -4479,11 +4997,11 @@
    "launch_reads": [
     {
      "file": "terminal/setup.py",
-     "line": 9677
+     "line": 9698
     }
    ],
    "doc_mentions": [
-    "docs/AMD_HIP.md:622",
+    "docs/AMD_HIP.md:636",
     "docs/BATCHING.md:542",
     "docs/BATCHING.md:544",
     "docs/DETAILS.md:1336",
@@ -4635,7 +5153,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:269",
+    "docs/AMD_HIP.md:283",
     "docs/DETAILS.md:1415",
     "docs/bench-results/2026-10-05-community-gfx1151/prefill-ab.md:24",
     "docs/bench-results/2026-10-05-community-gfx1151/prefill-ab.md:26"
@@ -6346,7 +6864,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4676,
+     "line": 4737,
      "backend": "cuda-hip",
      "fn": "env_on"
     }
@@ -7087,7 +7605,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4166,
+     "line": 4227,
      "backend": "cuda-hip",
      "fn": "env_on"
     }
@@ -7135,7 +7653,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4170,
+     "line": 4231,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7171,7 +7689,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4175,
+     "line": 4236,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7209,7 +7727,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4168,
+     "line": 4229,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7244,7 +7762,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4177,
+     "line": 4238,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7277,7 +7795,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4169,
+     "line": 4230,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7312,7 +7830,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4178,
+     "line": 4239,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7347,7 +7865,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4167,
+     "line": 4228,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7382,7 +7900,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4176,
+     "line": 4237,
      "backend": "cuda-hip",
      "fn": "env_int_or"
     }
@@ -7452,7 +7970,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6365,
+     "line": 6426,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7676,7 +8194,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6637,
+     "line": 6698,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7705,7 +8223,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5030,
+     "line": 5048,
      "value": "\"1\""
     }
    ],
@@ -7713,7 +8231,7 @@
    "doc_mentions": [
     "docs/OLDER_GPUS.md:242",
     "docs/RADEON_780M.md:80",
-    "docs/STRIX_HALO.md:116"
+    "docs/STRIX_HALO.md:123"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -7735,7 +8253,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6655,
+     "line": 6716,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7785,13 +8303,13 @@
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6293,
+     "line": 6354,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6339,
+     "line": 6400,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -7827,7 +8345,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:699",
+    "docs/AMD_HIP.md:713",
     "docs/NVIDIA_V100.md:59",
     "docs/OLDER_GPUS.md:243",
     "docs/OLDER_GPUS.md:267",
@@ -7873,7 +8391,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:601",
+    "docs/AMD_HIP.md:615",
     "docs/bench-results/2026-10-04-rdna2-fp16-prompt/README.md:80",
     "docs/bench-results/2026-10-09-community-2x-rx-6900xt-0.1.41/README.md:43"
    ],
@@ -7950,9 +8468,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:967",
-    "docs/AMD_HIP.md:970",
-    "docs/AMD_HIP.md:1049",
+    "docs/AMD_HIP.md:981",
+    "docs/AMD_HIP.md:984",
+    "docs/AMD_HIP.md:1063",
     "docs/COMMUNITY_BENCHMARKS.md:47",
     "docs/DETAILS.md:1673",
     "docs/DETAILS.md:1682",
@@ -8076,7 +8594,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:606"
+    "docs/AMD_HIP.md:620"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -8513,6 +9031,18 @@
    ],
    "reads": [
     {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 1461,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/run/hy4_cpu_experts.cpp",
+     "line": 1494,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
      "file": "engine/src/kernels/cpu/expert_layout.cpp",
      "line": 30,
      "backend": "cpu",
@@ -8535,7 +9065,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/DETAILS.md:1403",
-    "docs/INSTALL.md:112"
+    "docs/INSTALL.md:132"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -8556,7 +9086,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3057,
+     "line": 3089,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -8570,7 +9100,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:529",
+    "docs/AMD_HIP.md:543",
     "docs/DETAILS.md:1021",
     "docs/GLM.md:283",
     "docs/Q8_KV.md:195",
@@ -9178,8 +9708,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:304",
-    "docs/AMD_HIP.md:314",
+    "docs/AMD_HIP.md:318",
+    "docs/AMD_HIP.md:328",
     "docs/DETAILS.md:1395",
     "docs/DETAILS.md:1907",
     "docs/GDN_CONTRACT.md:66",
@@ -9364,14 +9894,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5026,
+     "line": 5044,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:77",
-    "docs/STRIX_HALO.md:111"
+    "docs/STRIX_HALO.md:118"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -9507,14 +10037,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5026,
+     "line": 5044,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:77",
-    "docs/STRIX_HALO.md:111"
+    "docs/STRIX_HALO.md:118"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -9651,14 +10181,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5026,
+     "line": 5044,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:77",
-    "docs/STRIX_HALO.md:111"
+    "docs/STRIX_HALO.md:118"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -9790,14 +10320,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5026,
+     "line": 5044,
      "value": "\"2\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:77",
-    "docs/STRIX_HALO.md:111"
+    "docs/STRIX_HALO.md:118"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -9857,7 +10387,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:320"
+    "docs/AMD_HIP.md:334"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -9956,14 +10486,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5030,
+     "line": 5048,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:80",
-    "docs/STRIX_HALO.md:117"
+    "docs/STRIX_HALO.md:124"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -10270,7 +10800,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/release-notes-0.2.3.md:5",
-    "docs/STRIX_HALO.md:121",
+    "docs/STRIX_HALO.md:128",
     "docs/STRIX_HALO_WINDOWS.md:85"
    ],
    "first_commit": "4058aa782b",
@@ -10355,8 +10885,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:105",
-    "docs/STRIX_HALO.md:149",
+    "docs/STRIX_HALO.md:112",
+    "docs/STRIX_HALO.md:156",
     "docs/STRIX_HALO_WINDOWS.md:65"
    ],
    "first_commit": "4058aa782b",
@@ -10378,7 +10908,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6279,
+     "line": 6340,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -10580,7 +11110,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:675",
+    "docs/AMD_HIP.md:689",
     "docs/bench-results/2026-10-08-gfx906-qsa-query-swizzle/README.md:17"
    ],
    "first_commit": "4058aa782b",
@@ -10649,7 +11179,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:675"
+    "docs/AMD_HIP.md:689"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -10812,7 +11342,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6360,
+     "line": 6421,
      "backend": "cuda-hip",
      "fn": "env_on"
     },
@@ -11139,7 +11669,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:703",
+    "docs/AMD_HIP.md:717",
     "docs/NVIDIA_V100.md:59",
     "docs/OLDER_GPUS.md:275",
     "docs/bench-results/2026-10-07-v100-decode-kernels/README.md:11"
@@ -11496,7 +12026,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:704"
+    "docs/AMD_HIP.md:718"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -11882,7 +12412,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 4338,
+     "line": 4399,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -12025,7 +12555,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:73",
-    "docs/STRIX_HALO.md:112",
+    "docs/STRIX_HALO.md:119",
     "docs/bench-results/2026-10-07-community-gfx1150/README.md:7",
     "docs/bench-results/2026-10-07-community-gfx1150/README.md:87"
    ],
@@ -12110,9 +12640,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:283",
-    "docs/AMD_HIP.md:605",
-    "docs/AMD_HIP.md:908",
+    "docs/AMD_HIP.md:297",
+    "docs/AMD_HIP.md:619",
+    "docs/AMD_HIP.md:922",
     "docs/bench-results/README.md:159",
     "docs/bench-results/2026-10-12-hc-persist-gfx1030/README.md:1",
     "docs/bench-results/2026-10-12-hc-persist-gfx1030/README.md:57",
@@ -12193,15 +12723,15 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:303",
-    "docs/AMD_HIP.md:836",
-    "docs/MAC.md:316",
-    "docs/MAC.md:448",
+    "docs/AMD_HIP.md:317",
+    "docs/AMD_HIP.md:850",
+    "docs/MAC.md:313",
+    "docs/MAC.md:445",
     "docs/QUANTS.md:166",
     "docs/release-notes-0.2.3.md:5",
-    "docs/STRIX_HALO.md:120",
-    "docs/STRIX_HALO.md:121",
-    "docs/STRIX_HALO.md:238",
+    "docs/STRIX_HALO.md:127",
+    "docs/STRIX_HALO.md:128",
+    "docs/STRIX_HALO.md:245",
     "docs/STRIX_HALO_WINDOWS.md:66",
     "docs/STRIX_HALO_WINDOWS.md:67",
     "docs/UNSLOTH_Q4.md:51",
@@ -12466,16 +12996,16 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:455",
+    "docs/AMD_HIP.md:469",
     "docs/DETAILS.md:1430",
     "docs/DETAILS.md:1901",
     "docs/DGX_SPARK_LINUX.md:110",
     "docs/DGX_SPARK_LINUX.md:136",
     "docs/RADEON_780M.md:85",
     "docs/RADEON_780M.md:106",
-    "docs/STRIX_HALO.md:134",
-    "docs/STRIX_HALO.md:142",
-    "docs/STRIX_HALO.md:147",
+    "docs/STRIX_HALO.md:141",
+    "docs/STRIX_HALO.md:149",
+    "docs/STRIX_HALO.md:154",
     "docs/STRIX_HALO_WINDOWS.md:71",
     "docs/STRIX_HALO_WINDOWS.md:77",
     "docs/bench-results/2026-10-07-community-gfx1150/README.md:106",
@@ -12763,8 +13293,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:83",
-    "docs/AMD_HIP.md:84",
+    "docs/AMD_HIP.md:89",
+    "docs/AMD_HIP.md:90",
     "docs/release-notes-0.2.1.md:42"
    ],
    "first_commit": "4058aa782b",
@@ -12809,14 +13339,14 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:85",
-    "docs/AMD_HIP.md:205",
-    "docs/AMD_HIP.md:650",
-    "docs/AMD_HIP.md:739",
-    "docs/AMD_HIP.md:756",
+    "docs/AMD_HIP.md:91",
+    "docs/AMD_HIP.md:219",
+    "docs/AMD_HIP.md:664",
+    "docs/AMD_HIP.md:753",
+    "docs/AMD_HIP.md:770",
     "docs/AMD_HIP_PERFORMANCE.md:20",
     "docs/RADEON_780M.md:56",
-    "docs/STRIX_HALO.md:94",
+    "docs/STRIX_HALO.md:101",
     "docs/bench-results/2026-10-03-community-r9700-windows/README.md:127",
     "docs/bench-results/2026-10-04-community-rx-7900-gre/README.md:54",
     "docs/bench-results/2026-10-04-community-rx7900xtx-hipblaslt-100500/README.md:35",
@@ -12896,7 +13426,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:741",
+    "docs/AMD_HIP.md:755",
     "docs/bench-results/2026-10-03-community-r9700-windows/METHOD-AND-DISCLOSURES.md:150",
     "docs/bench-results/2026-10-03-community-r9700-windows/METHOD-AND-DISCLOSURES.md:218",
     "docs/bench-results/2026-10-03-community-r9700-windows/README.md:67",
@@ -12944,8 +13474,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:270",
     "docs/AMD_HIP.md:284",
+    "docs/AMD_HIP.md:298",
     "docs/DETAILS.md:1415",
     "docs/bench-results/2026-10-07-rdna2-qsa-select-simt/README.md:13",
     "docs/bench-results/2026-10-09-community-2x-rx-6900xt-0.1.41/README.md:23",
@@ -12976,7 +13506,7 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4906,
+     "line": 5005,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -12990,7 +13520,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:1029",
+    "docs/AMD_HIP.md:1043",
     "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/README.md:41",
     "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/main-kv-whole/README.md:23",
     "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/pr176-vram-pool/README.md:23"
@@ -13035,14 +13565,14 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:283",
-    "docs/AMD_HIP.md:601",
-    "docs/AMD_HIP.md:602",
-    "docs/AMD_HIP.md:648",
-    "docs/AMD_HIP.md:820",
-    "docs/AMD_HIP.md:827",
-    "docs/AMD_HIP.md:893",
-    "docs/AMD_HIP.md:904",
+    "docs/AMD_HIP.md:297",
+    "docs/AMD_HIP.md:615",
+    "docs/AMD_HIP.md:616",
+    "docs/AMD_HIP.md:662",
+    "docs/AMD_HIP.md:834",
+    "docs/AMD_HIP.md:841",
+    "docs/AMD_HIP.md:907",
+    "docs/AMD_HIP.md:918",
     "docs/RADEON_780M.md:91",
     "docs/bench-results/2026-10-04-rdna2-fp16-prompt/README.md:7",
     "docs/bench-results/2026-10-04-rdna2-fp16-prompt/README.md:37",
@@ -13093,7 +13623,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:308",
+    "docs/AMD_HIP.md:322",
     "docs/release-notes-0.2.1.md:46",
     "docs/release-notes-0.2.2.md:23"
    ],
@@ -13177,7 +13707,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:306"
+    "docs/AMD_HIP.md:320"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -13198,13 +13728,13 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 3957,
+     "line": 4056,
      "backend": "hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 3966,
+     "line": 4065,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -13218,7 +13748,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:975",
+    "docs/AMD_HIP.md:989",
     "docs/RADEON_PRO_5500M.md:92",
     "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/README.md:41",
     "docs/bench-results/2026-11-15-community-2x-rx5700xt-linux-cyber-tiel-ud-q4-k-xl/runs/main-kv-whole/README.md:23",
@@ -13244,7 +13774,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6818,
+     "line": 6879,
      "backend": "hip",
      "fn": "env_on"
     },
@@ -13283,7 +13813,7 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4041,
+     "line": 4140,
      "backend": "hip",
      "fn": "getenv"
     },
@@ -13303,9 +13833,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:934",
-    "docs/AMD_HIP.md:979",
-    "docs/AMD_HIP.md:1006",
+    "docs/AMD_HIP.md:948",
+    "docs/AMD_HIP.md:993",
+    "docs/AMD_HIP.md:1020",
     "docs/bench-results/2026-10-24-rx9070-hip-value-split/README.md:9",
     "docs/bench-results/2026-10-24-rx9070-hip-value-split/README.md:58",
     "docs/bench-results/2026-10-27-community-rx5700xt-windows-qwen36-q3/README.md:100"
@@ -13421,15 +13951,15 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:159",
-    "docs/AMD_HIP.md:299",
-    "docs/AMD_HIP.md:451",
+    "docs/AMD_HIP.md:173",
+    "docs/AMD_HIP.md:313",
+    "docs/AMD_HIP.md:465",
     "docs/RADEON_780M.md:84",
     "docs/RADEON_780M.md:101",
     "docs/release-notes-0.2.0.md:56",
-    "docs/STRIX_HALO.md:136",
-    "docs/STRIX_HALO.md:142",
-    "docs/STRIX_HALO.md:147",
+    "docs/STRIX_HALO.md:143",
+    "docs/STRIX_HALO.md:149",
+    "docs/STRIX_HALO.md:154",
     "docs/STRIX_HALO_WINDOWS.md:70",
     "docs/bench-results/2026-10-03-community-r9700-windows/METHOD-AND-DISCLOSURES.md:172",
     "docs/bench-results/2026-10-03-community-r9700-windows/README.md:236",
@@ -13509,7 +14039,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:299"
+    "docs/AMD_HIP.md:313"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -13566,6 +14096,78 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_HY4_KERNELS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/metal/hy4_metal_main.cpp",
+     "line": 1556,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
+     "file": "engine/src/hy4flash/metal/hy4_metal_main.cpp",
+     "line": 1603,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "research",
+   "owner": "",
+   "note": "",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_HY4_TAIL_SKIP",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/run/hy4_graph.hip.h",
+     "line": 1341,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": "0",
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "hy4-dfly-distill",
+   "note": "Opt-in rank cutoff (1..15) for skipping missed CPU/cold-tier routed experts in Hy4-Flash decode/verify; 0 = off by default (exact lossless).",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_I8M_RAW",
    "backends": [
     "cuda-hip"
@@ -13606,7 +14208,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6557,
+     "line": 6618,
      "backend": "cuda-hip",
      "fn": "i8_env_int"
     }
@@ -13707,7 +14309,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6463,
+     "line": 6524,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -13845,7 +14447,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6557,
+     "line": 6618,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -13891,7 +14493,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6398,
+     "line": 6459,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -13978,7 +14580,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6532,
+     "line": 6593,
      "backend": "cuda-hip",
      "fn": "i8_env_int"
     }
@@ -14113,7 +14715,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:458"
+    "docs/AMD_HIP.md:472"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -14148,12 +14750,12 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:457",
+    "docs/AMD_HIP.md:471",
     "docs/RADEON_780M.md:85",
     "docs/RADEON_780M.md:86",
     "docs/release-notes-0.2.1.md:41",
-    "docs/STRIX_HALO.md:143",
     "docs/STRIX_HALO.md:150",
+    "docs/STRIX_HALO.md:157",
     "docs/STRIX_HALO_WINDOWS.md:76"
    ],
    "first_commit": "4058aa782b",
@@ -14175,7 +14777,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 2556,
+     "line": 2616,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -14907,7 +15509,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:284",
+    "docs/AMD_HIP.md:298",
     "docs/AMD_HIP_PERFORMANCE.md:22",
     "docs/bench-results/2026-10-06-community-2x-rx-6900xt-0.1.40.1/README.md:68",
     "docs/bench-results/2026-10-07-rdna2-qsa-select-simt/README.md:13",
@@ -15354,7 +15956,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3502,
+     "line": 3563,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -15399,7 +16001,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3509,
+     "line": 3570,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -15438,7 +16040,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3520,
+     "line": 3581,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -15860,7 +16462,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 918,
+     "line": 943,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -16753,7 +17355,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/TROUBLESHOOTING.md:327"
+    "docs/TROUBLESHOOTING.md:334"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -16885,13 +17487,13 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4600,
+     "line": 4699,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4682,
+     "line": 4781,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -16978,13 +17580,13 @@
    "reads": [
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4612,
+     "line": 4711,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/kernels.cu",
-     "line": 4694,
+     "line": 4793,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -17530,14 +18132,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5030,
+     "line": 5048,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:80",
-    "docs/STRIX_HALO.md:116"
+    "docs/STRIX_HALO.md:123"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -18307,8 +18909,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:253",
-    "docs/MAC.md:457"
+    "docs/MAC.md:250",
+    "docs/MAC.md:454"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -18448,7 +19050,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:456"
+    "docs/MAC.md:453"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -18585,6 +19187,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_METAL_EXP_CACHE_GB",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/hy4flash/metal/hy4_metal_main.cpp",
+     "line": 628,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "float",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "hy4flash/metal",
+   "note": "Override Metal LRU GPU expert cache budget (GB) when cold experts are enabled",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_METAL_F16",
    "backends": [
     "metal"
@@ -18606,7 +19241,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:462"
+    "docs/MAC.md:459"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -18647,7 +19282,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:453"
+    "docs/MAC.md:450"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -18820,7 +19455,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:337"
+    "docs/MAC.md:334"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -18900,7 +19535,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:460"
+    "docs/MAC.md:457"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19034,7 +19669,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:457"
+    "docs/MAC.md:454"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19075,7 +19710,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:461"
+    "docs/MAC.md:458"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19116,7 +19751,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:463"
+    "docs/MAC.md:460"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19157,7 +19792,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:453"
+    "docs/MAC.md:450"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19231,7 +19866,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:458"
+    "docs/MAC.md:455"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19437,7 +20072,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:452"
+    "docs/MAC.md:449"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19544,7 +20179,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:451"
+    "docs/MAC.md:448"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19776,7 +20411,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:463"
+    "docs/MAC.md:460"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19817,7 +20452,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:449"
+    "docs/MAC.md:446"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19858,8 +20493,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:261",
-    "docs/MAC.md:450"
+    "docs/MAC.md:258",
+    "docs/MAC.md:447"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -19894,7 +20529,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:454"
+    "docs/MAC.md:451"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -20455,13 +21090,13 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 11980,
+     "line": 12253,
      "value": "\"1\" if stream else \"0\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:455"
+    "docs/MAC.md:452"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -20574,7 +21209,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:463"
+    "docs/MAC.md:460"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -20609,8 +21244,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/MAC.md:252",
-    "docs/MAC.md:459"
+    "docs/MAC.md:249",
+    "docs/MAC.md:456"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -20949,7 +21584,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5310,
+     "line": 5328,
      "value": "\"1\""
     }
    ],
@@ -21169,7 +21804,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5029,
+     "line": 5047,
      "value": "\"1\""
     }
    ],
@@ -21180,7 +21815,7 @@
     "docs/A770_SPEED_SPEC.md:509",
     "docs/A770_SPEED_SPEC.md:512",
     "docs/RADEON_780M.md:79",
-    "docs/STRIX_HALO.md:115"
+    "docs/STRIX_HALO.md:122"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -21286,7 +21921,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4550,
+     "line": 4656,
      "backend": "cuda-hip",
      "fn": "il_env_on"
     }
@@ -21328,7 +21963,7 @@
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4474,
+     "line": 4580,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -21365,7 +22000,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 2522,
+     "line": 2582,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -21402,7 +22037,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4468,
+     "line": 4574,
      "backend": "cuda-hip",
      "fn": "il_env_on"
     }
@@ -21435,7 +22070,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4496,
+     "line": 4602,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -21472,7 +22107,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4573,
+     "line": 4679,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -21509,7 +22144,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4467,
+     "line": 4573,
      "backend": "cuda-hip",
      "fn": "il_env_on"
     }
@@ -21542,7 +22177,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4528,
+     "line": 4634,
      "backend": "cuda-hip",
      "fn": "il_env_on"
     }
@@ -21749,13 +22384,13 @@
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 2675,
+     "line": 2735,
      "backend": "hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 2675,
+     "line": 2735,
      "backend": "hip",
      "fn": "getenv"
     },
@@ -21793,7 +22428,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:700"
+    "docs/AMD_HIP.md:714"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -22702,7 +23337,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:268"
+    "docs/AMD_HIP.md:282"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -22916,7 +23551,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 5025,
+     "line": 5086,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -23047,7 +23682,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/TROUBLESHOOTING.md:123",
+    "docs/TROUBLESHOOTING.md:130",
     "docs/bench-results/2026-10-12-community-gfx1103/README.md:122"
    ],
    "first_commit": "4058aa782b",
@@ -23570,13 +24205,13 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 1564,
+     "line": 1624,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 1759,
+     "line": 1819,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -23943,7 +24578,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3499,
+     "line": 3560,
      "backend": "cuda-hip",
      "fn": "env_on"
     },
@@ -24366,7 +25001,7 @@
    "launch_reads": [
     {
      "file": "terminal/setup.py",
-     "line": 9676
+     "line": 9697
     }
    ],
    "doc_mentions": [
@@ -24466,7 +25101,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3498,
+     "line": 3559,
      "backend": "cuda-hip",
      "fn": "env_on"
     },
@@ -25236,12 +25871,12 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:453",
+    "docs/AMD_HIP.md:467",
     "docs/RADEON_780M.md:85",
     "docs/RADEON_780M.md:103",
-    "docs/STRIX_HALO.md:135",
     "docs/STRIX_HALO.md:142",
-    "docs/STRIX_HALO.md:147",
+    "docs/STRIX_HALO.md:149",
+    "docs/STRIX_HALO.md:154",
     "docs/STRIX_HALO_WINDOWS.md:71",
     "docs/bench-results/2026-10-07-community-gfx1150/README.md:106",
     "docs/bench-results/2026-10-09-community-strix-halo-laptop-70w/README.md:31",
@@ -25544,9 +26179,9 @@
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:424",
-    "docs/AMD_HIP.md:611",
-    "docs/AMD_HIP.md:621",
+    "docs/AMD_HIP.md:438",
+    "docs/AMD_HIP.md:625",
+    "docs/AMD_HIP.md:635",
     "docs/DETAILS.md:1336",
     "docs/bench-results/2026-10-20-0.2.1-idle-gpu/README.md:45",
     "docs/bench-results/2026-11-14-rdna2-pcie-auto/README.md:3",
@@ -26143,9 +26778,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:158",
-    "docs/STRIX_HALO.md:239",
-    "docs/STRIX_HALO.md:240"
+    "docs/STRIX_HALO.md:165",
+    "docs/STRIX_HALO.md:246",
+    "docs/STRIX_HALO.md:247"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -26402,10 +27037,10 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:300",
-    "docs/AMD_HIP.md:601",
-    "docs/AMD_HIP.md:869",
-    "docs/AMD_HIP.md:897",
+    "docs/AMD_HIP.md:314",
+    "docs/AMD_HIP.md:615",
+    "docs/AMD_HIP.md:883",
+    "docs/AMD_HIP.md:911",
     "docs/DETAILS.md:1338",
     "docs/DETAILS.md:1473",
     "docs/DETAILS.md:1482",
@@ -26418,10 +27053,10 @@
     "docs/RADEON_780M.md:86",
     "docs/RADEON_780M.md:105",
     "docs/release-notes-0.2.0.md:56",
-    "docs/STRIX_HALO.md:132",
-    "docs/STRIX_HALO.md:144",
-    "docs/STRIX_HALO.md:147",
-    "docs/STRIX_HALO.md:156",
+    "docs/STRIX_HALO.md:139",
+    "docs/STRIX_HALO.md:151",
+    "docs/STRIX_HALO.md:154",
+    "docs/STRIX_HALO.md:163",
     "docs/STRIX_HALO_WINDOWS.md:71",
     "docs/bench-results/COMMUNITY.md:37",
     "docs/bench-results/2026-10-01-community-rtx-5090-5950x/README.md:58",
@@ -26619,7 +27254,7 @@
    "doc_mentions": [
     "docs/DGX_SPARK_LINUX.md:108",
     "docs/QUANTS.md:37",
-    "docs/STRIX_HALO.md:157"
+    "docs/STRIX_HALO.md:164"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -26654,7 +27289,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:300",
+    "docs/AMD_HIP.md:314",
     "docs/DETAILS.md:1482"
    ],
    "first_commit": "4058aa782b",
@@ -27268,17 +27903,17 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:305",
-    "docs/AMD_HIP.md:452",
-    "docs/AMD_HIP.md:897",
-    "docs/AMD_HIP.md:910",
+    "docs/AMD_HIP.md:319",
+    "docs/AMD_HIP.md:466",
+    "docs/AMD_HIP.md:911",
+    "docs/AMD_HIP.md:924",
     "docs/RADEON_780M.md:78",
     "docs/RADEON_780M.md:84",
     "docs/RADEON_780M.md:102",
     "docs/release-notes-0.2.2.md:16",
-    "docs/STRIX_HALO.md:133",
-    "docs/STRIX_HALO.md:142",
-    "docs/STRIX_HALO.md:147",
+    "docs/STRIX_HALO.md:140",
+    "docs/STRIX_HALO.md:149",
+    "docs/STRIX_HALO.md:154",
     "docs/STRIX_HALO_WINDOWS.md:71",
     "docs/bench-results/2026-10-07-community-gfx1150/README.md:105",
     "docs/bench-results/2026-10-09-community-4x-rx-7900-xt/README.md:51",
@@ -27830,18 +28465,18 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5027,
+     "line": 5045,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:305",
-    "docs/AMD_HIP.md:910",
+    "docs/AMD_HIP.md:319",
+    "docs/AMD_HIP.md:924",
     "docs/GDN_CONTRACT.md:42",
     "docs/RADEON_780M.md:78",
     "docs/release-notes-0.2.2.md:16",
-    "docs/STRIX_HALO.md:113"
+    "docs/STRIX_HALO.md:120"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -28405,7 +29040,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:156"
+    "docs/STRIX_HALO.md:163"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -28447,7 +29082,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/TROUBLESHOOTING.md:324"
+    "docs/TROUBLESHOOTING.md:331"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -28520,10 +29155,10 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:898",
-    "docs/STRIX_HALO.md:128",
-    "docs/STRIX_HALO.md:138",
-    "docs/STRIX_HALO.md:144",
+    "docs/AMD_HIP.md:912",
+    "docs/STRIX_HALO.md:135",
+    "docs/STRIX_HALO.md:145",
+    "docs/STRIX_HALO.md:151",
     "docs/bench-results/2026-10-09-community-4x-rx-7900-xt/README.md:51",
     "docs/bench-results/2026-10-09-community-4x-rx-7900-xt/README.md:56",
     "docs/bench-results/2026-10-09-community-strix-halo-laptop-70w/README.md:31"
@@ -28724,7 +29359,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 7390,
+     "line": 7451,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -28885,8 +29520,8 @@
     "docs/bench-results/README.md:153",
     "docs/bench-results/2026-10-11-community-rtx3090-5600x-arena-pin-by-need/README.md:1",
     "docs/bench-results/2026-10-11-community-rtx3090-5600x-arena-pin-by-need/README.md:8",
-    "README.md:299",
-    "README.md:305"
+    "README.md:331",
+    "README.md:337"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -28954,7 +29589,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/TROUBLESHOOTING.md:280"
+    "docs/TROUBLESHOOTING.md:287"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -28989,7 +29624,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/TROUBLESHOOTING.md:280"
+    "docs/TROUBLESHOOTING.md:287"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -29065,7 +29700,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:284",
+    "docs/AMD_HIP.md:298",
     "docs/BATCHING.md:317",
     "docs/BATCHING.md:352"
    ],
@@ -30274,8 +30909,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:309",
-    "docs/AMD_HIP.md:409"
+    "docs/AMD_HIP.md:323",
+    "docs/AMD_HIP.md:423"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -30356,7 +30991,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5031,
+     "line": 5049,
      "value": "\"1\""
     }
    ],
@@ -30364,7 +30999,7 @@
    "doc_mentions": [
     "docs/OLDER_GPUS.md:103",
     "docs/RADEON_780M.md:80",
-    "docs/STRIX_HALO.md:117",
+    "docs/STRIX_HALO.md:124",
     "docs/bench-results/2026-10-03-community-r9700-windows/METHOD-AND-DISCLOSURES.md:123",
     "docs/bench-results/2026-10-03-community-r9700-windows/README.md:243",
     "docs/bench-results/2026-10-04-community-rx-6800-windows/README.md:84"
@@ -30621,7 +31256,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 5620,
+     "line": 5681,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -30654,7 +31289,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 1868,
+     "line": 1900,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30687,7 +31322,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 5560,
+     "line": 5621,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -30722,7 +31357,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 5360,
+     "line": 5405,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -30758,13 +31393,13 @@
    "reads": [
     {
      "file": "engine/src/poly/mmq_own.cu",
-     "line": 113,
+     "line": 120,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/mmq_paths_test.cu",
-     "line": 67,
+     "line": 71,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30797,7 +31432,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3031,
+     "line": 3063,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30833,7 +31468,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 6615,
+     "line": 6698,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -30866,7 +31501,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 2996,
+     "line": 3028,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -31277,7 +31912,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:150",
+    "docs/STRIX_HALO.md:157",
     "docs/STRIX_HALO_WINDOWS.md:82"
    ],
    "first_commit": "4058aa782b",
@@ -31395,7 +32030,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:284",
+    "docs/AMD_HIP.md:298",
     "docs/DETAILS.md:1332",
     "docs/DETAILS.md:1333",
     "docs/DETAILS.md:1334",
@@ -32463,6 +33098,12 @@
      "fn": "getenv"
     },
     {
+     "file": "engine/src/poly/mmq_own.cu",
+     "line": 149,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    },
+    {
      "file": "engine/src/prefill/moe_fused_iq.cu",
      "line": 3013,
      "backend": "cuda-hip",
@@ -32490,13 +33131,14 @@
     "docs/NVFP4.md:87",
     "docs/NVFP4.md:195",
     "docs/NVFP4.md:266",
-    "docs/NVFP4.md:366"
+    "docs/NVFP4.md:366",
+    "docs/models/inkling.md:37"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
    "since": "v0.2.16",
-   "last_commit": "4058aa782b",
-   "last_date": "2026-11-17",
+   "last_commit": "bc4b715ec2",
+   "last_date": "2026-11-21",
    "status": "default",
    "owner": "prefill",
    "note": "[auto] on by default for some GPU architectures only (sm_121 src/core/nv_defaults.cpp:67=w4a4); opt-in elsewhere; the variable overrides it",
@@ -32822,11 +33464,11 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:284",
-    "docs/STRIX_HALO.md:139",
-    "docs/STRIX_HALO.md:144",
-    "docs/STRIX_HALO.md:156",
-    "docs/STRIX_HALO.md:243",
+    "docs/AMD_HIP.md:298",
+    "docs/STRIX_HALO.md:146",
+    "docs/STRIX_HALO.md:151",
+    "docs/STRIX_HALO.md:163",
+    "docs/STRIX_HALO.md:250",
     "docs/bench-results/2026-10-09-community-strix-halo-laptop-70w/README.md:31"
    ],
    "first_commit": "4058aa782b",
@@ -33003,7 +33645,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:307",
+    "docs/AMD_HIP.md:321",
     "docs/release-notes-0.2.1.md:48"
    ],
    "first_commit": "4058aa782b",
@@ -34546,7 +35188,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 3540,
+     "line": 3617,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -35132,7 +35774,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 3909,
+     "line": 3986,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -35169,7 +35811,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 2992,
+     "line": 3052,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -35209,7 +35851,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 3297,
+     "line": 3357,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -35249,7 +35891,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 3259,
+     "line": 3319,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -35284,14 +35926,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5029,
+     "line": 5047,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:79",
-    "docs/STRIX_HALO.md:115"
+    "docs/STRIX_HALO.md:122"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -35347,7 +35989,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 1570,
+     "line": 1630,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -35424,7 +36066,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 3129,
+     "line": 3189,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -35468,7 +36110,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5029,
+     "line": 5047,
      "value": "\"1\""
     }
    ],
@@ -35477,7 +36119,7 @@
     "docs/OLDER_GPUS.md:175",
     "docs/OLDER_GPUS.md:387",
     "docs/RADEON_780M.md:79",
-    "docs/STRIX_HALO.md:115"
+    "docs/STRIX_HALO.md:122"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -35510,7 +36152,7 @@
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 2800,
+     "line": 2860,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -35624,7 +36266,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5031,
+     "line": 5049,
      "value": "\"1\""
     }
    ],
@@ -35632,7 +36274,7 @@
    "doc_mentions": [
     "docs/RADEON_780M.md:80",
     "docs/release-notes-0.2.7.md:52",
-    "docs/STRIX_HALO.md:117",
+    "docs/STRIX_HALO.md:124",
     "docs/bench-results/2026-10-07-community-arc-b65-v01402/BUILD.md:92",
     "docs/bench-results/2026-10-07-community-arc-b65-v01402/QUALIFICATION.md:11",
     "docs/bench-results/2026-10-09-community-gfx1151-ud-iq4xs-0.1.41/README.md:32"
@@ -36708,7 +37350,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 4558,
+     "line": 4576,
      "value": "base.get(\"ramKeep\""
     }
    ],
@@ -36752,8 +37394,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:602",
-    "docs/AMD_HIP.md:905",
+    "docs/AMD_HIP.md:616",
+    "docs/AMD_HIP.md:919",
     "docs/bench-results/2026-10-04-rdna2-fp16-prompt/README.md:59"
    ],
    "first_commit": "4058aa782b",
@@ -36790,7 +37432,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/DETAILS.md:335",
-    "docs/TROUBLESHOOTING.md:122"
+    "docs/TROUBLESHOOTING.md:129"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -36865,8 +37507,8 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:159",
-    "docs/STRIX_HALO.md:241"
+    "docs/STRIX_HALO.md:166",
+    "docs/STRIX_HALO.md:248"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -37062,16 +37704,16 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 9651,
+     "line": 9672,
      "value": "6"
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:260",
+    "docs/AMD_HIP.md:274",
     "docs/DETAILS.md:285",
     "docs/DETAILS.md:925",
-    "docs/TROUBLESHOOTING.md:281",
+    "docs/TROUBLESHOOTING.md:288",
     "docs/UNSLOTH_Q4.md:39",
     "docs/UNSLOTH_Q4.md:179",
     "docs/bench-results/2026-10-04-community-4090-32gb-ram-512k/README.md:13",
@@ -37141,7 +37783,7 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 8229,
+     "line": 8247,
      "value": "frozenset({\"0\""
     }
    ],
@@ -37149,7 +37791,7 @@
    "doc_mentions": [
     "docs/DETAILS.md:300",
     "docs/DETAILS.md:931",
-    "docs/TROUBLESHOOTING.md:262",
+    "docs/TROUBLESHOOTING.md:269",
     "docs/UNSLOTH_Q4.md:185",
     "docs/UNSLOTH_Q4.md:236"
    ],
@@ -37268,10 +37910,10 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:603",
-    "docs/AMD_HIP.md:794",
-    "docs/AMD_HIP.md:797",
-    "docs/AMD_HIP.md:827",
+    "docs/AMD_HIP.md:617",
+    "docs/AMD_HIP.md:808",
+    "docs/AMD_HIP.md:811",
+    "docs/AMD_HIP.md:841",
     "docs/bench-results/2026-10-05-rdna2-rocblas-table/README.md:13",
     "docs/bench-results/2026-10-05-rdna2-rocblas-table/README.md:45",
     "docs/bench-results/2026-10-06-community-2x-rx-6900xt-0.1.40.1/README.md:40",
@@ -37324,7 +37966,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:795",
+    "docs/AMD_HIP.md:809",
     "docs/bench-results/2026-10-05-rdna2-rocblas-table/README.md:45"
    ],
    "first_commit": "4058aa782b",
@@ -37480,7 +38122,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:702"
+    "docs/AMD_HIP.md:716"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -37761,7 +38403,7 @@
     },
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1886,
+     "line": 1908,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -37796,12 +38438,12 @@
     },
     {
      "file": "terminal/setup.py",
-     "line": 5311,
+     "line": 5329,
      "value": "\"0\""
     },
     {
      "file": "terminal/setup.py",
-     "line": 10420,
+     "line": 10441,
      "value": "0"
     },
     {
@@ -38280,9 +38922,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:301",
-    "docs/AMD_HIP.md:348",
-    "docs/AMD_HIP.md:349",
+    "docs/AMD_HIP.md:315",
+    "docs/AMD_HIP.md:362",
+    "docs/AMD_HIP.md:363",
     "docs/DETAILS.md:1472",
     "docs/bench-results/2026-10-11-gfx1100-qsa-scores/README.md:15",
     "docs/bench-results/2026-10-11-gfx1100-qsa-scores/README.md:62",
@@ -38321,7 +38963,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:351",
+    "docs/AMD_HIP.md:365",
     "docs/bench-results/2026-10-11-gfx1100-qsa-scores/README.md:34"
    ],
    "first_commit": "4058aa782b",
@@ -38599,9 +39241,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:604",
-    "docs/AMD_HIP.md:822",
-    "docs/AMD_HIP.md:907",
+    "docs/AMD_HIP.md:618",
+    "docs/AMD_HIP.md:836",
+    "docs/AMD_HIP.md:921",
     "docs/DETAILS.md:1473",
     "docs/OLDER_GPUS.md:319",
     "docs/OLDER_GPUS.md:329",
@@ -38844,13 +39486,13 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:302",
-    "docs/AMD_HIP.md:454",
+    "docs/AMD_HIP.md:316",
+    "docs/AMD_HIP.md:468",
     "docs/RADEON_780M.md:85",
     "docs/RADEON_780M.md:104",
-    "docs/STRIX_HALO.md:137",
-    "docs/STRIX_HALO.md:142",
-    "docs/STRIX_HALO.md:147",
+    "docs/STRIX_HALO.md:144",
+    "docs/STRIX_HALO.md:149",
+    "docs/STRIX_HALO.md:154",
     "docs/STRIX_HALO_WINDOWS.md:76",
     "docs/bench-results/2026-10-03-community-r9700-windows/METHOD-AND-DISCLOSURES.md:173",
     "docs/bench-results/2026-10-03-community-r9700-windows/README.md:287",
@@ -39087,7 +39729,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:273"
+    "docs/AMD_HIP.md:287"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -39180,19 +39822,19 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5031,
+     "line": 5049,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:267",
-    "docs/AMD_HIP.md:272",
-    "docs/AMD_HIP.md:285",
-    "docs/AMD_HIP.md:288",
+    "docs/AMD_HIP.md:281",
+    "docs/AMD_HIP.md:286",
+    "docs/AMD_HIP.md:299",
+    "docs/AMD_HIP.md:302",
     "docs/RADEON_780M.md:80",
-    "docs/STRIX_HALO.md:118",
-    "docs/STRIX_HALO.md:231",
+    "docs/STRIX_HALO.md:125",
+    "docs/STRIX_HALO.md:238",
     "docs/STRIX_HALO_WINDOWS.md:65",
     "docs/STRIX_HALO_WINDOWS.md:90",
     "docs/STRIX_HALO_WINDOWS.md:95",
@@ -39329,13 +39971,13 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4220,
+     "line": 4326,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1742,
+     "line": 1764,
      "backend": "cuda",
      "fn": "getenv"
     }
@@ -39346,11 +39988,11 @@
    "engine_sets": [
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1744
+     "line": 1766
     },
     {
      "file": "engine/src/poly/main.cpp",
-     "line": 1746
+     "line": 1768
     }
    ],
    "engine_defaults": [],
@@ -39746,7 +40388,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6320,
+     "line": 6381,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -39791,13 +40433,13 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6313,
+     "line": 6374,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4605,
+     "line": 4711,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -39832,13 +40474,13 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6318,
+     "line": 6379,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4608,
+     "line": 4714,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -39884,13 +40526,13 @@
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6310,
+     "line": 6371,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 4600,
+     "line": 4706,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -41887,7 +42529,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:158"
+    "docs/AMD_HIP.md:172"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -44594,7 +45236,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:310"
+    "docs/AMD_HIP.md:324"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -44636,7 +45278,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:114"
+    "docs/STRIX_HALO.md:121"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -44748,9 +45390,9 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:310",
+    "docs/AMD_HIP.md:324",
     "docs/DETAILS.md:1414",
-    "docs/TROUBLESHOOTING.md:254"
+    "docs/TROUBLESHOOTING.md:261"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -44839,7 +45481,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3570,
+     "line": 3631,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -44872,13 +45514,13 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3531,
+     "line": 3592,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3559,
+     "line": 3620,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -44915,7 +45557,7 @@
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 3561,
+     "line": 3622,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -45182,13 +45824,13 @@
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6640,
+     "line": 6701,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 6679,
+     "line": 6740,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -45200,7 +45842,7 @@
     },
     {
      "file": "engine/src/kernels/cuda/native_mmvq.cu",
-     "line": 1422,
+     "line": 1482,
      "backend": "cuda-hip",
      "fn": "getenv"
     },
@@ -45254,14 +45896,14 @@
    "launch_sets": [
     {
      "file": "terminal/setup.py",
-     "line": 5030,
+     "line": 5048,
      "value": "\"1\""
     }
    ],
    "launch_reads": [],
    "doc_mentions": [
     "docs/RADEON_780M.md:80",
-    "docs/STRIX_HALO.md:116"
+    "docs/STRIX_HALO.md:123"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -45342,7 +45984,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:31"
+    "docs/STRIX_HALO.md:38"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -45419,7 +46061,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/STRIX_HALO.md:42"
+    "docs/STRIX_HALO.md:49"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -45455,7 +46097,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/release-notes-0.2.2.md:16",
-    "docs/STRIX_HALO.md:169"
+    "docs/STRIX_HALO.md:176"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",
@@ -45534,7 +46176,7 @@
    "launch_reads": [],
    "doc_mentions": [
     "docs/QUANTS.md:139",
-    "docs/TROUBLESHOOTING.md:270",
+    "docs/TROUBLESHOOTING.md:277",
     "docs/bench-results/2026-10-01-community-rtx-5090-5950x/README.md:9",
     "docs/bench-results/2026-10-01-community-rtx-5090-5950x/README.md:15",
     "docs/bench-results/2026-10-01-community-rtx-5090-5950x/README.md:67",
@@ -46672,7 +47314,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 1010,
+     "line": 1023,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -46686,7 +47328,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:513"
+    "docs/AMD_HIP.md:527"
    ],
    "first_commit": null,
    "first_date": null,
@@ -46944,7 +47586,7 @@
    "launch_sets": [],
    "launch_reads": [],
    "doc_mentions": [
-    "docs/AMD_HIP.md:149"
+    "docs/AMD_HIP.md:163"
    ],
    "first_commit": "4058aa782b",
    "first_date": "2026-11-17",

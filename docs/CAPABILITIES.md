@@ -8,7 +8,7 @@ Those packages are the Strata project's engine for its own desktop app and Termi
 - **Supported**: what these docs commit to. *untested* means a package exists and nothing is claimed.
 - **Measured**: where numbers for that combination are published. Empty means none are published; it does not mean the combination fails.
 
-App and Terminal 0.2.17, Control and engines 0.1.63; these packages stay at 0.1.59: DeepSeek engines linux-x86_64-cuda-cuda13, linux-x86_64-hip-rx9070, macos-arm64-metal, windows-x86_64-cuda-cuda13, windows-x86_64-hip-rdna3. App, Control and engine versions differ on purpose.
+App and Terminal 0.2.18, Control and engines 0.1.64; these packages stay at 0.1.59: DeepSeek engines linux-x86_64-cuda-cuda13, linux-x86_64-hip-rx9070, macos-arm64-metal, windows-x86_64-cuda-cuda13, windows-x86_64-hip-rdna3. App, Control and engine versions differ on purpose.
 
 ## At a glance
 
