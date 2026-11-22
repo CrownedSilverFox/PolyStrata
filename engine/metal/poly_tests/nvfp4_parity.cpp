@@ -1,8 +1,10 @@
 // NVFP4 on strata-poly's Metal quant layer against the CPU reference (src/quant's dequant_row), on random blocks: the
-// decoders to the bit, every scale code among them, and the products to float rounding.
+// decoders to the bit, every scale code among them, and the products to float rounding; and the experts' global
+// scales (ExpertScales) as CUDA's activations and expert_weights() put them on.
 #include "test_utils.hpp"
 #include "strata/kernels/native_mmvq.hpp"
 #include "strata/quant/dequant.hpp"
+#include "strata/poly/kernels.hpp"
 #include "mmq.hpp"
 #include "../src/poly/quantized.hpp"
 #include "strata/gpu/metal.hpp"
@@ -109,6 +111,38 @@ int main(){
                 bad+=compare(y.read(rows*no),product(read_rows({2,0,3,1}),experts,{1,3,0,2}),label,1e-4f);
             }
         }
+    }
+    // the global scales: scale_expert_rows (out of place and in place, by ids and by e[]) to the bit, the activations
+    // to float rounding (CUDA's kernels.cu: gate and up times their scales first), expert_weights to the bit
+    {
+        const int n=73,rows=5,experts=6;const float limit=1.2f;
+        auto gu=values(rows*2*n,3);std::vector<float> gs(experts),us(experts);
+        for(int e=0;e<experts;++e){gs[e]=.5f+.1f*e;us[e]=1.5f-.15f*e;}
+        std::vector<int32_t> ids={3,0,5,1,3};
+        Buffer dgu(gu),dgs(gs),dus(us),di(rows*4),out(rows*2*n*4),act(rows*n*4);di.put(ids.data(),rows*4);
+        for(int mode=0;mode<3;++mode){   // gate and up by ids, by e[], gate alone by ids
+            p::ExpertScales sc;sc.gate=dgs.as();sc.up=mode<2?dus.as():nullptr;
+            if(mode==1)std::copy(ids.begin(),ids.end(),sc.e);else sc.ids=di.as<int32_t>();
+            std::vector<float> scaled(gu.size());
+            for(int r=0;r<rows;++r)for(int i=0;i<2*n;++i)scaled[r*2*n+i]=gu[r*2*n+i]*(i<n?gs[ids[r]]:sc.up?us[ids[r]]:1.f);
+            const char* how[]={"by ids","by e[]","gate only"};char label[96];
+            p::scale_expert_rows(dgu.as(),out.as(),n,rows,&sc,stream);ck(g::stream_synchronize(stream));
+            std::snprintf(label,sizeof label,"scaled rows, %s",how[mode]);bad+=same_bits(out.read(gu.size()),scaled,label);
+            std::vector<float> ref(rows*n);
+            for(int r=0;r<rows;++r)for(int i=0;i<n;++i){float g=std::min(scaled[r*2*n+i],limit),u=std::clamp(scaled[r*2*n+n+i],-limit,limit);ref[r*n+i]=g/(1+std::exp(-g))*u;}
+            p::swiglu_clamp_rows(dgu.as(),act.as(),n,rows,limit,stream,&sc);ck(g::stream_synchronize(stream));
+            std::snprintf(label,sizeof label,"swiglu_clamp_rows, %s",how[mode]);bad+=compare(act.read(rows*n),ref,label);
+            for(int r=0;r<rows;++r)for(int i=0;i<n;++i){float g=scaled[r*2*n+i],u=scaled[r*2*n+n+i];ref[r*n+i]=.5f*g*(1+std::tanh(.7978845608028654f*g*(1+.044715f*g*g)))*u;}
+            p::geglu_rows(dgu.as(),act.as(),n,rows,stream,&sc);ck(g::stream_synchronize(stream));
+            std::snprintf(label,sizeof label,"geglu_rows, %s",how[mode]);bad+=compare(act.read(rows*n),ref,label);
+            out.put(gu.data(),gu.size()*4);p::scale_expert_rows(out.as(),out.as(),n,rows,&sc,stream);ck(g::stream_synchronize(stream));
+            std::snprintf(label,sizeof label,"scaled rows in place, %s",how[mode]);bad+=same_bits(out.read(gu.size()),scaled,label);
+        }
+        p::scale_expert_rows(dgu.as(),out.as(),n,rows,nullptr,stream);ck(g::stream_synchronize(stream));
+        bad+=same_bits(out.read(gu.size()),gu,"no scales: a copy");
+        auto w=values(rows,.1f);Buffer dw(w);std::vector<float> wref(rows);for(int r=0;r<rows;++r)wref[r]=w[r]*gs[ids[r]];
+        p::expert_weights(dw.as(),dgs.as(),di.as<int32_t>(),rows,stream);ck(g::stream_synchronize(stream));
+        bad+=same_bits(dw.read(rows),wref,"expert_weights");
     }
     p::metal_detail::allow_mm_rows(true);
     ck(g::stream_destroy(stream));return bad?1:0;

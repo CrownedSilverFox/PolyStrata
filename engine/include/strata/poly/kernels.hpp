@@ -226,6 +226,11 @@ struct ExpertScales {
     const int32_t* ids = nullptr;
     int32_t e[32] = {};
 };
+/// Metal's (CUDA's activations put the scales on themselves): rows that each hold n gate values and then n up values
+/// into out, each row's gate and up values times its ExpertScales as above, the same floats as CUDA's activations
+/// take; out may be gate_up.  Without scales (null, or neither): a copy, nothing in place.  For a Metal activation's
+/// rows ahead of it (situ_rows).
+void scale_expert_rows(const float* gate_up, float* out, int n, int rows, const ExpertScales* scales, void* stream);
 /// swiglu_clamp for rows that each hold n gate values and then n up values; out has n values a row.
 void swiglu_clamp_rows(const float* gate_up, float* out, int n, int rows, float limit, void* stream,
                        const ExpertScales* scales = nullptr);
