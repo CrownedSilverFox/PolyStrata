@@ -42,8 +42,6 @@ template <typename T> T* up(const std::vector<T>& v) {
     return d;
 }
 
-const char* name_of(int t) { return t == 8 ? "Q8_0" : t == 12 ? "Q4_K" : t == 13 ? "Q5_K" : t == 14 ? "Q6_K" : "?"; }
-
 // random bytes with sane fp16 scales where each format keeps them: Q8_0's d at a 32-value block's start, Q4_K's and
 // Q5_K's d and dmin at a 256-value block's start, Q6_K's d at its end
 void* random_weights(int type, int n_in, int n_out) {
