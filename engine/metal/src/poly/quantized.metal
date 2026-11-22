@@ -70,6 +70,22 @@ struct dot_iq2_s {
         return dl*(signed_grid8(g1,signs[0],xv)+signed_grid8(g2,signs[1],xv+8));
     }
 };
+struct dot_iq1_s {   // dl (grid + 1) + ml: dl (the grid's sum) + (dl + ml) xs
+    enum { kSum=1 };
+    static float run(device const block_iq1_s* b,short il,thread const float* xv,float xs) {
+        const int ib32=il/2,h=il%2;
+        device const uint8_t* qs=b->qs+4*ib32+2*h;
+        const uint16_t qh=b->qh[ib32];
+        const float dl=float(b->d)*(2*((qh>>12)&7)+1);
+        const float ml=dl*(qh&0x8000?-1-IQ1S_DELTA:-1+IQ1S_DELTA);
+        const uint16_t hh=qh>>6*h;
+        const uint2 g1=as_type<uint2>(iq1s_grid[qs[0]|((hh<<8)&0x700)]),g2=as_type<uint2>(iq1s_grid[qs[1]|((hh<<5)&0x700)]);
+        const char4 c0=as_type<char4>(g1.x),c1=as_type<char4>(g1.y),c2=as_type<char4>(g2.x),c3=as_type<char4>(g2.y);
+        float s=0;
+        for(int j=0;j<4;++j) s+=float(c0[j])*xv[j]+float(c1[j])*xv[4+j]+float(c2[j])*xv[8+j]+float(c3[j])*xv[12+j];
+        return dl*s+(dl+ml)*xs;
+    }
+};
 // A threadgroup is a SIMD group of NR outputs, the rows' values read once for them: 4 where a launch has 8,192 outputs
 // or more (qrun() in quantized.cpp), else 1 (poly_mul_<type>_1).  Its 32 lanes take 16 values at a time, 512 apart.
 template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),typename Dot,int NR>
@@ -150,8 +166,8 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
     M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
 #define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) \
-    M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
-    M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
+    M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) \
+    M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
