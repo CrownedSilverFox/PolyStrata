@@ -6,6 +6,7 @@
 // q81_div(): a block's scale divided as native_mmvq.cu's --use_fast_math division does it (q8_1_finite.hpp)
 #define STRATA_Q81_FASTMATH_DIV 1
 #include "inkling2_kernels.hpp"
+#include "strata/kernels/pdl.hpp"
 #include "strata/kernels/q8_1_finite.hpp"
 
 #include "strata/poly/kernels.hpp"
@@ -23,6 +24,9 @@ namespace strata::poly {
 namespace {
 
 inline cudaStream_t cs(void* s) { return (cudaStream_t) s; }
+using strata::kernels::launch_pdl;
+using strata::kernels::pdl_trigger;
+using strata::kernels::pdl_wait;
 inline int grid(size_t n, int per) { return (int) ((n + (size_t) per - 1) / (size_t) per); }
 
 // A launch the driver refused leaves its error for whoever asks next: ask here, so that it names its kernel.
@@ -363,7 +367,11 @@ __device__ __forceinline__ void mix_any(const MixArgs& a, int n_embd) {
 }
 
 template <int NS, int NQ>
-__global__ void __launch_bounds__(kMixThreads) ink_mix_kernel(MixArgs a, int n_embd) { mix_any<NS, NQ>(a, n_embd); }
+__global__ void __launch_bounds__(kMixThreads) ink_mix_kernel(MixArgs a, int n_embd) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
+    mix_any<NS, NQ>(a, n_embd);
+}
 
 constexpr int kMixJobs = 12;
 struct MixMany {
@@ -373,6 +381,8 @@ struct MixMany {
 // blockIdx.y the job
 template <int NS, int NQ>
 __global__ void __launch_bounds__(kMixThreads) ink_mix_many_kernel(MixMany m, int n_embd) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     mix_any<NS, NQ>(m.j[blockIdx.y], n_embd);
 }
 
@@ -401,14 +411,14 @@ void launch_mix(int n, int nq, dim3 grid, cudaStream_t s, Args... args) {
 template <int NS, int NQ>
 struct MixOne {
     static void launch(dim3 grid, cudaStream_t s, const MixArgs& a, int n_embd) {
-        ink_mix_kernel<NS, NQ><<<grid, kMixThreads, 0, s>>>(a, n_embd);
+        launch_pdl(ink_mix_kernel<NS, NQ>, dim3(grid), dim3(kMixThreads), 0, s, a, n_embd);
     }
 };
 
 template <int NS, int NQ>
 struct MixJobs {
     static void launch(dim3 grid, cudaStream_t s, const MixMany& m, int n_embd) {
-        ink_mix_many_kernel<NS, NQ><<<grid, kMixThreads, 0, s>>>(m, n_embd);
+        launch_pdl(ink_mix_many_kernel<NS, NQ>, dim3(grid), dim3(kMixThreads), 0, s, m, n_embd);
     }
 };
 
@@ -424,7 +434,7 @@ constexpr int kCatThreads = 256;   // ink_cat_norm_kernel's block
 
 // Thread tid's shares of the squares of a row of cur and of msg, in ink_cat_norm_kernel's block: every
 // kCatThreads-th value from tid.
-__device__ __forceinline__ void cat_squares(const float* __restrict__ cur, const float* __restrict__ msg, int n_embd,
+__device__ __forceinline__ void cat_squares(const float* cur, const float* msg, int n_embd,
                                             int tid, float& a, float& b) {
     a = 0.0f, b = 0.0f;
     for (int i = tid; i < n_embd; i += kCatThreads) {
@@ -470,11 +480,13 @@ constexpr int kDownThreads = 512;   // ink_ctrl_down_kernel's block: half of gem
 // its threads t and t + 512, warps w and w + 16, and the 32 warps' sums are added in their order.  The same bits,
 // and with half the threads a block, a launch's 3 * 64 blocks are one wave on the card.
 __global__ void __launch_bounds__(kDownThreads) ink_ctrl_down_kernel(CtrlDown d, int n_embd, int rank) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     __shared__ float pa[kCatThreads / WARP], pb[kCatThreads / WARP], part[32];
     const int j = blockIdx.x / rank, o = blockIdx.x % rank, tid = threadIdx.x;
     const size_t row = size_t(blockIdx.y) * n_embd;
-    const float* __restrict__ cur = d.cur[j] + row;
-    const float* __restrict__ msg = d.msg[j] + row;
+    const float* cur = d.cur[j] + row;
+    const float* msg = d.msg[j] + row;
     if (tid < kCatThreads) {
         float a, b;
         cat_squares(cur, msg, n_embd, tid, a, b);
@@ -533,8 +545,8 @@ __global__ void ink_gate_kernel(GateSet s, size_t n) {
 }
 
 // Token t's convolved value of channel c (ink_conv()).
-__device__ __forceinline__ float conv_value(const float* __restrict__ x, const float* __restrict__ state,
-                                            const float* __restrict__ w, const float* __restrict__ dyn, int channels,
+__device__ __forceinline__ float conv_value(const float* x, const float* state, const float* __restrict__ w,
+                                            const float* dyn, int channels,
                                             int heads, int taps, int t, int c, float norm) {
     float past[8];   // past[k]: the input k tokens back
     for (int k = 0; k < taps; ++k) {
@@ -552,7 +564,7 @@ __device__ __forceinline__ float conv_value(const float* __restrict__ x, const f
 }
 
 // Channel c's state after a call of `rows` tokens: the last taps - 1 inputs, oldest first.
-__device__ __forceinline__ void conv_state_at(const float* __restrict__ x, float* state, int channels, int taps,
+__device__ __forceinline__ void conv_state_at(const float* x, float* state, int channels, int taps,
                                               int rows, int c) {
     const int keep = taps - 1;
     for (int k = 0; k < keep; ++k) {
@@ -616,9 +628,11 @@ __global__ void ink_head_rms_kernel(float* x, int dim, int heads, float eps) {
     rms_head(x + size_t(blockIdx.x) * dim, dim, eps, part);
 }
 
-__global__ void ink_conv_add_kernel(const float* __restrict__ x, float* state, const float* __restrict__ w,
+__global__ void ink_conv_add_kernel(const float* x, float* state, const float* __restrict__ w,
                                     float* __restrict__ out, float* acc, float* keep, float a, int mode, int channels,
                                     int taps, float norm) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (c >= channels) return;
     const float y = conv_value(x, state, w, nullptr, channels, 1, taps, 0, c, norm);
@@ -632,10 +646,12 @@ __global__ void ink_conv_add_kernel(const float* __restrict__ x, float* state, c
     }
 }
 
-__global__ void ink_moe_conv_add_kernel(const float* __restrict__ x, const float* __restrict__ w,
-                                        const float* __restrict__ scale, const int* __restrict__ ids, int n_used,
+__global__ void ink_moe_conv_add_kernel(const float* x, const float* w, const float* __restrict__ scale,
+                                        const int* ids, int n_used,
                                         float* fo, float* state, const float* __restrict__ cw, float* __restrict__ out,
                                         float* acc, float a, int channels, int taps, float norm) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= channels) return;
     float s = 0.0f;
@@ -657,6 +673,8 @@ struct QkvArgs {
 
 // ink_qkv(): blocks [0, n_head) Q's heads, then K's n_kv, V's n_kv, and the relative positions' n_head; 128 threads.
 __global__ void ink_qkv_kernel(QkvArgs g) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     __shared__ float part[128 / WARP];
     const InkQkv& a = g.a;
     const long long p = a.at ? a.at[0] : (long long) a.pos;
@@ -739,6 +757,8 @@ __device__ __forceinline__ void lane_halves(const __half* head, int lane, int n,
 // their products with the queries are summed across the warp.  The bias's products are the first n_rel lanes'.
 // t0 is the launch's first token among the call's, nk_max the scores a head has room for.
 __global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     __shared__ float qs[kMaxPer * 128];
     __shared__ float rs[kMaxPer * 32];
     __shared__ float sinks[kMaxPer];
@@ -797,6 +817,8 @@ __global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
 // A token's head a block: the scores' softmax with its extra term of score 0.  The scores become the weights'
 // numerators (exp against the largest), and norm gets what they are divided by, a token's head each.
 __global__ void ink_softmax_kernel(InkAttn a, int t0, int nk_max, float* norm) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     __shared__ float part[kAttnThreads / WARP];
     const int tt = blockIdx.x / a.n_head, h = blockIdx.x % a.n_head, t = t0 + tt, tid = threadIdx.x;
     const long long p = a.at ? a.at[2 * t] : a.pos + t;
@@ -820,6 +842,8 @@ __global__ void ink_softmax_kernel(InkAttn a, int t0, int nk_max, float* norm) {
 // as the score kernel reads a key; a lane holds one of the warp's weights, a head and a key each.  The warps'
 // sums are added in their order.
 __global__ void ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, int n_parts) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     extern __shared__ float sums[];   // a warp's, a head of the group: dim
     const int per = a.n_head / a.n_kv, lh = a.dim / 32;
     const int tt = blockIdx.x / a.n_kv, g = blockIdx.x % a.n_kv, t = t0 + tt;
@@ -877,8 +901,9 @@ __global__ void ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, in
 }
 
 // A token's head a block: its parts added in their order, over its softmax's norm.
-__global__ void ink_join_kernel(InkAttn a, int t0, const float* __restrict__ parts, int n_parts,
-                                const float* __restrict__ norm) {
+__global__ void ink_join_kernel(InkAttn a, int t0, const float* parts, int n_parts, const float* norm) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     const int tt = blockIdx.x / a.n_head, h = blockIdx.x % a.n_head, t = t0 + tt;
     const float inv = 1.0f / norm[blockIdx.x];
     const float* pt = parts + size_t(blockIdx.x) * n_parts * a.dim;
@@ -900,8 +925,10 @@ __device__ __forceinline__ float2 situ_scales(const ExpertScales& s, int row) {
 }
 
 // with q8: the rows also quantized, back to back as one vector (n a multiple of 32: a warp's values are a block)
-__global__ void situ_rows_kernel(const float* __restrict__ gate_up, float* __restrict__ out, int n, float beta,
+__global__ void situ_rows_kernel(const float* gate_up, float* __restrict__ out, int n, float beta,
                                  float lb, ExpertScales s, QB* q8) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     const float* row = gate_up + size_t(blockIdx.y) * 2 * n;
@@ -925,6 +952,8 @@ struct Control3 {
 
 // a warp value i of the three controllers: 6 products of rank values (gemv_set_warp_kernel's), then the gates
 __global__ void ink_control3_gate_kernel(Control3 c, int n, int rank) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     const int i = int(blockIdx.x) * 8 + int(threadIdx.x >> 5), lane = threadIdx.x & 31;
     if (i >= n) return;
     float g[3], f[3];
@@ -959,8 +988,10 @@ struct NormMany {
 
 // rms_norm_many_kernel's row (blockIdx.y the input), each value also quantized
 __global__ void ink_norm_many_q8_kernel(NormMany m, int n, float eps) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     __shared__ float part[32];
-    const float* __restrict__ xr = m.x[blockIdx.y];
+    const float* xr = m.x[blockIdx.y];
     const float* __restrict__ w = m.w[blockIdx.y];
     float* yr = m.y[blockIdx.y];
     float ss = 0.0f;
@@ -975,9 +1006,11 @@ __global__ void ink_norm_many_q8_kernel(NormMany m, int n, float eps) {
 }
 
 // ink_gate_kernel's values of one row, then add_rms_q8() of them
-__global__ void ink_gate_norm_q8_kernel(const float* cur, const float* __restrict__ msg, const float* __restrict__ gain,
-                                        const float* __restrict__ forget, float* out, const float* __restrict__ w,
+__global__ void ink_gate_norm_q8_kernel(const float* cur, const float* msg, const float* gain, const float* forget,
+                                        float* out, const float* __restrict__ w,
                                         float* y, QB* q, int n, float eps) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
     __shared__ float part[32];
     for (int i = threadIdx.x; i < n; i += blockDim.x) {
         const float c = cur[i];
@@ -996,7 +1029,7 @@ void ink_norm_many_q8(const float* const* x, const float* const* w, float* const
         m.y[j] = y[j];
         m.q[j] = (QB*) q8[j];
     }
-    ink_norm_many_q8_kernel<<<dim3(1, count), sum_threads(n), 0, cs(stream)>>>(m, n, eps);
+    launch_pdl(ink_norm_many_q8_kernel, dim3(1, count), dim3(sum_threads(n)), 0, cs(stream), m, n, eps);
     launched("ink_norm_many_q8");
 }
 
@@ -1005,7 +1038,8 @@ void ink_gate_norm_q8(const float* cur, const float* msg, const float* gain, con
     const int threads = sum_threads(n);
     if (n % 32 != 0 || threads != std::min(1024, std::max(threads, n)))   // add_rms_norm_q8_1's block is this one
         throw std::invalid_argument("ink_gate_norm_q8: not add_rms_norm_q8_1's block");
-    ink_gate_norm_q8_kernel<<<1, threads, 0, cs(stream)>>>(cur, msg, gain, forget, out, w, y, (QB*) q8, n, eps);
+    launch_pdl(ink_gate_norm_q8_kernel, dim3(1), dim3(threads), 0, cs(stream), cur, msg, gain, forget, out, w, y,
+               (QB*) q8, n, eps);
     launched("ink_gate_norm_q8");
 }
 
@@ -1085,7 +1119,7 @@ bool ink_ctrl_down(const float* const* cur, const float* const* msg, const float
         d.w[j] = down[j];
         d.y[j] = ch[j];
     }
-    ink_ctrl_down_kernel<<<dim3(count * rank, rows), kDownThreads, 0, cs(stream)>>>(d, n_embd, rank);
+    launch_pdl(ink_ctrl_down_kernel, dim3(count * rank, rows), dim3(kDownThreads), 0, cs(stream), d, n_embd, rank);
     launched("ink_ctrl_down");
     return true;
 }
@@ -1128,8 +1162,8 @@ void ink_conv_add(const float* x, float* state, const float* w, float* out, floa
                   int channels, int taps, void* stream) {
     if (taps < 2 || taps > 8) throw std::invalid_argument("ink_conv_add: 2 to 8 taps");
     const float norm = 1.0f / std::sqrt((float) (taps + 1));
-    ink_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, state, w, out, acc, keep, a, mode,
-                                                                            channels, taps, norm);
+    launch_pdl(ink_conv_add_kernel, dim3(grid((size_t) channels, 256)), dim3(256), 0, cs(stream), x, state, w, out,
+               acc, keep, a, mode, channels, taps, norm);
     launched("ink_conv_add");
 }
 
@@ -1138,8 +1172,8 @@ void ink_moe_conv_add(const float* x, const float* w, const float* scale, const 
                       void* stream) {
     if (taps < 2 || taps > 8) throw std::invalid_argument("ink_moe_conv_add: 2 to 8 taps");
     const float norm = 1.0f / std::sqrt((float) (taps + 1));
-    ink_moe_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, w, scale, ids, n_used, fo, state, cw,
-                                                                                out, acc, a, channels, taps, norm);
+    launch_pdl(ink_moe_conv_add_kernel, dim3(grid((size_t) channels, 256)), dim3(256), 0, cs(stream), x, w, scale, ids,
+               n_used, fo, state, cw, out, acc, a, channels, taps, norm);
     launched("ink_moe_conv_add");
 }
 
@@ -1148,7 +1182,7 @@ void ink_qkv(const InkQkv& a, void* stream) {
         throw std::invalid_argument("ink_qkv: heads of up to 128 values, 2 to 8 taps");
     QkvArgs g{a, 1.0f / std::sqrt((float) ((a.kdyn ? 2 : 1) * a.taps + 1)),
               1.0f / std::sqrt((float) ((a.vdyn ? 2 : 1) * a.taps + 1))};
-    ink_qkv_kernel<<<2 * a.n_head + 2 * a.n_kv, 128, 0, cs(stream)>>>(g);
+    launch_pdl(ink_qkv_kernel, dim3(2 * a.n_head + 2 * a.n_kv), dim3(128), 0, cs(stream), g);
     launched("ink_qkv");
 }
 
@@ -1216,14 +1250,15 @@ void ink_attend(const InkAttn& a, void* stream) {
     float* parts = norm + (size_t) chunk * a.n_head;
     for (int t0 = 0; t0 < a.rows; t0 += chunk) {
         const int m = std::min(chunk, a.rows - t0);
-        ink_score_kernel<<<dim3(m * a.n_kv, score_blocks), kScoreWarps * 32, 0, cs(stream)>>>(a, t0, nk_max);
+        launch_pdl(ink_score_kernel, dim3(m * a.n_kv, score_blocks), dim3(kScoreWarps * 32), 0, cs(stream), a, t0,
+                   nk_max);
         launched("ink_score");
-        ink_softmax_kernel<<<m * a.n_head, kAttnThreads, 0, cs(stream)>>>(a, t0, nk_max, norm);
+        launch_pdl(ink_softmax_kernel, dim3(m * a.n_head), dim3(kAttnThreads), 0, cs(stream), a, t0, nk_max, norm);
         launched("ink_softmax");
-        ink_value_kernel<<<dim3(m * a.n_kv, n_parts), warps * 32, (size_t) warps * group * a.dim * sizeof(float),
-                           cs(stream)>>>(a, t0, nk_max, parts, n_parts);
+        launch_pdl(ink_value_kernel, dim3(m * a.n_kv, n_parts), dim3(warps * 32),
+                   (size_t) warps * group * a.dim * sizeof(float), cs(stream), a, t0, nk_max, parts, n_parts);
         launched("ink_value");
-        ink_join_kernel<<<m * a.n_head, 128, 0, cs(stream)>>>(a, t0, parts, n_parts, norm);
+        launch_pdl(ink_join_kernel, dim3(m * a.n_head), dim3(128), 0, cs(stream), a, t0, parts, n_parts, norm);
         launched("ink_join");
     }
 }
@@ -1241,7 +1276,7 @@ void ink_control3_gate(const float* const* cur, const float* const* msg, const f
         c.fw[j] = forget_w[j];
         c.out[j] = out[j];
     }
-    ink_control3_gate_kernel<<<(n + 7) / 8, 256, 0, cs(stream)>>>(c, n, rank);
+    launch_pdl(ink_control3_gate_kernel, dim3((n + 7) / 8), dim3(256), 0, cs(stream), c, n, rank);
     launched("ink_control3_gate");
 }
 
@@ -1249,9 +1284,8 @@ void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, fl
                const ExpertScales* scales) {
     if (rows <= 0) return;
     if (q8 && n % 32 != 0) throw std::invalid_argument("situ_rows: quantized rows of a multiple of 32");
-    situ_rows_kernel<<<dim3(grid((size_t) n, 256), rows), 256, 0, cs(stream)>>>(gate_up, out, n, beta, lb,
-                                                                                scales ? *scales : ExpertScales{},
-                                                                                (QB*) q8);
+    launch_pdl(situ_rows_kernel, dim3(grid((size_t) n, 256), rows), dim3(256), 0, cs(stream), gate_up, out, n, beta, lb,
+               scales ? *scales : ExpertScales{}, (QB*) q8);
     launched("situ_rows");
 }
 

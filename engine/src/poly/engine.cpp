@@ -22,6 +22,7 @@
 #include "strata/gpu/metal.hpp"
 #endif
 #include "strata/kernels/native_mmvq.hpp"
+#include "strata/kernels/pdl.hpp"
 #include "strata/platform/memory.hpp"
 
 #include "gguf_types.hpp"
@@ -6471,9 +6472,11 @@ void Engine::run(const int32_t* tokens, int n) {
                 return [&, count] {
                     struct Whole {
                         bool& on;
-                        ~Whole() { on = false; }
-                    } whole_rec{whole_rec_};
+                        bool pdl;
+                        ~Whole() { on = false, kernels::pdl_scope() = pdl; }
+                    } whole_rec{whole_rec_, kernels::pdl_scope()};
                     whole_rec_ = true;
+                    kernels::pdl_scope() = whole_pdl();
                     for (int done = 0; il < hi_ && done < count; il = next_layer(il), ++done) {
                         Layer& L = layers_[(size_t) il];
                         layer_head(L, il, n);
