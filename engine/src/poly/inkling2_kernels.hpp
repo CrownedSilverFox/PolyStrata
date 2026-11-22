@@ -70,8 +70,10 @@ void ink_gate(const float* cur, const float* msg, const float* gain, const float
 /// norm = 1 / sqrt((dyn ? 2 : 1) * taps + 1).  w is [taps] a channel; dyn (null: none) is taps * heads a token, a
 /// channel's head being its place in channels / heads.  `state` holds the taps - 1 inputs before the first token,
 /// oldest first, a row of channels each, and is left holding the last taps - 1 of this call's.  out is not x.
+/// With snap, the state after each token t of the call that snap_bits names (bit t) also goes to snap, the j-th such
+/// state at snap + j * snap_stride floats (a window's snapshots: Engine::snap_at_).
 void ink_conv(const float* x, float* state, const float* w, const float* dyn, float* out, int channels, int heads,
-              int taps, int rows, void* stream);
+              int taps, int rows, void* stream, float* snap = nullptr, size_t snap_stride = 0, unsigned snap_bits = 0);
 
 /// One token's ink_conv() (no dyn, one head) and its state, out written, then the stream acc updated: mode 0
 /// acc = acc + out * a (axpy()), mode 1 keep = acc and then acc = out, mode 2 acc = out.  The same bits.

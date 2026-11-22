@@ -30,10 +30,11 @@ void Inkling2::load_geometry() {
     auto need = [](bool ok, const char* what) {
         if (!ok) throw std::runtime_error(std::string("unsupported model: ") + what);
     };
-    // The file has no block that guesses ahead, and the layers leave no state to go back to after a wrong guess:
-    // a token at a time.
-    opt_.window = 1;
+    // The file has no block that guesses ahead.  A window's tokens leave their convolutions' states for keep() to go
+    // back to (snap_of()); a token at a time unless --window asks for more: guesses from repeats of the
+    // conversation wrote 1.8% slower after a short prompt that had few (RTX 5090, UD-Q4_K_XL, --window 4).
     opt_.draft = false;
+    if (opt_.window == 0) opt_.window = 1;
     need(opt_.batch == 0, "Inkling 2 runs one sequence (--batch is not supported for it yet)");
     need(opt_.layer_split.empty(), "Inkling 2 runs on one card (--layer-split is not supported for it yet)");
     need(opt_.kv_format == KvFmt::kFp16, "Inkling 2's attention caches are fp16");
@@ -554,8 +555,10 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         c.ring = B.swa ? ring_ : 0;
         ink_qkv(c, st_);
     } else {
-        ink_conv(kraw_, past_k(S), fp(B.k_conv), kd, k_, kv, n_kv_, taps_, n, st_);
-        ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_);
+        ink_conv(kraw_, past_k(S), fp(B.k_conv), kd, k_, kv, n_kv_, taps_, n, st_, snap_of(past_k(S)), rec_n_,
+                 snap_bits_);
+        ink_conv(vraw_, past_v(S), fp(B.v_conv), vd, v_, kv, n_kv_, taps_, n, st_, snap_of(past_v(S)), rec_n_,
+                 snap_bits_);
         ink_clip(q_, fp(B.q_clip), qk_clip_, head_dim_, n_head_, n, pos_, alpha, log_floor_, st_, at);
         ink_clip(k_, nullptr, qk_clip_, head_dim_, n_kv_, n, pos_, 0.f, 1.f, st_);
         ink_head_rms(v_, head_dim_, n_kv_, n, rms_eps_, st_);
@@ -619,7 +622,8 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
                      n_embd_, taps_, st_);
         dbg("attn", il, ao_, n_embd_);
     } else {
-        ink_conv(aoraw_, past_a(S), fp(B.a_conv), nullptr, ao_, n_embd_, 1, taps_, n, st_);
+        ink_conv(aoraw_, past_a(S), fp(B.a_conv), nullptr, ao_, n_embd_, 1, taps_, n, st_, snap_of(past_a(S)), rec_n_,
+                 snap_bits_);
         dbg("attn", il, ao_, n_embd_);
         if (il % blk_ == 0) {
             if (!(il == core_start_ && looped)) copy_rows(r_, bl_[il / blk_], n);
@@ -658,7 +662,8 @@ void Inkling2::layer_tail(Layer&, int il, int n) {
         ink_conv_add(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), fc_, r_, nullptr, 1.f, 0, n_embd_, taps_, st_);
         return;
     }
-    ink_conv(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), nullptr, fc_, n_embd_, 1, taps_, n, st_);
+    ink_conv(fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), nullptr, fc_, n_embd_, 1, taps_, n, st_,
+             snap_of(past_f(S)), rec_n_, snap_bits_);
     axpy(fc_, 1.f, r_, n * n_embd_, true, st_);
 }
 

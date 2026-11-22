@@ -98,6 +98,8 @@ private:
     float* past_v(const Slot& s) const { return s.past + (size_t) (taps_ - 1) * n_kv_ * head_dim_; }
     float* past_a(const Slot& s) const { return s.past + (size_t) (taps_ - 1) * 2 * n_kv_ * head_dim_; }
     float* past_f(const Slot& s) const { return past_a(s) + (size_t) (taps_ - 1) * n_embd_; }
+    /// Where a window's first snapshot of the state at `past` goes (snap_at_ at its place in state_), or null.
+    float* snap_of(const float* past) const { return snap_bits_ ? snap_at_ + (past - state_) : nullptr; }
     InkStates streams_of(int blocks, size_t at) const;
     /// Launches on side_ from here run beside the stream's, after what the stream has so far.
     void fork();
