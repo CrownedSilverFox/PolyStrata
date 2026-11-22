@@ -550,6 +550,9 @@ protected:
     }
     /// The shared expert, into fo_.  It runs on the GPU while the host routes.
     virtual void moe_shared(const Layer& L, int il, int n) = 0;
+    /// False: run() launches moe_shared() as it is where it replays a layer's other launches (Layer::shared stays
+    /// empty), for a family whose shared expert is a launch or two that a graph launch costs the host more than.
+    virtual bool shared_recorded() const { return true; }
     /// True: moe_card() leaves the routed experts' sum (d_ weighted by d_wts_, onto fo_) of a call of n tokens to the
     /// family, which folds it into what follows (Inkling 2's layer_tail()), and sets moe_left_.  The weights are then
     /// still to be multiplied by moe_left_scale_[id] where that is set (expert_weights()'s product).
