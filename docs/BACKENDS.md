@@ -2133,7 +2133,7 @@ It was measured with 6,144 MiB on files with 6 to 12 GiB of experts outside VRAM
 Under a budget the cache still swaps experts into VRAM while an answer is written, 64 at a time by default as
 without one (`--expert-swaps`). A swap reads its expert from the pool or the disk, as the CPU's misses do, but with
 none the cache stays as it was loaded while the answer moves on, and the misses go to the CPU, which under a budget
-reads many of them from the disk. On lab-241's RTX 4090 D, `--tail-skip 0`, the same `--ram-experts-mib` and
+reads many of them from the disk. On an RTX 4090 D, `--tail-skip 0`, the same `--ram-experts-mib` and
 `--vram-pool` for all three, the RAM held by a systemd scope and the model's pages dropped from the file cache before
 each run: four long prompts, then two answers of 512 tokens, three runs in turn, medians and ranges in tokens/s of
 the second to fourth reads and of the answers:
@@ -2215,7 +2215,7 @@ and between requests unlocks the ones the cache has taken and locks the ones it 
 than `ulimit -l` allows; past it the engine says how much it locked, gives the limit and how to raise it, and the
 rest stay in the file cache.
 
-Measured on lab-241's RTX 4090 D held to 14 GB, Qwen3.6 UD-Q3_K_M, the engine in an 8 GiB memory scope with
+Measured on an RTX 4090 D held to 14 GB, Qwen3.6 UD-Q3_K_M, the engine in an 8 GiB memory scope with
 `ulimit -l 8192`: before, it locked none of the 3.2 GiB of experts outside VRAM, and once another process in the
 scope had taken its memory and let it go the engine held 0.85 of its 4.19 GiB and read a 4,833-token prompt at 2,183
 tokens/s where the one before read at 4,039. With the pinned copy it pinned 3.3 GiB, held its 4.63 GiB through the
@@ -2230,7 +2230,7 @@ the few picks it lacks from that copy itself; the other way, each MoE layer wait
 which routes the token. Which costs less depends on the bus and the host, so the engine measures both at the load,
 for one answer at a time (no `--batch`): the card's copy speed times what the cache lacks of the expert profile's
 picks, against one round trip per MoE layer. It takes the cheaper way and its start line gives the numbers; with no
-profile it routes on the host, as 0.1.45-poly.10 did. On lab-241's RTX 4090 D (PCIe 4.0 x8: 12.6 GB/s, round trips of
+profile it routes on the host, as 0.1.45-poly.10 did. On an RTX 4090 D (PCIe 4.0 x8: 12.6 GB/s, round trips of
 11 to 12 µs), Qwen3.6 UD-Q3_K_M took the host with 92% to 97.2% of the picks cached and the card with 98.8%; forced
 the other way in an earlier build, the card wrote 10 to 30% slower at 92% and no slower at 98.8%.
 `STRATA_POLY_CARD_FAR=1` forces the card, any other value the host.

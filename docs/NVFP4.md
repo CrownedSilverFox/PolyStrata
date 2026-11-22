@@ -202,7 +202,7 @@ too small for the blocks' E4M3 scales, and llama.cpp multiplies the product by t
 - Not built: Metal (no NVFP4 kernels); HIP (no NVFP4 prompt product, the batch goes through the decode kernels; not
   run here).
 
-Measured on lab-pro6000 (RTX PRO 6000 Blackwell Server Edition, sm_120, other users' jobs on the same card), with
+Measured on an RTX PRO 6000 Blackwell Server Edition (sm_120, other users' jobs on the same card), with
 `WhiskyAKM/LFM2.5-24B-A2B-NVFP4-GGUF` (every matrix NVFP4, no global scales).
 
 `poly_expert_parity`: every product against a double-precision one over ggml's dequantized weights. All of them
