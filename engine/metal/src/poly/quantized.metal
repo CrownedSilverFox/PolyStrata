@@ -206,7 +206,9 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     device const uchar* x=a.kind==8 || a.kind==9
         ? static_cast<device const uchar*>(a.p[3*(a.kind==8?row:mj)+1])
         : static_cast<device uchar*>(a.p[1])+ulong(xrow/a.every)*a.xstride;
-    const int o0=int(gx)*NR,nr=min(NR,no-o0);   // fewer in the last group
+    // fewer in the last group; one a constant, so its loops are straight code (counted at run time, dense matrices
+    // were 3-15% slower than before the 4)
+    const int o0=int(gx)*NR,nr=NR==1?1:min(NR,no-o0);
     const ulong per=a.ni/QK;
     device const Block* weights=reinterpret_cast<device const Block*>(w)+ulong(o0)*per;
     float acc[NR]={};
