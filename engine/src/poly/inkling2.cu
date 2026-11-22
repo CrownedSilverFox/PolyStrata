@@ -50,6 +50,10 @@ __device__ __forceinline__ float warp_max(float x) {
     return x;
 }
 
+// A controller's weight: F32, or BF16 (STRATA_INK_CTRL=bf16) widened as bf16_to_f32() does it.
+__device__ __forceinline__ float wval(const float* w, size_t i) { return w[i]; }
+__device__ __forceinline__ float wval(const uint16_t* w, size_t i) { return __uint_as_float(uint32_t(w[i]) << 16); }
+
 struct QB {   // a q8_1 block, as native_quantize_q8_1() writes it
     half2 ds;
     int8_t qs[32];
@@ -496,7 +500,7 @@ __global__ void ink_cat_norm_kernel(CatNormSet s, int n_embd) {
 struct CtrlDown {
     const float* cur[kSet];
     const float* msg[kSet];
-    const float* w[kSet];   // [2 * n_embd] an output
+    const void* w[kSet];   // [2 * n_embd] an output, F32 or BF16
     float* y[kSet];
 };
 
@@ -508,6 +512,7 @@ constexpr int kDownThreads = 512;   // ink_ctrl_down_kernel's block: half of gem
 // product is gemv_set_kernel's block of 1024 threads (2 * n_embd values) in kDownThreads: thread t has the sums of
 // its threads t and t + 512, warps w and w + 16, and the 32 warps' sums are added in their order.  The same bits,
 // and with half the threads a block, a launch's 3 * 64 blocks are one wave on the card.
+template <typename W>
 __global__ void __launch_bounds__(kDownThreads) ink_ctrl_down_kernel(CtrlDown d, int n_embd, int rank) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -528,16 +533,16 @@ __global__ void __launch_bounds__(kDownThreads) ink_ctrl_down_kernel(CtrlDown d,
     for (int k = 0; k < kCatThreads / WARP; ++k) sa += pa[k];
     for (int k = 0; k < kCatThreads / WARP; ++k) sb += pb[k];
     const float ia = cat_scale(sa, n_embd), ib = cat_scale(sb, n_embd);
-    const float* __restrict__ wr = d.w[j] + size_t(o) * 2 * n_embd;
+    const W* __restrict__ wr = static_cast<const W*>(d.w[j]) + size_t(o) * 2 * n_embd;
     const int n_in = 2 * n_embd;
     float acc0 = 0.0f, acc1 = 0.0f;   // gemv_set_kernel's threads tid and tid + kDownThreads
     for (int i = tid; i < n_in; i += 2 * kDownThreads) {
         const float x0 = i < n_embd ? cur[i] * ia : msg[i - n_embd] * ib;
-        acc0 += wr[i] * x0;
+        acc0 += wval(wr, i) * x0;
         const int i1 = i + kDownThreads;
         if (i1 < n_in) {
             const float x1 = i1 < n_embd ? cur[i1] * ia : msg[i1 - n_embd] * ib;
-            acc1 += wr[i1] * x1;
+            acc1 += wval(wr, i1) * x1;
         }
     }
     acc0 = warp_sum(acc0);
@@ -1041,12 +1046,14 @@ struct Control3 {
     const float* cur[3];
     const float* msg[3];
     const float* ch[3];
-    const float* gw[3];
-    const float* fw[3];
+    const void* gw[3];   // F32 or BF16
+    const void* fw[3];
     float* out[3];
+    int count;
 };
 
 // a warp value i of the three controllers: 6 products of rank values (gemv_set_warp_kernel's), then the gates
+template <typename W>
 __global__ void ink_control3_gate_kernel(Control3 c, int n, int rank) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -1055,12 +1062,13 @@ __global__ void ink_control3_gate_kernel(Control3 c, int n, int rank) {
     float g[3], f[3];
 #pragma unroll
     for (int j = 0; j < 3; ++j) {
-        const float* gr = c.gw[j] + size_t(i) * rank;
-        const float* fr = c.fw[j] + size_t(i) * rank;
+        if (j >= c.count) break;
+        const W* gr = static_cast<const W*>(c.gw[j]) + size_t(i) * rank;
+        const W* fr = static_cast<const W*>(c.fw[j]) + size_t(i) * rank;
         float ga = 0.0f, fa = 0.0f;
         for (int k = lane; k < rank; k += 32) {
-            ga += gr[k] * c.ch[j][k];
-            fa += fr[k] * c.ch[j][k];
+            ga += wval(gr, k) * c.ch[j][k];
+            fa += wval(fr, k) * c.ch[j][k];
         }
         g[j] = 0.0f + warp_sum(ga);
         f[j] = 0.0f + warp_sum(fa);
@@ -1068,9 +1076,11 @@ __global__ void ink_control3_gate_kernel(Control3 c, int n, int rank) {
     if (lane != 0) return;
     float cv[3];
 #pragma unroll
-    for (int j = 0; j < 3; ++j) cv[j] = c.cur[j][i];
+    for (int j = 0; j < 3; ++j)
+        if (j < c.count) cv[j] = c.cur[j][i];
 #pragma unroll
-    for (int j = 0; j < 3; ++j) c.out[j][i] = cv[j] - tanhf(f[j]) * cv[j] + tanhf(g[j]) * c.msg[j][i];
+    for (int j = 0; j < 3; ++j)
+        if (j < c.count) c.out[j][i] = cv[j] - tanhf(f[j]) * cv[j] + tanhf(g[j]) * c.msg[j][i];
 }
 
 }  // namespace
@@ -1241,8 +1251,8 @@ void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, in
     ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
 }
 
-bool ink_ctrl_down(const float* const* cur, const float* const* msg, const float* const* down, float* const* ch,
-                   int count, int n_embd, int rank, int rows, void* stream) {
+bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
+                   int count, int n_embd, int rank, int rows, void* stream, bool bf16) {
     if (count < 1 || count > kSet) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
     if (sum_threads(2 * n_embd) != 1024) return false;   // gemv_set_kernel's block is another
     if (rows <= 0) return true;
@@ -1253,7 +1263,12 @@ bool ink_ctrl_down(const float* const* cur, const float* const* msg, const float
         d.w[j] = down[j];
         d.y[j] = ch[j];
     }
-    launch_pdl(ink_ctrl_down_kernel, dim3(count * rank, rows), dim3(kDownThreads), 0, cs(stream), d, n_embd, rank);
+    if (bf16)
+        launch_pdl(ink_ctrl_down_kernel<uint16_t>, dim3(count * rank, rows), dim3(kDownThreads), 0, cs(stream), d,
+                   n_embd, rank);
+    else
+        launch_pdl(ink_ctrl_down_kernel<float>, dim3(count * rank, rows), dim3(kDownThreads), 0, cs(stream), d, n_embd,
+                   rank);
     launched("ink_ctrl_down");
     return true;
 }
@@ -1427,11 +1442,13 @@ void ink_attend(const InkAttn& a, void* stream) {
 }
 
 void ink_control3_gate(const float* const* cur, const float* const* msg, const float* const* ch,
-                       const float* const* gain_w, const float* const* forget_w, float* const* out, int n, int rank,
-                       void* stream) {
+                       const void* const* gain_w, const void* const* forget_w, float* const* out, int n, int rank,
+                       void* stream, int count, bool bf16) {
     if (rank >= 128) throw std::invalid_argument("ink_control3_gate: gemv_set() takes products this wide otherwise");
+    if (count < 1 || count > 3) throw std::invalid_argument("ink_control3_gate: 1 to 3 controllers");
     Control3 c{};
-    for (int j = 0; j < 3; ++j) {
+    c.count = count;
+    for (int j = 0; j < count; ++j) {
         c.cur[j] = cur[j];
         c.msg[j] = msg[j];
         c.ch[j] = ch[j];
@@ -1439,7 +1456,10 @@ void ink_control3_gate(const float* const* cur, const float* const* msg, const f
         c.fw[j] = forget_w[j];
         c.out[j] = out[j];
     }
-    launch_pdl(ink_control3_gate_kernel, dim3((n + 7) / 8), dim3(256), 0, cs(stream), c, n, rank);
+    if (bf16)
+        launch_pdl(ink_control3_gate_kernel<uint16_t>, dim3((n + 7) / 8), dim3(256), 0, cs(stream), c, n, rank);
+    else
+        launch_pdl(ink_control3_gate_kernel<float>, dim3((n + 7) / 8), dim3(256), 0, cs(stream), c, n, rank);
     launched("ink_control3_gate");
 }
 

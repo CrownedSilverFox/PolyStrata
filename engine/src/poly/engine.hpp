@@ -617,9 +617,11 @@ protected:
     /// The rows a call of n tokens leaves in r_, to h (pinned) for the next card's engine, which goes on from them.
     void hand_on(int64_t pos, int n, float* h);
     float* pass_rows(int n);
-    /// kGuessMat: quantized again to Q4_0, for a matrix only guesses are made with: a guess is checked, so a less
-    /// exact one costs a wrong guess now and then and no token.
+    /// kGuessMat: quantized again to guess_type_ (Q4_0, Q5_0 or IQ4_NL), for a matrix only guesses are made with: a
+    /// guess is checked, so a less exact one costs a wrong guess now and then and no token.  (Inkling 2 also reads
+    /// its attention's matrices so on a small card: inkling2.cpp.)
     enum Want { kF32, kFloatMat, kAnyMat, kGuessMat };
+    uint32_t guess_type_ = 2;   ///< kTypeQ4_0
     Dev upload(const TensorInfo* t, const std::string& name, int64_t n_in, int64_t n_out, Want want,
                float (*fix)(float) = nullptr);
     Dev upload_as(const TensorInfo* t, const std::string& name, int64_t n_in, int64_t n_out, Want want,

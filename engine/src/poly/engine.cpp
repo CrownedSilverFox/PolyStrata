@@ -2001,9 +2001,12 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
             if (p) drop_pages(p, n);
         }
     } drop{dense_ ? (const uint8_t*) home(*t).data(*t) : nullptr, bytes};
-    if (want == kGuessMat && !fix && n_in % type_block_values(kTypeQ4_0) == 0 && type_converts(t->type)) {
-        const size_t row = strata::quant::row_bytes((int) kTypeQ4_0, n_in), out = row * (size_t) n_out;
-        const Dev d{dense_ ? dense_ + dense_at_ : nullptr, kTypeQ4_0, (int) n_in, (int) n_out};
+    if (want == kGuessMat && !fix && n_in % type_block_values(guess_type_) == 0 && type_converts(t->type)) {
+        const size_t row = strata::quant::row_bytes((int) guess_type_, n_in), out = row * (size_t) n_out;
+        const Dev d{dense_ ? dense_ + dense_at_ : nullptr, guess_type_, (int) n_in, (int) n_out};
+        void (*quantize)(const float*, void*, int64_t) = guess_type_ == 6    ? strata::quant::quantize_q5_0_ref
+                                                         : guess_type_ == 20 ? strata::quant::quantize_iq4_nl_ref
+                                                                             : strata::quant::quantize_q4_0_ref;
         dense_at_ += pad(out) + kTail;
         if (!dense_) return d;
         if (dense_at_ > dense_bytes_) throw std::logic_error("the dense arena is too small for " + t->name);
@@ -2019,8 +2022,7 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
             pool.run((int) ((m + 255) / 256), [&](int k) {
                 const size_t a = (size_t) k * 256, b = std::min(m, a + 256);
                 type_to_floats(t->type, src + (r0 + a) * in_row, f.data() + a * n_in, (int64_t) ((b - a) * n_in));
-                strata::quant::quantize_q4_0_ref(f.data() + a * n_in, q.data() + (r0 + a) * row,
-                                                 (int64_t) ((b - a) * n_in));
+                quantize(f.data() + a * n_in, q.data() + (r0 + a) * row, (int64_t) ((b - a) * n_in));
             });
         }
         h2d(d.p, q.data(), out);

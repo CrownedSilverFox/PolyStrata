@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -91,6 +92,15 @@ void Inkling2::load_geometry() {
     joined_scales_ = true;
     clamp_exp_.assign((size_t) n_layer_ + 1, INFINITY);
     clamp_shexp_ = clamp_exp_;
+    // STRATA_INK_ATTN=q4_0, q5_0 or iq4_nl: the attention's six matrices quantized again to that type at load
+    // (kGuessMat), fewer bytes a token than their Q8_0
+    if (const char* v = std::getenv("STRATA_INK_ATTN")) {
+        const std::string a = v;
+        attn_type_ = a == "q4_0" ? 2 : a == "q5_0" ? 6 : a == "iq4_nl" ? 20 : 0;
+        if (attn_type_) guess_type_ = attn_type_;
+    }
+    // STRATA_INK_CTRL=bf16: the loop controllers' matrices as BF16, half the bytes of their F32
+    if (const char* v = std::getenv("STRATA_INK_CTRL")) ctrl_bf16_ = std::string(v) == "bf16";
 
     const MetaValue* pattern = find("attention.sliding_window_pattern");
     need(pattern && pattern->type == MetaType::ARRAY && (int) pattern->items.size() >= n_layer_,
@@ -444,6 +454,9 @@ void Inkling2::load_layer(int il) {
     Block& B = blocks_[(size_t) il];
     auto f32 = [&](const char* n, int64_t a, int64_t b = 1) { return upload(tensor(il, n), blk(il, n), a, b, kF32); };
     auto mat = [&](const char* n, int64_t a, int64_t b) { return upload(tensor(il, n), blk(il, n), a, b, kAnyMat); };
+    auto att = [&](const char* n, int64_t a, int64_t b) {
+        return upload(tensor(il, n), blk(il, n), a, b, attn_type_ ? kGuessMat : kAnyMat);
+    };
     const int64_t e = n_embd_, hq = (int64_t) n_head_ * head_dim_, kv = (int64_t) n_kv_ * head_dim_;
 
     if (il == 0) {
@@ -452,12 +465,12 @@ void Inkling2::load_layer(int il) {
     }
     B.swa = swa_[(size_t) il];
     L.fixed = true;    // the launches read the position on the card when they are recorded (head_key(), tail_key())
-    B.wq = mat("attn_q.weight", e, hq);
-    B.wk = mat("attn_k.weight", e, kv);
-    B.wv = mat("attn_v.weight", e, kv);
-    B.wo = mat("attn_output.weight", hq, e);
-    B.gate = mat("attn_gate.weight", e, hq);
-    B.rel = mat("attn_rel.weight", e, (int64_t) n_rel_ * n_head_);
+    B.wq = att("attn_q.weight", e, hq);
+    B.wk = att("attn_k.weight", e, kv);
+    B.wv = att("attn_v.weight", e, kv);
+    B.wo = att("attn_output.weight", hq, e);
+    B.gate = att("attn_gate.weight", e, hq);
+    B.rel = att("attn_rel.weight", e, (int64_t) n_rel_ * n_head_);
     B.sink = mat("attn_sink_proj.weight", e, n_head_);
     B.q_clip = f32("attn_q_clip.weight", head_dim_, n_head_);
     B.rel_clip = f32("attn_rel_clip.weight", n_rel_, n_head_);
@@ -486,11 +499,17 @@ void Inkling2::load_layer(int il) {
     B.ffn_norm = f32("ffn_norm.weight", e);
     if (il >= core_start_ && il < core_end_) {
         B.msg_query = f32("loop_msg_query.weight", e, kCtrl);
+        // a `fix` takes upload() past the file's F32 to the matrices' BF16
+        auto ctl = [&](const std::string& n, int64_t a, int64_t b) {
+            return ctrl_bf16_ ? upload(tensor(il, n.c_str()), blk(il, n.c_str()), a, b, kFloatMat,
+                                       [](float v) { return v; })
+                              : f32(n.c_str(), a, b);
+        };
         for (int c = 0; c < kCtrl; ++c) {
             const std::string pre = std::string("loop_") + kCtrlName[c] + "_ctrl_";
-            B.ctrl[c].down = f32((pre + "down.weight").c_str(), 2 * e, rank_);
-            B.ctrl[c].gain = f32((pre + "gain.weight").c_str(), rank_, e);
-            B.ctrl[c].forget = f32((pre + "forget.weight").c_str(), rank_, e);
+            B.ctrl[c].down = ctl(pre + "down.weight", 2 * e, rank_);
+            B.ctrl[c].gain = ctl(pre + "gain.weight", rank_, e);
+            B.ctrl[c].forget = ctl(pre + "forget.weight", rank_, e);
         }
     }
     load_moe(il, false);
@@ -670,11 +689,28 @@ void Inkling2::control(const float* cur, const float* msg, const Ctrl& c, float*
 // norm and quantization (native_add_rms_norm_q8_1()'s): the same bytes.  False, with nothing launched, where
 // control() and that norm do it.
 bool Inkling2::control_ffn(const float* msg, const Ctrl& c, const Block& B) {
+    if (c.down.type == kTypeBF16) {   // the down product, then the gate (ink_control3_gate()'s of one), then the norm
+        if (c.gain.type != kTypeBF16 || c.forget.type != kTypeBF16 || c.down.scale != 1.0f || c.gain.scale != 1.0f ||
+            c.forget.scale != 1.0f || rank_ >= 128)
+            return false;
+        const float* cur = mixf_;
+        const void* down = c.down.p;
+        float* ch = ch_;
+        if (!ink_ctrl_down(&cur, &msg, &down, &ch, 1, n_embd_, rank_, 1, st_, true)) return false;
+        const float* chs = ch_;
+        const void* g = c.gain.p;
+        const void* f = c.forget.p;
+        float* out = mixf_;
+        ink_control3_gate(&cur, &msg, &chs, &g, &f, &out, n_embd_, rank_, st_, 1, true);
+        kernels::native_add_rms_norm_q8_1(mixf_, nullptr, fp(B.ffn_norm), xn_, xq_, n_embd_, 1, rms_eps_,
+                                          sum_threads(n_embd_), st_);
+        return true;
+    }
     if (c.gain.type != kTypeF32 || c.forget.type != kTypeF32 || c.gain.scale != 1.0f || c.forget.scale != 1.0f ||
         sum_threads(n_embd_) != 1024)
         return false;
     const float* cur = mixf_;
-    const float* down = fp(c.down);
+    const void* down = fp(c.down);
     float* ch = ch_;
     if (c.down.type != kTypeF32 || c.down.scale != 1.0f ||
         !ink_ctrl_down(&cur, &msg, &down, &ch, 1, n_embd_, rank_, 1, st_)) {   // the norms and lin()'s gemv_kernel
@@ -748,29 +784,34 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
 // with nothing launched, where control() does it: a prompt batch, or matrices gemv_set() does not take.
 bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n) {
     if (n >= kStageRows) return false;
+    const bool bf = c[0].down.type == kTypeBF16;   // STRATA_INK_CTRL=bf16: a token's only, control() the others
+    if (bf && !(n == 1 && rank_ < 128)) return false;
     for (int j = 0; j < 3; ++j)
         for (const Dev* d : {&c[j].down, &c[j].gain, &c[j].forget})
-            if (d->type != kTypeF32 || d->scale != 1.0f) return false;
+            if (d->type != (bf ? kTypeBF16 : kTypeF32) || d->scale != 1.0f) return false;
     const float* m[3] = {msg[0], msg[1], msg[2]};
+    const void* down[3];
     const float* w[6];
     const float* x[6];
     float* y[6];
     int outs[6];
     for (int j = 0; j < 3; ++j) {
+        down[j] = c[j].down.p;
         w[j] = fp(c[j].down);
         x[j] = cat3_[j];
         y[j] = ch3_[j];
         outs[j] = rank_;
     }
-    if (!ink_ctrl_down(cur, m, w, y, 3, n_embd_, rank_, n, st_)) {   // the norms and the down products in one launch
+    if (!ink_ctrl_down(cur, m, down, y, 3, n_embd_, rank_, n, st_, bf)) {   // the norms and the down products in one launch
+        if (bf) return false;
         ink_cat_norm_set(cur, m, cat3_, 3, n_embd_, n, st_);
         gemv_set(w, x, y, outs, 3, 2 * n_embd_, n, st_);
     }
     if (n == 1 && rank_ < 128) {   // the gain and forget products and the gates in one launch
         const float* ch[3] = {ch3_[0], ch3_[1], ch3_[2]};
-        const float* gw[3] = {fp(c[0].gain), fp(c[1].gain), fp(c[2].gain)};
-        const float* fw[3] = {fp(c[0].forget), fp(c[1].forget), fp(c[2].forget)};
-        ink_control3_gate(cur, m, ch, gw, fw, out, n_embd_, rank_, st_);
+        const void* gw[3] = {c[0].gain.p, c[1].gain.p, c[2].gain.p};
+        const void* fw[3] = {c[0].forget.p, c[1].forget.p, c[2].forget.p};
+        ink_control3_gate(cur, m, ch, gw, fw, out, n_embd_, rank_, st_, 3, bf);
         return true;
     }
     for (int j = 0; j < 3; ++j) {

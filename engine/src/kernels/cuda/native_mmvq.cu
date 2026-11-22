@@ -4153,8 +4153,10 @@ bool native_mmvq_pair(int ggml_type, const void* w1, const void* w2, const void*
 }
 
 bool native_mmvq_many_fits(int ggml_type, const NativeMmvqMany& m, int n_in) {
-    // where small_mmvq<Q80Block, 8> runs native_small_mmvq_kernel<Q80Block, 8, false> for one column
-    if (ggml_type != 8 || m.count < 1 || m.count > 8 || n_in <= 0 || n_in % 32 != 0 || n_in / 32 < 2 * WARPS * WARP / 8)
+    // where small_mmvq<Q80Block, 8> runs native_small_mmvq_kernel<Q80Block, 8, false> for one column, or Q4_0's, Q5_0's
+    // and IQ4_NL's small_mmvq<..., 4> theirs
+    const int qi = ggml_type == 8 ? 8 : ggml_type == 2 || ggml_type == 6 || ggml_type == 20 ? 4 : 0;
+    if (qi == 0 || m.count < 1 || m.count > 8 || n_in <= 0 || n_in % 32 != 0 || n_in / 32 < 2 * WARPS * WARP / qi)
         return false;
 #if defined(STRATA_HIP_GFX906)
     if (!g_wave_off) return false;
@@ -4176,8 +4178,14 @@ void native_mmvq_many(int ggml_type, const NativeMmvqMany& m, int n_in, void* st
         a.first[j + 1] = a.first[j] + m.n_out[j];
     }
     for (int j = m.count; j < 8; ++j) a.first[j + 1] = a.first[m.count];
-    native_small_mmvq_many_kernel<Q80Block, 8><<<unsigned(a.first[m.count]), dim3(WARP, WARPS), 0,
-                                                 static_cast<cudaStream_t>(stream)>>>(a, n_in);
+    const dim3 grid(unsigned(a.first[m.count])), threads(WARP, WARPS);
+    const auto s = static_cast<cudaStream_t>(stream);
+    switch (ggml_type) {
+    case 2: native_small_mmvq_many_kernel<Q40Block, 4><<<grid, threads, 0, s>>>(a, n_in); break;
+    case 6: native_small_mmvq_many_kernel<Q50Block, 4><<<grid, threads, 0, s>>>(a, n_in); break;
+    case 20: native_small_mmvq_many_kernel<IQ4NLBlock, 4><<<grid, threads, 0, s>>>(a, n_in); break;
+    default: native_small_mmvq_many_kernel<Q80Block, 8><<<grid, threads, 0, s>>>(a, n_in); break;
+    }
     launch_check();
 }
 

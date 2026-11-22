@@ -46,18 +46,18 @@ void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* c
                       int rows, void* stream);
 /// ink_cat_norm_set() and then gemv_set() of each pair with its controller's F32 down matrix (rank outputs of
 /// 2 * n_embd values) into ch[j], in one launch with the same bits.  False, with nothing launched, where gemv_set()
-/// would run another block.
-bool ink_ctrl_down(const float* const* cur, const float* const* msg, const float* const* down, float* const* ch,
-                   int count, int n_embd, int rank, int rows, void* stream);
+/// would run another block.  With bf16 the matrices are BF16 (STRATA_INK_CTRL=bf16).
+bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
+                   int count, int n_embd, int rank, int rows, void* stream, bool bf16 = false);
 
 /// ink_gate() of 1 to 3 controllers in one launch.  Every cur is read before any out is written, so an out may be
 /// any of the cur.
-/// One token's three controllers after their down products: value i's gain and forget (gemv_set()'s, rank values
-/// wide, rank under 128) and its gate (ink_gate()), a warp a value for the three, in one launch with the same bits.
-/// Every cur is read before an out is written.
+/// One token's three controllers (or `count`) after their down products: value i's gain and forget (gemv_set()'s,
+/// rank values wide, rank under 128) and its gate (ink_gate()), a warp a value for the three, in one launch with the
+/// same bits.  Every cur is read before an out is written.  With bf16 the matrices are BF16.
 void ink_control3_gate(const float* const* cur, const float* const* msg, const float* const* ch,
-                       const float* const* gain_w, const float* const* forget_w, float* const* out, int n, int rank,
-                       void* stream);
+                       const void* const* gain_w, const void* const* forget_w, float* const* out, int n, int rank,
+                       void* stream, int count = 3, bool bf16 = false);
 void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,
                   const float* const* forget, float* const* out, int count, size_t n, void* stream);
 
