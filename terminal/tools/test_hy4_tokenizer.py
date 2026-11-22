@@ -194,8 +194,12 @@ class RealTemplate(unittest.TestCase):
         self.assertIn("reasoning_effort:max", out)
 
     def test_a_bad_effort_is_a_template_error(self):
-        with self.assertRaises(Exception):
-            self.tpl.render([{"role": "user", "content": "x"}], reasoning_effort="medium")
+        with self.assertRaises(Exception):                 # the template itself takes no_think | high | max only
+            self.tpl.template.render(messages=[{"role": "user", "content": "x"}], add_generation_prompt=True, reasoning_effort="medium")
+
+    def test_render_clamps_a_client_effort_first(self):
+        out = self.tpl.render([{"role": "user", "content": "x"}], reasoning_effort="medium")
+        self.assertIn("reasoning_effort:high", out)
 
 
 if __name__ == "__main__":
