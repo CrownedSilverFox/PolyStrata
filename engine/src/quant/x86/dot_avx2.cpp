@@ -12,6 +12,80 @@ namespace avx2 {
 #include "x86_helpers.inc"
 #include "x86_dots.inc"
 
+// ---- IQ1_S x Q8_K in AVX2 (ported from the Inkling 2 engine of PR #200, src/poly/cpu_lowbit.cpp) ----
+
+// dot_iq1_s_q8_K (ggml's AVX2 kernel, above) with its scalar parts done in vectors, the same integers and the same
+// float steps, written as it writes them:
+//   * the 32 grid indices of a block, qs[k] | ((qh[k / 4] >> 3 (k % 4)) & 7) << 8, as 16-bit lanes at once (left
+//     shifts by multiplies: qh << 8, << 5, << 2 by mullo, qh >> 1 by mulhi), then read out for the table loads (scalar
+//     loads: AVX2's gathers took 1.25x as long on Zen 2);
+//   * sumi1, the delta term: sum over the 8 groups of (bsums[2g] + bsums[2g + 1]) * (+-1) * ls, one madd of the
+//     bsums, one product with the signed scales and a sum, the exact integer of the scalar loop.
+void dot_iq1_s_q8_K_vidx(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT vx, const void* STRATA_RESTRICT vy) {
+    assert(n % QK_K == 0);
+    const block_iq1_s* STRATA_RESTRICT x = (const block_iq1_s*) vx;
+    const block_q8_K* STRATA_RESTRICT y = (const block_q8_K*) vy;
+    const int nb = n / QK_K;
+    // a group's qh four times: 16-bit lane k of the 16 holds qh[k / 4] (one half of the block's 8 groups)
+    const __m256i rep4 = _mm256_setr_epi8(0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3,
+                                          4, 5, 4, 5, 4, 5, 4, 5, 6, 7, 6, 7, 6, 7, 6, 7);
+    const __m256i mul_lo = _mm256_setr_epi16(256, 32, 4, 0, 256, 32, 4, 0, 256, 32, 4, 0, 256, 32, 4, 0);
+    const __m256i mul_hi = _mm256_setr_epi16(0, 0, 0, -32768, 0, 0, 0, -32768, 0, 0, 0, -32768, 0, 0, 0, -32768);
+    const __m256i m700 = _mm256_set1_epi16(0x700);
+    __m256 accum = _mm256_setzero_ps();
+    float accum1 = 0;
+    for (int i = 0; i < nb; ++i) {
+        const int8_t* STRATA_RESTRICT q8 = y[i].qs;
+        const uint16_t* STRATA_RESTRICT qh = x[i].qh;
+        alignas(32) uint16_t idx[32];
+        {
+            const __m128i qh8 = _mm_loadu_si128((const __m128i*) qh);   // the 8 groups' qh
+            const __m256i h0 = _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(qh8), rep4);   // groups 0..3
+            const __m256i h1 = _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(_mm_srli_si128(qh8, 8)), rep4);
+            const __m256i q0 = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*) x[i].qs));
+            const __m256i q1 = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*) (x[i].qs + 16)));
+            const __m256i i0 = _mm256_or_si256(
+                q0, _mm256_and_si256(_mm256_or_si256(_mm256_mullo_epi16(h0, mul_lo), _mm256_mulhi_epu16(h0, mul_hi)), m700));
+            const __m256i i1 = _mm256_or_si256(
+                q1, _mm256_and_si256(_mm256_or_si256(_mm256_mullo_epi16(h1, mul_lo), _mm256_mulhi_epu16(h1, mul_hi)), m700));
+            _mm256_store_si256((__m256i*) idx, i0);
+            _mm256_store_si256((__m256i*) (idx + 16), i1);
+        }
+        __m256i sumi = _mm256_setzero_si256();
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC unroll 4
+#endif
+        for (int ib = 0; ib < QK_K / 32; ib += 2) {
+            const uint16_t* id = idx + 4 * ib;
+            const __m256i q1b_1 = _mm256_set_epi64x(iq1s_grid[id[3]], iq1s_grid[id[2]], iq1s_grid[id[1]], iq1s_grid[id[0]]);
+            const __m256i q1b_2 = _mm256_set_epi64x(iq1s_grid[id[7]], iq1s_grid[id[6]], iq1s_grid[id[5]], iq1s_grid[id[4]]);
+            const __m256i q8b_1 = _mm256_loadu_si256((const __m256i*) (q8 + 32 * ib));
+            const __m256i q8b_2 = _mm256_loadu_si256((const __m256i*) (q8 + 32 * ib + 32));
+            const __m256i dot1 = mul_add_epi8(q1b_1, q8b_1);
+            const __m256i dot2 = mul_add_epi8(q1b_2, q8b_2);
+            const int16_t ls1 = 2 * ((qh[ib + 0] >> 12) & 7) + 1;
+            const int16_t ls2 = 2 * ((qh[ib + 1] >> 12) & 7) + 1;
+            const __m256i p1 = _mm256_madd_epi16(dot1, _mm256_set1_epi16(ls1));
+            const __m256i p2 = _mm256_madd_epi16(dot2, _mm256_set1_epi16(ls2));
+            sumi = _mm256_add_epi32(sumi, _mm256_add_epi32(p1, p2));
+        }
+        int sumi1;
+        {
+            const __m256i gs = _mm256_madd_epi16(_mm256_loadu_si256((const __m256i*) y[i].bsums), _mm256_set1_epi16(1));
+            const __m256i h = _mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i*) qh));
+            const __m256i ls = _mm256_add_epi32(_mm256_slli_epi32(_mm256_and_si256(_mm256_srli_epi32(h, 12), _mm256_set1_epi32(7)), 1),
+                                                _mm256_set1_epi32(1));
+            const __m256i sl = _mm256_sign_epi32(ls, _mm256_sub_epi32(_mm256_set1_epi32(1), _mm256_slli_epi32(_mm256_srli_epi32(h, 15), 1)));
+            sumi1 = hsum_i32_8(_mm256_mullo_epi32(gs, sl));
+        }
+        // the float steps of dot_iq1_s_q8_K, as it writes them (so they contract as its own do under any compiler)
+        const float d = y[i].d * h2f(x[i].d);
+        accum = _mm256_fmadd_ps(_mm256_set1_ps(d), _mm256_cvtepi32_ps(sumi), accum);
+        accum1 += d * sumi1;
+    }
+    *s = hsum_float_8(accum) + IQ1S_DELTA * accum1;
+}
+
 // dot_iq3_xxs_q8_K for R activation rows at once.  A block's grid values, signs and scales are looked up once for
 // all of them, and each row's terms, integer sums and float sums are the one-row function's in the same order, so
 // s[r] is its bits.  The lookups were most of that function's time: 226 ns a row of 2,048 on lab-pro6000's cores.
@@ -288,12 +362,14 @@ DotRowsFn avx2_dot_rows(Type w) noexcept {
 }
 
 namespace {
+// A type with two kernels of one ISA lists the one dot_kernel() picks first; the other stays listed so quant_bench and quant_selftest compare
+// the two (IQ1_S: ggml's port, the bits both give).
 #define ENTRY(T, ACT, NAME) {avx2::dot_##NAME, Type::T, Type::ACT, Arith::Avx2, Isa::Avx2, "avx2_" #NAME}
 const DotKernel kTable[] = {
     ENTRY(Q4_0, Q8_0, q4_0_q8_0),   ENTRY(Q4_1, Q8_1, q4_1_q8_1),   ENTRY(Q5_0, Q8_0, q5_0_q8_0),   ENTRY(Q5_1, Q8_1, q5_1_q8_1),
     ENTRY(Q8_0, Q8_0, q8_0_q8_0),   ENTRY(IQ4_NL, Q8_0, iq4_nl_q8_0), ENTRY(MXFP4, Q8_0, mxfp4_q8_0), ENTRY(NVFP4, Q8_0, nvfp4_q8_0),
     ENTRY(Q2_K, Q8_K, q2_K_q8_K),   ENTRY(Q3_K, Q8_K, q3_K_q8_K),   ENTRY(Q4_K, Q8_K, q4_K_q8_K),   ENTRY(Q5_K, Q8_K, q5_K_q8_K),
-    ENTRY(Q6_K, Q8_K, q6_K_q8_K),   ENTRY(IQ1_S, Q8_K, iq1_s_q8_K),  ENTRY(IQ1_M, Q8_K, iq1_m_q8_K),  ENTRY(IQ2_XXS, Q8_K, iq2_xxs_q8_K),
+    ENTRY(Q6_K, Q8_K, q6_K_q8_K),   ENTRY(IQ1_S, Q8_K, iq1_s_q8_K_vidx), ENTRY(IQ1_S, Q8_K, iq1_s_q8_K),  ENTRY(IQ1_M, Q8_K, iq1_m_q8_K),  ENTRY(IQ2_XXS, Q8_K, iq2_xxs_q8_K),
     ENTRY(IQ2_XS, Q8_K, iq2_xs_q8_K), ENTRY(IQ2_S, Q8_K, iq2_s_q8_K), ENTRY(IQ3_XXS, Q8_K, iq3_xxs_q8_K), ENTRY(IQ3_S, Q8_K, iq3_s_q8_K),
     ENTRY(IQ4_XS, Q8_K, iq4_xs_q8_K),
     {generic::dot_q2_0_q8_0_generic, Type::Q2_0, Type::Q8_0, Arith::Avx2, Isa::Scalar, "avx2_q2_0_generic"},
