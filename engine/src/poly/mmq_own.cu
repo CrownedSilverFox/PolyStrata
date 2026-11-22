@@ -78,14 +78,25 @@ int block_values(int t) {
 }
 
 // values of a row the kernel reads at a time: whole superblocks of 256, or blocks of 128 for the two types that have them
+// NVFP4 rows of whole 128s and not 256s (Inkling 2's downs, K = 1,152) go in 128-value tiles, decoded in shared
+// memory as the 256-value ones are, where they went to a dequantized copy and cuBLAS; STRATA_POLY_NV4_TILE=0: the copy
+bool nv4_off() {
+    static const bool off = [] {
+        const char* v = std::getenv("STRATA_POLY_NV4_TILE");
+        return v && v[0] == '0';
+    }();
+    return off;
+}
+
 bool whole_tiles(int t, int64_t cols) {
-    if (t == 42 || (t == 20 && cols % 256 != 0)) return cols % 128 == 0;
+    if (t == 40 && cols % 256 != 0 && nv4_off()) return false;
+    if (t == 42 || ((t == 20 || t == 40) && cols % 256 != 0)) return cols % 128 == 0;
     return cols % 256 == 0;
 }
 
 // shared memory of a block (the kernel's own sum: BN weight rows of WK + 8 halves, BM = 64 rows of XK + 8 = 136)
 size_t tile_bytes(int t, int64_t cols) {
-    const int wk = (t == 42 || (t == 20 && cols % 256 != 0)) ? 128 : 256;
+    const int wk = (t == 42 || ((t == 20 || t == 40) && cols % 256 != 0)) ? 128 : 256;
     return (size_t) kTileRows * (wk + 8) * 2 + (size_t) 64 * (128 + 8) * 2;
 }
 
