@@ -26,6 +26,7 @@
 // On an RTX 50 card (STRATA_PREFILL_NVFP4 unset or w4a4x2): an NVFP4 matrix with rows of a multiple of 128 values goes to the
 // block-scaled FP4 tensor cores instead, the activations two FP4 terms under a float a row (nvfp4_x2.hpp, about 8
 // bits against a half's 11), its products straight to dst's rows and its rows read by index as the int8 ones are.
+// NVFP4 takes the int8 kernel only with STRATA_PREFILL_NVFP4=w4a8 (nvfp4_w4a8()), on any card that has it.
 #include "mmq.hpp"
 #if STRATA_POLY_X2
 #include "nvfp4_x2.hpp"
@@ -153,8 +154,8 @@ bool by_blas(int t, int64_t rows, int64_t cols) {
 }
 
 // The two-term FP4 products for an NVFP4 matrix of rows this long, on a card that has them: the default, and what
-// STRATA_PREFILL_NVFP4=w4a4x2 names; any other value (fp16, w4a8, w4a4, off) keeps the halves.  Inkling 2 Mini
-// UD-Q4_K_XL on the RTX 5090, following the halves' greedy answers (8 prompts of 19 to 10,124 tokens, 256 tokens each):
+// STRATA_PREFILL_NVFP4=w4a4x2 names; w4a8 asks for the int8 kernel (int8_rows()) and any other value (fp16, w4a4,
+// off) keeps the halves.  Inkling 2 Mini UD-Q4_K_XL on the RTX 5090, following the halves' greedy answers (8 prompts of 19 to 10,124 tokens, 256 tokens each):
 // the same most likely token at 98.5% of the steps (95.3% to 100% a prompt), against 100% for the halves run again.
 bool x2_rows(int t, int64_t cols) {
 #if STRATA_POLY_X2
@@ -223,9 +224,21 @@ __global__ void finish_rows(const float* __restrict__ y, int64_t ldy, const int3
     for (int c = threadIdx.x; c < cols; c += blockDim.x) out[c] = src[c] * b;
 }
 
+// STRATA_PREFILL_NVFP4=w4a8: an NVFP4 matrix goes to the int8 kernel where the card has it, its weights exact as int8
+// codes times a float a 16 values and the activations int8 with a scale per 32 values, as every other type there (and
+// as llama.cpp's NVFP4 tiles take them off RTX 50).  Otherwise NVFP4 keeps the halves (and RTX 50 its FP4 products):
+// the int8 activations keep about 8 bits of a value where the halves keep 11.
+bool nvfp4_w4a8() {
+    static const bool asked = [] {
+        const char* v = std::getenv("STRATA_PREFILL_NVFP4");
+        return v && std::string(v) == "w4a8";
+    }();
+    return asked;
+}
+
 // the int8 kernel takes a matrix of this type with rows this long, whatever their number
 bool int8_rows(int t, int64_t cols) {
-    return !blas_only() && cols <= 0x7fffffff && kernels::gemm_iq_i8_takes(t, (int) cols);
+    return !blas_only() && cols <= 0x7fffffff && (t != 40 || nvfp4_w4a8()) && kernels::gemm_iq_i8_takes(t, (int) cols);
 }
 
 // the rows' halves, then a float a row (back)

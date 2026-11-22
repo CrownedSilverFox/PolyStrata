@@ -2,11 +2,11 @@
 // (gemm_iq_i8_grouped, declared in include/strata/kernels/iq_kernels.hpp), for a matrix of any size.  Included once by
 // i8_mma.cu inside its anonymous namespace, after i8_expert.cuh: a weight sub-block is decoded by that file's
 // i8_load / i8_pack / i8_convert (32 values as 8 words of int8, their integer scales and float base), or read by the
-// loaders here and decoded by i8_pack / i8_convert, Q3_K, Q2_K, IQ1_S and MXFP4 by the decoders here.  CUDA only, Ampere and newer: mma.sync
+// loaders here and decoded by i8_pack / i8_convert, Q3_K, Q2_K, IQ1_S, MXFP4 and NVFP4 by the decoders here.  CUDA only, Ampere and newer: mma.sync
 // m16n8k32 and m16n8k16 with s8 operands; Turing when asked (gemm_iq_i8_turing()), by m8n8k16.
 //
 // A block: WR = 64 weight rows of one matrix x up to 16 NJ of its activation rows (blockIdx.y walks a matrix's rows
-// in such chunks).  K goes in stages of 256 values; a type of 32-value blocks (MXFP4's too) may end inside the last one
+// in such chunks).  K goes in stages of 256 values; a type of 32-value blocks (MXFP4's too; NVFP4: 64) may end inside the last one
 // (gemm_iq_i8_takes()).  Per stage every thread decodes 8 WR / NT sub-blocks of one weight row (NT threads, 256 or
 // 512: i8m_threads()) into shared memory, the stage's activations are copied beside them, and a warp multiplies 16
 // weight rows with its tiles of 8 activation rows: one MMA per 32 values, or per 16 for a type with a scale per 16.
@@ -24,9 +24,9 @@
 constexpr int I8M_NT = 256;
 constexpr int I8M_LD = 68;   // words of a shared row of codes: 64 + 4, so the 8 rows a warp reads at once lie in 8 banks
 
-#define STRATA_I8M_TYPES(X) X(2) X(6) X(7) X(8) X(10) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(19) X(39) X(42)
-__host__ __device__ constexpr bool i8m_type(int t) { return t == 10 || t == 11 || t == 19 || t == 39 || i8_block_bytes(t) != 0; }
-__host__ __device__ constexpr bool i8m_two(int t) { return t == 10 || t == 11 || i8_two_scales(t); }   // a scale per 16 values
+#define STRATA_I8M_TYPES(X) X(2) X(6) X(7) X(8) X(10) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(19) X(39) X(40) X(42)
+__host__ __device__ constexpr bool i8m_type(int t) { return t == 10 || t == 11 || t == 19 || t == 39 || t == 40 || i8_block_bytes(t) != 0; }
+__host__ __device__ constexpr bool i8m_two(int t) { return t == 10 || t == 11 || t == 40 || i8_two_scales(t); }   // a scale per 16 values
 __host__ __device__ constexpr bool i8m_min16(int t) { return t == 10; }   // and a minimum per 16 values (Q2_K)
 
 // Bytes of a weight row's stage (256 values) as stored.  The block copies a stage's rows as they are, coalesced, into
@@ -302,7 +302,37 @@ __device__ __forceinline__ void i8m_mxfp4_convert(const uint32_t (&r)[I8M_MXFP4_
     const uint32_t e = r[4];
     f0 = __uint_as_float(e < 2 ? 0x00200000u << e : (e - 1u) << 23);   // 2^(e - 128), as ggml's E8M0 halved (e 0 and 1 subnormal)
 }
-template <int T> constexpr int I8M_RAW = T == 11 ? I8M_Q3K_RAW : T == 10 ? I8M_Q2K_RAW : T == 19 ? I8M_IQ1S_RAW : T == 39 ? I8M_MXFP4_RAW : I8NR<T>;   // words a thread reads for a sub-block
+// NVFP4 (64 values a block, 36 bytes: 4 UE4M3 scales, then 32 code bytes), sub-block ib (0..7) of stage S of the row:
+// half (ib & 1) of block 4 S + ib / 2, its 16-value parts 2 (ib & 1) and 2 (ib & 1) + 1.  Part p keeps its codes in
+// bytes 8 p .. 8 p + 7: byte j holds value j (low nibble) and value j + 8 (high).  A code is an E2M1 value doubled
+// (0, 1, 2, 3, 4, 6, 8, 12 and their negatives: kvalues_fp4), and the part's scale is its UE4M3 halved, so a weight is
+// exact as int8 code times a float scale a 16 values.  The words as they are read: the half's 4 code words, the scales.
+constexpr int I8M_NV4_RAW = 5;
+__device__ __forceinline__ void i8m_nvfp4_load(I8P row, int S, int ib, uint32_t (&r)[I8M_NV4_RAW]) {
+    I8P b = row + (size_t) (4 * S + (ib >> 1)) * 36;
+#pragma unroll
+    for (int k = 0; k < 4; ++k) r[k] = i8_ldw(b + 4 + 16 * (ib & 1) + 4 * k);
+    r[4] = i8_ldw(b);
+}
+// UE4M3 halved, as iq_kernels.cu's ue4m3_to_f32_half (the decode kernels' and ggml's value; 0 and 0x7F give 0)
+__device__ __forceinline__ float i8m_ue4m3_half(uint32_t x) {
+    x &= 0x7Fu;
+    if (x == 0 || x == 0x7F) return 0.0f;
+    const uint32_t exp = (x >> 3) & 0xF, man = x & 0x7;
+    return exp == 0 ? (float) man * 0.0009765625f : __uint_as_float(((exp + 119u) << 23) | (man << 20));
+}
+__device__ __forceinline__ void i8m_nvfp4_convert(const uint32_t (&r)[I8M_NV4_RAW], int ib, const uint32_t (&kv)[4], uint32_t (&q)[8],
+                                                  float& f0, float& f1) {
+    // per 16-value part: words 0 and 1 hold values 0-3 / 8-11 and 4-7 / 12-15 in their low / high nibbles
+    i8_table16(r[0], kv, q[0], q[2]);
+    i8_table16(r[1], kv, q[1], q[3]);
+    i8_table16(r[2], kv, q[4], q[6]);
+    i8_table16(r[3], kv, q[5], q[7]);
+    const uint32_t sh = 16u * (uint32_t) (ib & 1);
+    f0 = i8m_ue4m3_half(r[4] >> sh);
+    f1 = i8m_ue4m3_half(r[4] >> (sh + 8));
+}
+template <int T> constexpr int I8M_RAW = T == 11 ? I8M_Q3K_RAW : T == 10 ? I8M_Q2K_RAW : T == 19 ? I8M_IQ1S_RAW : T == 39 ? I8M_MXFP4_RAW : T == 40 ? I8M_NV4_RAW : I8NR<T>;   // words a thread reads for a sub-block
 // The sub-blocks of a stage a thread decodes, of its weight row (RT threads a row, 8 / RT sub-blocks each): r0, r0 + RT,
 // ..., so that the threads of a row read their sub-blocks side by side; for Q3_K, Q6_K and IQ4_XS two that share most of
 // what they read (Q3_K's code and high-bit words and scales, Q6_K's high bits and low bits: 0 and 2, 1 and 3, ...;
@@ -445,6 +475,8 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
         kv[0] = 0xFBFAF9F8u; kv[1] = 0xFFFEFDFCu; kv[2] = 0x03020100u; kv[3] = 0x07060504u;
     } else if constexpr (T == 39) {   // MXFP4: kvalues_mxfp4, 0 1 2 3 4 6 8 12, then 0 -1 -2 -3 -4 -6 -8 -12
         kv[0] = 0x03020100u; kv[1] = 0x0C080604u; kv[2] = 0xFDFEFF00u; kv[3] = 0xF4F8FAFCu;
+    } else if constexpr (T == 40) {   // NVFP4: kvalues_fp4, 0 1 2 3 4 6 8 12, then 0 -1 -2 -3 -4 -6 -8 -12
+        kv[0] = 0x03020100u; kv[1] = 0x0C080604u; kv[2] = 0xFDFEFF00u; kv[3] = 0xF4F8FAFCu;
     }
     if (tid < MT) s_id[tid] = tid < ntok ? (ids ? ids[c0 + tid] : c0 + tid) : -1;
 
@@ -524,6 +556,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                 else if constexpr (T == 23) i8m_iq4xs_load(blob + row_off, S, ib, wraw[part]);
                 else if constexpr (T == 19) i8m_iq1s_load(blob + row_off, S, ib, wraw[part]);
                 else if constexpr (T == 39) i8m_mxfp4_load(blob + row_off, S, ib, wraw[part]);
+                else if constexpr (T == 40) i8m_nvfp4_load(blob + row_off, S, ib, wraw[part]);
                 else i8_load<T>(blob, i8_offs<T>(row_off, ib & 3), 2 * S + (ib >> 2), wraw[part]);
             }
         }
@@ -576,6 +609,8 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                     i8m_iq1s_convert(wraw[part], grid_rd, q, f0);
                 } else if constexpr (T == 39) {
                     i8m_mxfp4_convert(wraw[part], kv, q, f0);
+                } else if constexpr (T == 40) {
+                    i8m_nvfp4_convert(wraw[part], ib, kv, q, f0, f1);
                 } else {
                     uint32_t w[I8NW<T>];
                     int m0, m1;

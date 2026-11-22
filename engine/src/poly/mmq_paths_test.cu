@@ -9,7 +9,8 @@
 // beforehand (Mmq::give(), as Engine::alloc() does): the same numbers, made in those buffers.  Where the path reads
 // rows by index (Mmq::reads_by_index()), the experts' product from rows quantized once and read by index is the one
 // from the same rows gathered by ids, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
-// (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.
+// (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.  With
+// STRATA_PREFILL_NVFP4=w4a8 NVFP4 takes the int8 tiles where the card has them, and is checked as the int8 types are.
 // IQ1_S and MXFP4 take the int8 tiles only where an engine asks for them (gemm_iq_i8_allow(), as Inkling 2 does), so the test
 // asks; where it then takes them, its product is also made on the FP16 kernel (the path it had before) and the two
 // are compared.  STRATA_MMQ_TEST_BLOCKS=DIR: a type's weights are the bytes of DIR/<type name>.bin where that file is

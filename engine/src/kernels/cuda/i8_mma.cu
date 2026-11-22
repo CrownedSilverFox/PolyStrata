@@ -40,10 +40,11 @@ void check(const char* what) {
 }  // namespace
 
 // K whole stages of 256, or for a type of 32-value blocks whole blocks: the kernel leaves out what lies past K in its
-// last stage (Gemma 4 26B's down, K = 704: Q8_0, Q5_1, IQ4_NL, Q4_0; Inkling 2 Mini's, K = 1,152: MXFP4)
+// last stage (Gemma 4 26B's down, K = 704: Q8_0, Q5_1, IQ4_NL, Q4_0; Inkling 2 Mini's, K = 1,152: MXFP4); NVFP4 whole blocks of 64 (Inkling 2
+// Mini's down, K = 1,152)
 bool gemm_iq_i8_takes(int ty, int K) {
     if (i8m_asked_type(ty) && !((i8m_allowed.load(std::memory_order_relaxed) >> ty) & 1u)) return false;
-    const int step = ty == 39 || i8_block_vals(ty) == 32 ? 32 : 256;
+    const int step = ty == 40 ? 64 : ty == 39 || i8_block_vals(ty) == 32 ? 32 : 256;
     return i8m_type(ty) && K > 0 && K % step == 0 && i8m_card().on;
 }
 
