@@ -2303,10 +2303,10 @@ void Engine::fill_expert_cache() {
 #if !defined(STRATA_GPU_METAL)
     uploaded(at_il);
 #endif
-    // With the split held still for a comparison (STRATA_FREEZE_EXPERTS, STRATA_GPU_EXPERTS): which experts the cache
-    // holds, an FNV-1a hash of its (layer, expert) pairs.  Experts of several sizes are taken past one that does not
-    // fit, so two runs can cache as many experts but not the same ones, and their sums then differ.
-    if (freeze_experts_asked_) {
+    // STRATA_GPU_EXPERTS: which experts the cache holds, an FNV-style hash of its (layer, expert) pairs (FNV-1a's
+    // constants, one 32-bit value a step).  Only there is the set fixed for the run; experts of several sizes are
+    // taken past one that does not fit, so two runs can cache as many experts but not the same ones.
+    if (expert_cap_ >= 0) {
         uint64_t h = 14695981039346656037ULL;
         int n = 0;
         for (size_t il = 0; il < layers_.size(); ++il)
