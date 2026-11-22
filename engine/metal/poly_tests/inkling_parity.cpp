@@ -4,6 +4,7 @@
 // loop controllers' gates.
 #include "test_utils.hpp"
 #include "inkling2_kernels.hpp"
+#include "strata/gpu/metal.hpp"
 #include "strata/kernels/native_mmvq.hpp"
 
 #include <algorithm>
@@ -129,6 +130,7 @@ struct AttnCase {
     const char* name;
     int rows, pos, window, ring, extent;
     bool at;
+    bool batch = false;   ///< ink_attend_batch(): the matrix units' kernel, q and the weights in fp16
 };
 
 int attention(const AttnCase& c) {
@@ -189,8 +191,14 @@ int attention(const AttnCase& c) {
     a.rows = c.rows, a.n_head = nh, a.n_kv = nkv, a.dim = dim, a.n_rel = nrel, a.extent = c.extent;
     a.window = c.window, a.ring = c.ring, a.scale = scale;
     if (c.rows == 1) a.q8 = Q8.as();
-    ink_attend(a, nullptr);
-    int bad = compare(O.read(ref.size()), ref, c.name, 2e-4f);
+    if (c.batch) {
+        strata::gpu::metal::set_optimize(true);
+        ink_attend_batch(a, nullptr);
+        strata::gpu::metal::set_optimize(false);
+    } else {
+        ink_attend(a, nullptr);
+    }
+    int bad = compare(O.read(ref.size()), ref, c.name, c.batch ? 5e-3f : 2e-4f);
     if (c.rows == 1) {
         Buffer Q8b(kernels::native_q8_1_bytes(nh * dim));
         kernels::native_quantize_q8_1(O.as(), Q8b.as(), nh * dim, 1, nullptr);
@@ -443,6 +451,8 @@ int main() {
     bad += attention({"ink_attend: a token, 20 keys", 1, 19, 0, 0, 1024, false});
     bad += attention({"ink_attend: a prompt batch of 40", 40, 100, 0, 0, 64, false});
     bad += attention({"ink_attend: 4 tokens, positions on the card, a ring", 4, 500, 128, 136, 128, true});
+    bad += attention({"ink_attend_batch: 100 tokens after 300", 100, 300, 0, 0, 64, false, true});
+    bad += attention({"ink_attend_batch: 70 tokens, a window of 128 in a ring", 70, 500, 128, 198, 128, false, true});
     bad += convolutions(5) + convolutions(40);
     bad += qkv();
     bad += situ_gates();

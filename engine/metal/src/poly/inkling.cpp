@@ -129,7 +129,7 @@ void mix(const InkStates& states, const float* const* query, int n_query, float*
     a.n[1] = n_query;
     a.n[2] = n_embd;
     a.f[0] = eps;
-    run("ink_mix", a, stream, {uint32_t(rows), uint32_t(jobs), 1}, 1024);
+    run("ink_mix", a, stream, {uint32_t(rows), uint32_t(jobs), 1}, 256);
 }
 }  // namespace
 
@@ -449,9 +449,52 @@ void ink_attend(const InkAttn& c, void* stream) {
     if (splits > 1) run("ink_attn_join", a, stream, {uint32_t(c.n_head), uint32_t(c.rows), 1}, 32);
 }
 
-// a prompt batch: ink_attend()'s kernel, which writes no score out either
-bool ink_attend_batch(const InkAttn& a, void* stream) {
-    ink_attend(a, stream);
+// A prompt batch: on the matrix units with --metal-optimize (inkling_flash.metal, Metal 4's matmul2d), for heads of
+// 128 values and 16 relative values with the positions on the host; else ink_attend()'s kernel.  Neither writes a
+// score out.
+bool ink_attend_batch(const InkAttn& c, void* stream) {
+    if (c.rows <= 0) return true;
+    static const std::string flash = metal_detail::read_source(STRATA_POLY_INKLING_FLASH_SOURCE);
+    static const bool ready = [] {
+        std::string error;
+        return gpu::metal::pipeline("poly_inkling_flash", flash.c_str(), "ink_flash_128", error) != nullptr;
+    }();
+    if (!(ready && gpu::metal::optimize() && c.dim == 128 && c.n_rel == 16 && !c.at && !c.q8 && !c.kv8 && c.n_kv > 0 &&
+          c.n_head % c.n_kv == 0)) {
+        ink_attend(c, stream);
+        return true;
+    }
+    Args a;
+    const void* p[8] = {c.q, c.r, c.sink, c.keys, c.vals, c.rel_bias, c.gate, c.out};
+    std::copy(p, p + 8, a.p);
+    a.n[0] = c.rows, a.n[1] = c.n_head, a.n[2] = c.n_kv, a.n[3] = c.dim, a.n[4] = c.n_rel, a.n[5] = c.extent;
+    a.n[6] = c.window, a.n[7] = c.ring;
+    a.f[0] = c.scale;
+    a.pos = c.pos;
+    // a ring: the call's keys and values copied in fp16 from the window's first, for matmul2d to read as tensors, into a
+    // buffer grown to the largest call and kept
+    if (c.ring) {
+        static void* kv16 = nullptr;
+        static size_t kv16_bytes = 0;
+        const int64_t first = c.window > 0 ? std::max<int64_t>(0, c.pos - c.window + 1) : 0;
+        const size_t n = size_t(c.pos + c.rows - first) * size_t(c.n_kv) * size_t(c.dim), need = 4 * n;
+        if (need > kv16_bytes) {
+            if (kv16) {
+                gpu::stream_synchronize(static_cast<gpu::Stream>(stream));
+                gpu::free_device(kv16);
+            }
+            kv16 = nullptr;
+            kv16_bytes = 0;
+            if (gpu::malloc_device_raw(&kv16, need) != gpu::kSuccess)
+                throw std::runtime_error("Metal attention: the window's keys in fp16");
+            kv16_bytes = need;
+        }
+        a.p[8] = kv16;
+        a.p[9] = static_cast<uint16_t*>(kv16) + n;
+        metal_detail::dispatch("poly_inkling_flash", flash, "ink_flash_kv", a, stream, {blocks(n, 256), 1, 1}, 256);
+    }
+    metal_detail::dispatch("poly_inkling_flash", flash, "ink_flash_128", a, stream,
+                           {uint32_t(c.n_head), uint32_t((c.rows + 15) / 16), 1}, 64);
     return true;
 }
 
