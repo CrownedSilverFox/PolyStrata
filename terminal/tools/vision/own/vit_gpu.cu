@@ -956,6 +956,64 @@ __global__ void k_bias_gelu_erf_cast(const float* __restrict__ y, const float* _
     }
 }
 
+// ---- Inkling 2 Mini's tower (inkling2v; the CPU tower's encode_inkling has the maths step by step) ----
+
+// x[0] = the CLS row; x[1 + t] += the position table (G x G) resized to pw x ph as ggml_interpolate's bilinear does it (half-pixel centres), patches in
+// reading order
+__global__ void k_ink_pos(float* __restrict__ x, const float* __restrict__ cls, const float* __restrict__ pos, int G, int pw, int ph, int D) {
+    if (blockIdx.x == 0) {
+        for (int i = threadIdx.x; i < D; i += blockDim.x) x[i] = cls[i];
+        return;
+    }
+    const int t = blockIdx.x - 1, i0 = t % pw, i1 = t / pw;
+    float* xr = x + (size_t) (1 + t) * D;
+    if (pw == G && ph == G) {
+        for (int i = threadIdx.x; i < D; i += blockDim.x) xr[i] += pos[(size_t) t * D + i];
+        return;
+    }
+    const float sf0 = (float) pw / G, sf1 = (float) ph / G;
+    const float y = ((float) i1 + 0.5f) / sf1 - 0.5f, xx = ((float) i0 + 0.5f) / sf0 - 0.5f;
+    int y0 = (int) floorf(y), x0 = (int) floorf(xx), y1 = y0 + 1, x1 = x0 + 1;
+    y0 = max(0, min(y0, G - 1)); y1 = max(0, min(y1, G - 1));
+    x0 = max(0, min(x0, G - 1)); x1 = max(0, min(x1, G - 1));
+    const float dy = fmaxf(0.0f, fminf(y - (float) y0, 1.0f)), dx = fmaxf(0.0f, fminf(xx - (float) x0, 1.0f));
+    const float* a = pos + ((size_t) y0 * G + x0) * D;
+    const float* b = pos + ((size_t) y0 * G + x1) * D;
+    const float* c = pos + ((size_t) y1 * G + x0) * D;
+    const float* d = pos + ((size_t) y1 * G + x1) * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x)
+        xr[i] += a[i] * (1 - dx) * (1 - dy) + b[i] * dx * (1 - dy) + c[i] * (1 - dx) * dy + d[i] * dx * dy;
+}
+
+// the joined q, k, v product of the rows row0 .. plus its joined bias -> F16 [N][D] each: the rotary on q and k (adjacent pairs; the first half of a
+// head by the column + 1, the second by the row + 1, both 0 for the CLS row 0; the angle p * theta_scale^i grown by multiplication as ggml's), q times qscale
+__global__ void k_ink_qkv(const float* __restrict__ y, const float* __restrict__ bias, int row0, int pw, int heads, int hd, float theta_scale, float qscale,
+                          uint16_t* __restrict__ q, uint16_t* __restrict__ k, uint16_t* __restrict__ v) {
+    const int t = row0 + blockIdx.x, D = heads * hd, half = hd / 2;
+    const int px = t == 0 ? 0 : (t - 1) % pw + 1, py = t == 0 ? 0 : (t - 1) / pw + 1;
+    const float* yr = y + (size_t) blockIdx.x * 3 * D;
+    const size_t out = (size_t) t * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) {
+        const int j = i % hd, part = j / half, jj = j % half, pair = jj / 2, e0 = i - (jj & 1);
+        float th = (float) (part ? py : px);
+        for (int r = 0; r < pair; ++r) th *= theta_scale;
+        const float c = cosf(th), s = sinf(th);
+        const float q0 = yr[e0] + bias[e0], q1 = yr[e0 + 1] + bias[e0 + 1];
+        const float k0 = yr[D + e0] + bias[D + e0], k1 = yr[D + e0 + 1] + bias[D + e0 + 1];
+        const float qv = (jj & 1) ? q0 * s + q1 * c : q0 * c - q1 * s;
+        const float kv = (jj & 1) ? k0 * s + k1 * c : k0 * c - k1 * s;
+        q[out + i] = f_to_f16bits(qv * qscale);
+        k[out + i] = f_to_f16bits(kv);
+        v[out + i] = f_to_f16bits(yr[2 * D + i] + bias[2 * D + i]);
+    }
+}
+
+// x[r] += (y[r] + bias) * ls: a layer scale on the output before the residual
+__global__ void k_ls_res(float* __restrict__ x, const float* __restrict__ y, const float* __restrict__ bias, const float* __restrict__ ls, int D) {
+    const size_t base = (size_t) blockIdx.x * D;
+    for (int i = threadIdx.x; i < D; i += blockDim.x) x[base + i] += (y[base + i] + bias[i]) * ls[i];
+}
+
 // ---- host side ----
 uint16_t host_f32_to_bf16(float f) {
     uint32_t u;
@@ -1055,6 +1113,12 @@ struct VitGpuImpl {
     bool encode_gemma4(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
     bool load_minicpmv(const Gguf& gg, std::string& err);
     bool encode_minicpmv(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
+    // inkling2v: the layers are `layers` (q, k, v joined into qkv, their biases into qkv_b) with their layer scales in ls1 / ls2; cls the CLS row (its
+    // embedding plus its position), pre_w / pre_b the first norm, mm0 / mm2 mm.1 / mm.2 with mm0_b / mm2_b their biases (zeros where the file has none)
+    std::vector<float*> ls1, ls2;
+    float *cls = nullptr, *pre_w = nullptr, *pre_b = nullptr;
+    bool load_inkling(const Gguf& gg, std::string& err);
+    bool encode_inkling(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err);
 
     int cap_patches = 0;
     // Work buffers, sized for cap_patches patches N (D = width).  The GPU memory is what a reader costs next to the engine, so the matrix products run in
@@ -1469,6 +1533,7 @@ struct VitGpuImpl {
         const size_t ctx_elems = std::max({N * D, N * K0, (N / 4) * (size_t) g.out_dim});
         // (Gemma 4: gate and up in one product, 2 ffn a row)
         y_elems = R * std::max<size_t>(3 * D, gemma() ? 2 * F : F);
+        if (g.inkling()) y_elems = std::max(y_elems, N * K0);   // the picture goes up into d_y whole (3 P P floats a patch): 4,096 tokens are 16,384 patches
         bool ok = alloc(d_x, N * D, err, false) && alloc(d_ctx, ctx_elems, err, false) && alloc(d_y, y_elems, err, false) &&
                   alloc(d_a, R * D, err, false) && alloc(d_f16, R * F, err, false) &&
                   alloc(d_q16, N * D, err, false) && alloc(d_k16, N * D, err, false) && alloc(d_v16, N * D, err, false);
@@ -1546,7 +1611,7 @@ std::string VitGpu::arch_name() {
 bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patches, std::string& err) {
     VitGpuImpl& m = *impl_;
     std::string why;
-    if (!vit_geometry_supported(g, why) || (g.projector != "gemma4v" && !g.minicpmv() && !vit_geometry_qwen(g, why))) {
+    if (!vit_geometry_supported(g, why) || (g.projector != "gemma4v" && !g.minicpmv() && !g.inkling() && !vit_geometry_qwen(g, why))) {
         err = "this tower is not supported: " + why;
         return false;
     }
@@ -1612,6 +1677,8 @@ bool VitGpu::load(const Gguf& gg, const VitGeometry& g, int device, int max_patc
         if (!m.load_gemma4(gg, err)) return false;
     } else if (g.minicpmv()) {
         if (!m.load_minicpmv(gg, err)) return false;
+    } else if (g.inkling()) {
+        if (!m.load_inkling(gg, err)) return false;
     } else {
         // the patch embedding: the two temporal taps summed, kept in float32 (a small matrix)
         {
@@ -1674,6 +1741,7 @@ bool VitGpu::encode(const PreparedImage& img, std::vector<float>& rows, int& nx,
     const VitGeometry& g = m.g;
     if (m.gemma()) return m.encode_gemma4(img, rows, nx, ny, err);
     if (g.minicpmv()) return m.encode_minicpmv(img, rows, nx, ny, err);
+    if (g.inkling()) return m.encode_inkling(img, rows, nx, ny, err);
     if (m.layers.empty()) { err = "the tower is not loaded"; return false; }
     if (img.w <= 0 || img.h <= 0 || img.w % g.align() != 0 || img.h % g.align() != 0) { err = "the picture size is not a multiple of patch * merge"; return false; }
     if (g.head_dim > 96 || g.head_dim % 4 != 0) { err = "this head size is not handled by the GPU attention kernel"; return false; }
@@ -2123,6 +2191,121 @@ bool VitGpuImpl::encode_minicpmv(const PreparedImage& img, std::vector<float>& r
                      pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]);
     nx = hw / 2;
     ny = hh / 2;
+    return true;
+}
+
+bool VitGpuImpl::load_inkling(const Gguf& gg, std::string& err) {
+    auto put = [&](float*& dst, const std::vector<float>& h) {
+        if (!alloc(dst, h.size(), err, true)) return false;
+        return cudaMemcpy(dst, h.data(), h.size() * 4, cudaMemcpyHostToDevice) == cudaSuccess || (err = "GPU copy failed", false);
+    };
+    auto host = [&](const char* name, std::vector<float>& h) {
+        const GgufTensorInfo* t = gg.tensor(name);
+        if (!t) { err = std::string("the mmproj file lacks the tensor ") + name; return false; }
+        h.resize((size_t) t->nelem());
+        return gg.read_f32(*t, h.data(), err);
+    };
+    std::vector<float> c, cp;
+    if (!host("v.class_embd", c) || !host("v.class_position_embd.weight", cp)) return false;
+    for (size_t i = 0; i < c.size(); ++i) c[i] += cp[i];   // ggml_add(class_embedding, class_position_embedding)
+    if (!put(cls, c) || !upload_f32(patch_w, gg, "v.patch_embd.weight", err) || !upload_f32(pos, gg, "v.position_embd.weight", err) ||
+        !upload_f32(pre_w, gg, "v.pre_ln.weight", err) || !upload_f32(pre_b, gg, "v.pre_ln.bias", err) ||
+        !upload_matrix(mm0, gg, "mm.1.weight", err) || !upload_matrix(mm2, gg, "mm.2.weight", err))
+        return false;
+    if (g.post_ln && (!upload_f32(post_w, gg, "v.post_ln.weight", err) || !upload_f32(post_b, gg, "v.post_ln.bias", err))) return false;
+    if (g.mm_bias) {
+        if (!upload_f32(mm0_b, gg, "mm.1.bias", err) || !upload_f32(mm2_b, gg, "mm.2.bias", err)) return false;
+    } else if (!put(mm0_b, std::vector<float>((size_t) g.merger_hidden, 0.0f)) || !put(mm2_b, std::vector<float>((size_t) g.out_dim, 0.0f))) {
+        return false;
+    }
+    layers.assign((size_t) g.layers, DevLayer{});
+    ls1.assign((size_t) g.layers, nullptr);
+    ls2.assign((size_t) g.layers, nullptr);
+    for (int il = 0; il < g.layers; ++il) {
+        DevLayer& L = layers[(size_t) il];
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        if (!upload_f32(L.ln1_w, gg, p + "ln1.weight", err) || !upload_f32(L.ln1_b, gg, p + "ln1.bias", err) ||
+            !upload_f32(L.ln2_w, gg, p + "ln2.weight", err) || !upload_f32(L.ln2_b, gg, p + "ln2.bias", err) ||
+            !upload_matrix(L.qkv, gg, std::vector<std::string>{p + "attn_q.weight", p + "attn_k.weight", p + "attn_v.weight"}, err) ||
+            !upload_f32(L.qkv_b, gg, std::vector<std::string>{p + "attn_q.bias", p + "attn_k.bias", p + "attn_v.bias"}, err) ||
+            !upload_matrix(L.o, gg, p + "attn_out.weight", err) || !upload_f32(L.o_b, gg, p + "attn_out.bias", err) ||
+            !upload_matrix(L.up, gg, p + "ffn_up.weight", err) || !upload_f32(L.up_b, gg, p + "ffn_up.bias", err) ||
+            !upload_matrix(L.down, gg, p + "ffn_down.weight", err) || !upload_f32(L.down_b, gg, p + "ffn_down.bias", err) ||
+            !upload_f32(ls1[(size_t) il], gg, p + "ls1.weight", err) || !upload_f32(ls2[(size_t) il], gg, p + "ls2.weight", err))
+            return false;
+    }
+    return true;
+}
+
+// Inkling 2 Mini's tower on the GPU: VitCpu's encode_inkling with the products by the BLAS (16-bit inputs, float32 sums) and the attention by attend()
+// (q scaled by 1 / sqrt(head)).  Row 0 of every buffer is the CLS row, rows 1.. the patches in reading order.
+bool VitGpuImpl::encode_inkling(const PreparedImage& img, std::vector<float>& rows, int& nx, int& ny, std::string& err) {
+    if (layers.empty()) { err = "the tower is not loaded"; return false; }
+    const int P = g.patch, D = g.width, H = g.heads, HD = g.head_dim, F = g.ffn, G = g.pos_grid, K = g.merge;
+    if (img.w <= 0 || img.h <= 0 || img.w % (P * K) != 0 || img.h % (P * K) != 0) { err = "the picture size is not a multiple of patch * merge"; return false; }
+    if (H > 32 || HD % 4 != 0 || HD > kVitGpuMaxHeadDim || K != 2) { err = "this tower's heads or merge are not handled by the GPU kernels"; return false; }
+    const int pw = img.w / P, ph = img.h / P, N = pw * ph, N1 = N + 1;
+    if (cudaSetDevice(device) != cudaSuccess) { err = "cannot use the GPU"; return false; }
+    if (!size_buffers(N1, err)) return false;
+    const int R = std::min(N1, kRows);
+    if ((size_t) 3 * img.w * img.h > y_elems) { err = "the picture is larger than the work buffers"; return false; }
+    auto sync_err = [&](const char* what) {
+        const cudaError_t e = cudaGetLastError();
+        if (e != cudaSuccess) { err = std::string(what) + ": " + cudaGetErrorString(e); return false; }
+        return true;
+    };
+    const int K0 = 3 * P * P;
+    if (cudaMemcpy(d_y, img.chw.data(), img.chw.size() * 4, cudaMemcpyHostToDevice) != cudaSuccess) { err = "GPU copy failed"; return false; }
+    k_patches<<<N, 256>>>(d_y, img.w, img.h, P, pw, 1.0f, 0.0f, d_ctx);
+    DevW pw_w;
+    pw_w.p = patch_w; pw_w.kind = K_F32; pw_w.rows = D; pw_w.cols = K0;
+    if (!gemm(pw_w, d_ctx, N, d_x + D, CUDA_R_32F, err)) return false;
+    k_ink_pos<<<N1, 256>>>(d_x, cls, pos, G, pw, ph, D);
+    k_layernorm<<<N1, 256>>>(d_x, pre_w, pre_b, g.eps, D, d_x, (int) K_F32);   // in place: a row's sums are taken before it is written
+    if (!sync_err("patch embedding")) return false;
+
+    const float theta_scale = powf(g.rope_theta, -2.0f / (float) (HD / 2));
+    const float qscale = 1.0f / sqrtf((float) HD);
+    uint16_t* const a16 = d_a;
+    for (int il = 0; il < g.layers; ++il) {
+        const DevLayer& L = layers[(size_t) il];
+        for (int r0 = 0; r0 < N1; r0 += R) {      // norm, the joined q, k, v product, the biases and the rotary, into F16
+            const int rn = std::min(R, N1 - r0);
+            k_layernorm<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln1_w, L.ln1_b, g.eps, D, a16, (int) L.qkv.kind);
+            if (!gemm(L.qkv, a16, rn, d_y, dtype(L.qkv.kind), err)) return false;
+            k_ink_qkv<<<rn, 256>>>(d_y, L.qkv_b, r0, pw, H, HD, theta_scale, qscale, d_q16, d_k16, d_v16);
+        }
+        if (!attend(N1, err)) return false;
+        for (int r0 = 0; r0 < N1; r0 += R) {      // x += ls1 * o(ctx); x += ls2 * down(gelu_erf(up(LN2 x)))
+            const int rn = std::min(R, N1 - r0);
+            k_cast<<<blocks_for((size_t) rn * D), 256>>>(d_ctx + (size_t) r0 * D, (size_t) rn * D, a16, (int) L.o.kind);
+            if (!gemm(L.o, a16, rn, d_y, dtype(L.o.kind), err)) return false;
+            k_ls_res<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, L.o_b, ls1[(size_t) il], D);
+            k_layernorm<<<rn, 256>>>(d_x + (size_t) r0 * D, L.ln2_w, L.ln2_b, g.eps, D, a16, (int) L.up.kind);
+            if (!gemm(L.up, a16, rn, d_y, dtype(L.up.kind), err)) return false;
+            k_bias_gelu_erf_cast<<<rn, 256>>>(d_y, L.up_b, F, d_f16, (int) L.down.kind);
+            if (!gemm(L.down, d_f16, rn, d_y, dtype(L.down.kind), err)) return false;
+            k_ls_res<<<rn, 256>>>(d_x + (size_t) r0 * D, d_y, L.down_b, ls2[(size_t) il], D);
+        }
+    }
+    if (g.post_ln) k_layernorm<<<N1, 256>>>(d_x, post_w, post_b, g.eps, D, d_x, (int) K_F32);
+    if (!sync_err("the layers")) return false;
+    // the merge (each 2x2 square of patches one row of four: left top, right top, left bottom, right bottom), mm.1, the erf GELU, mm.2
+    const int ox = pw / 2, oy = ph / 2, M = ox * oy, D4 = 4 * D, RC = std::max(1, R / 4);
+    k_gather4<<<M, 256>>>(d_x + D, pw, D, d_ctx);
+    for (int r0 = 0; r0 < M; r0 += RC) {
+        const int rn = std::min(RC, M - r0);
+        k_cast<<<blocks_for((size_t) rn * D4), 256>>>(d_ctx + (size_t) r0 * D4, (size_t) rn * D4, a16, (int) mm0.kind);
+        if (!gemm(mm0, a16, rn, d_y, dtype(mm0.kind), err)) return false;
+        k_bias_gelu_erf_cast<<<rn, 256>>>(d_y, mm0_b, g.merger_hidden, d_f16, (int) mm2.kind);
+        if (!gemm(mm2, d_f16, rn, d_out + (size_t) r0 * g.out_dim, dtype(mm2.kind), err)) return false;
+        k_add_bias<<<rn, 256>>>(d_out + (size_t) r0 * g.out_dim, mm2_b, g.out_dim);
+    }
+    if (!sync_err("the merger")) return false;
+    rows.resize((size_t) M * g.out_dim);
+    if (cudaMemcpy(rows.data(), d_out, rows.size() * 4, cudaMemcpyDeviceToHost) != cudaSuccess) { err = std::string("GPU copy failed: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    nx = ox;
+    ny = oy;
     return true;
 }
 
