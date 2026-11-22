@@ -50,24 +50,22 @@ only part of the experts was not measured. Three runs each, 32 tokens written af
 | | 10,081 tokens | 3,340-3,360 tokens/s | 5,360-5,400 tokens/s |
 | | 20,162 tokens | 3,390-3,400 tokens/s | 5,480-5,510 tokens/s |
 
-On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,205 of
+On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
 gives Inkling 2 Mini four settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
 matrices in 5 bits instead of 8), `--loop-bf16` (the loop controllers in BF16 instead of F32), `--tail-skip 4` and
-`--expert-swaps 0`. A card that holds the whole model gets none of them. Three runs of the README's benchmark, in
-turns:
+`--expert-swaps 0`. A card that holds the whole model gets none of them. The fastest of three runs of the README's
+benchmark:
 
-| UD-Q3_K_XL | Writes in a short chat | Reads a 30,954-token prompt | Writes after it |
+| UD-Q3_K_XL | Writes in a short chat | Reads a 30,902-token prompt | Writes after it |
 | --- | ---: | ---: | ---: |
-| Without the four | 43.6-44.0 tokens/s | 431-440 tokens/s | 33.4-33.6 tokens/s |
-| Setup's settings | 55.8-55.9 tokens/s | 461-469 tokens/s | 41.0-42.0 tokens/s |
+| Setup's settings | 56 tokens/s | 887 tokens/s | 42 tokens/s |
 
 Written after the greedy answers without them to five prompts of 19 to 5,761 tokens, 256 tokens each, setup's
 settings give the same most likely token at 96.7% of the steps; a second run without them gives 98.3%.
 
-Reading is the slow part on a small card. The model's looped layers make every batch of the prompt upload the
-experts that are not on the card again. With `--prompt-batch 2048` the same prompt was read at 539 tokens/s (one
-run).
+A prompt is read a group of calls at a time through each layer run, so the experts that are not on the card cross
+the bus once for the group instead of once for every call and every pass of the looped layers.
 
 `--kv fp8` keeps the attention caches in 8 bits instead of 16, which leaves about 0.7 GB more VRAM for the experts at
 a 32K context.

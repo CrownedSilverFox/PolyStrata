@@ -7,7 +7,7 @@ Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, 
 
 <p align="center"><a href="https://github.com/simplexai-labs/linger"><img height="28" alt="Used by Linger" src="docs/media/used-by-linger.svg"></a></p>
 
-<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens pro Sekunde beim Schreiben einer Antwort: Qwen3.6-35B-A3B schreibt 95 auf einem Laptop mit 8-GB-Karte und 512 auf einer RTX 5090"></p>
+<p align="center"><img src="docs/media/speed.svg" width="820" alt="Tokens pro Sekunde beim Schreiben einer Antwort: Qwen3.6-35B-A3B schreibt 98 auf einem Laptop mit 8-GB-Karte und 512 auf einer RTX 5090"></p>
 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Claude Code im Terminal neben dem API Monitor von PolyStrata"><br>
 <sub>Claude Code mit Qwen3.6-35B-A3B UD-Q3_K_M auf dem Laptop mit der 8-GB-Karte, in Echtzeit: Es fügt einem kleinen Programm die Option <code>--json</code> hinzu, schreibt einen Test dafür und führt die Tests aus. Der Server hatte den Systemprompt von Claude Code beim Start gelesen (<code>"warm_start": true</code>).</sub></p>
@@ -79,19 +79,19 @@ Die Tabelle zeigt für jedes Modell die Größe, die der Installer nimmt, in Tok
 
 | Modell | Laptop mit 8-GB-Karte<br>schreibt / liest | RTX 5090<br>schreibt / liest | Alle Größen |
 | --- | ---: | ---: | --- |
-| LFM2.5-24B-A2B | 81 / 3,452 | 492 / 25,160 | [LFM2.5](docs/models/lfm25.de.md) |
-| Flint 40B-A2.5B | 56 / 2,273 | 261 / 14,851 | [Flint](docs/models/flint.de.md) |
-| Qwen3.6-35B-A3B | 95 / 2,110 | 512 / 14,842 | [Qwen3.6](docs/models/qwen36.de.md) |
-| Clover-35B-A3B-Preview | 62 / 1,973 | 308 / 13,814 | [Clover](docs/models/clover.de.md) |
-| Ornith 1.5 | 76 / 2,036 | 358 / 14,133 | [Ornith](docs/models/ornith.de.md) |
-| Gemma 4 26B-A4B | 76 / 1,896 | 363 / 11,478 | [Gemma 4](docs/models/gemma4.de.md) |
-| Tiel Coder 35B-A3B | 81 / 2,171 | 437 / 15,079 | [Tiel Coder](docs/models/tiel.de.md) |
-| MiniCPM-V 4.7 35B-A3B | 71 / 1,982 | 331 / 14,305 | [MiniCPM-V](docs/models/minicpmv.de.md) |
-| Kolibri 1 | 55 / 746 | 207 / 6,009 | [Kolibri 1](docs/models/kolibri.de.md) |
+| LFM2.5-24B-A2B | 87 / 3,955 | 492 / 25,160 | [LFM2.5](docs/models/lfm25.de.md) |
+| Flint 40B-A2.5B | 66 / 2,648 | 261 / 14,851 | [Flint](docs/models/flint.de.md) |
+| Qwen3.6-35B-A3B | 98 / 2,445 | 512 / 14,842 | [Qwen3.6](docs/models/qwen36.de.md) |
+| Clover-35B-A3B-Preview | 77 / 2,266 | 308 / 13,814 | [Clover](docs/models/clover.de.md) |
+| Ornith 1.5 | 89 / 2,298 | 358 / 14,133 | [Ornith](docs/models/ornith.de.md) |
+| Gemma 4 26B-A4B | 96 / 2,174 | 363 / 11,478 | [Gemma 4](docs/models/gemma4.de.md) |
+| Tiel Coder 35B-A3B | 91 / 2,455 | 437 / 15,079 | [Tiel Coder](docs/models/tiel.de.md) |
+| MiniCPM-V 4.7 35B-A3B | 79 / 2,288 | 331 / 14,305 | [MiniCPM-V](docs/models/minicpmv.de.md) |
+| Kolibri 1 | 63 / 843 | 207 / 6,009 | [Kolibri 1](docs/models/kolibri.de.md) |
 | GLM 5.3 Flash | läuft nicht: braucht eine 32-GB-Karte | 52 / 855 | [GLM](docs/models/glm.de.md) |
 | DeepSeek V4 Flash | läuft nicht: braucht eine 32-GB-Karte | 50 / 1,895 | [DeepSeek](docs/models/deepseek.de.md) |
-| Inkling 2 Mini | 40 / 426 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
-| Groot 19B-A3B 261023 | 75 / 2,339 | 450 / 15,204 | [Groot](docs/models/groot.md) |
+| Inkling 2 Mini | 56 / 887 | 196 / 5,422 | [Inkling 2 Mini](docs/models/inkling.md) |
+| Groot 19B-A3B 261023 | 91 / 2,789 | 450 / 15,204 | [Groot](docs/models/groot.md) |
 | Hy4-Flash | läuft nicht: braucht 64 GB RAM | 90-111 / 1,694 | [Hy4-Flash](https://github.com/Niko1221/Strata/releases/tag/v0.2.18) |
 
 Laptop: RTX 4070 Laptop (8 GB), Core i7-14700HX, 32 GB RAM. Workstation: RTX 5090 (32 GB), Xeon Platinum 8470Q (25 vCPU), 90 bis 120 GB RAM. Flint ist auf dem Laptop UD-Q3_K_XL, die Größe, die der Installer bei 32 GB RAM nimmt, und auf der Workstation UD-Q4_K_XL. Kolibri 1 ist auf beiden Q2_K; der Installer der Workstation nimmt Q4_K_M, das nicht gemessen wurde.
