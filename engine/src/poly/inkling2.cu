@@ -734,6 +734,7 @@ __global__ void ink_clip_kernel(float* x, const float* __restrict__ scale, float
 }
 
 // ink_clip() and ink_head_rms() of InkClips' four jobs in one launch, a block a token's head as each of them
+template <bool KV8>
 __global__ void ink_clips_kernel(InkClips c) {
     __shared__ float part[128 / WARP];
     int b = blockIdx.x, j = 0;
@@ -747,7 +748,7 @@ __global__ void ink_clips_kernel(InkClips c) {
     if (!c.cache[j]) return;   // each thread its own values, as clip_head() and rms_head() left them
     long long cell = (c.at ? c.at[0] : c.pos) + row;
     if (c.ring > 0) cell %= c.ring;
-    if (c.kv8) {
+    if (KV8) {
         kv8_store(v, (uint8_t*) c.cache[j], cell, c.heads[j], c.dim[j], head, part);
         return;
     }
@@ -804,6 +805,7 @@ struct QkvArgs {
 };
 
 // ink_qkv(): blocks [0, n_head) Q's heads, then K's n_kv, V's n_kv, and the relative positions' n_head; 128 threads.
+template <bool KV8>
 __global__ void ink_qkv_kernel(QkvArgs g) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -833,7 +835,7 @@ __global__ void ink_qkv_kernel(QkvArgs g) {
         if (is_v) rms_head(head, a.dim, a.eps, part);
         else clip_head(head, nullptr, a.qk_thr, a.dim, 0.0f, 1.0f, p, part);
         const long long row = a.ring > 0 ? p % a.ring : p;
-        if (a.kv8) kv8_store(head, (uint8_t*) (is_v ? a.vals : a.keys), row, a.n_kv, a.dim, h, part);
+        if (KV8) kv8_store(head, (uint8_t*) (is_v ? a.vals : a.keys), row, a.n_kv, a.dim, h, part);
         else if (i < a.dim)
             ((__half*) (is_v ? a.vals : a.keys))[size_t(row) * channels + size_t(h) * a.dim + i] = __float2half(head[i]);
         return;
@@ -898,6 +900,7 @@ __device__ __forceinline__ void lane_halves(const __half* head, int lane, int n,
 // kScoreKeys keys, one at a time: its lanes read the key side by side, once for all of the group's heads, and
 // their products with the queries are summed across the warp.  The bias's products are the first n_rel lanes'.
 // t0 is the launch's first token among the call's, nk_max the scores a head has room for.
+template <bool KV8>
 __global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -933,7 +936,7 @@ __global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
 #pragma unroll
     for (int u = 0; u < kScoreKeys; ++u) {
         if (j0 + u < j1) {
-            if (a.kv8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, lane, lh, k[u]);
+            if (KV8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, lane, lh, k[u]);
             else lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, k[u]);
             const long long dist = p - (lo + j0 + u);
             rb[u] = lane < a.n_rel && dist < a.extent ? a.rel_bias[size_t(dist) * a.n_rel + lane] : 0.0f;
@@ -985,6 +988,7 @@ __global__ void ink_softmax_kernel(InkAttn a, int t0, int nk_max, float* norm) {
 // as the score kernel reads a key; a lane holds one of the warp's weights, a head and a key each.  The warps'
 // sums are added in their order.  value_warps() launches up to 32 warps, so the registers must fit 1,024 threads on
 // every card: sm_86 and sm_89 gave this kernel 66 a thread without the bound, and the launch failed there.
+template <bool KV8>
 __global__ void __launch_bounds__(1024) ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, int n_parts) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -1012,7 +1016,7 @@ __global__ void __launch_bounds__(1024) ink_value_kernel(InkAttn a, int t0, int 
 #pragma unroll
     for (int u = 0; u < kValueKeys; ++u) {
         if (j0 + u < j1) {
-            if (a.kv8) lane_fp8(a.vals, row, a.n_kv, a.dim, g, lane, lh, v[u]);
+            if (KV8) lane_fp8(a.vals, row, a.n_kv, a.dim, g, lane, lh, v[u]);
             else lane_halves((const __half*) a.vals + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, v[u]);
             if (++row == a.ring) row = 0;
         }
@@ -1632,7 +1636,8 @@ void ink_qkv(const InkQkv& a, void* stream) {
         throw std::invalid_argument("ink_qkv: heads of up to 128 values, 2 to 8 taps");
     QkvArgs g{a, 1.0f / std::sqrt((float) ((a.kdyn ? 2 : 1) * a.taps + 1)),
               1.0f / std::sqrt((float) ((a.vdyn ? 2 : 1) * a.taps + 1))};
-    launch_pdl(ink_qkv_kernel, dim3(2 * a.n_head + 2 * a.n_kv), dim3(128), 0, cs(stream), g);
+    launch_pdl(a.kv8 ? ink_qkv_kernel<true> : ink_qkv_kernel<false>, dim3(2 * a.n_head + 2 * a.n_kv), dim3(128), 0,
+               cs(stream), g);
     launched("ink_qkv");
 }
 
@@ -1646,7 +1651,8 @@ void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int r
 
 void ink_clips(const InkClips& c, void* stream) {
     if (c.rows <= 0) return;
-    ink_clips_kernel<<<c.rows * (c.heads[0] + c.heads[1] + c.heads[2] + c.heads[3]), 128, 0, cs(stream)>>>(c);
+    auto* k = c.kv8 ? ink_clips_kernel<true> : ink_clips_kernel<false>;
+    k<<<c.rows * (c.heads[0] + c.heads[1] + c.heads[2] + c.heads[3]), 128, 0, cs(stream)>>>(c);
     launched("ink_clips");
 }
 
@@ -1706,13 +1712,14 @@ void ink_attend(const InkAttn& a, void* stream) {
     float* parts = norm + (size_t) chunk * a.n_head;
     for (int t0 = 0; t0 < a.rows; t0 += chunk) {
         const int m = std::min(chunk, a.rows - t0);
-        launch_pdl(ink_score_kernel, dim3(m * a.n_kv, score_blocks), dim3(kScoreWarps * 32), 0, cs(stream), a, t0,
-                   nk_max);
+        launch_pdl(a.kv8 ? ink_score_kernel<true> : ink_score_kernel<false>, dim3(m * a.n_kv, score_blocks),
+                   dim3(kScoreWarps * 32), 0, cs(stream), a, t0, nk_max);
         launched("ink_score");
         launch_pdl(ink_softmax_kernel, dim3(m * a.n_head), dim3(kAttnThreads), 0, cs(stream), a, t0, nk_max, norm);
         launched("ink_softmax");
-        launch_pdl(ink_value_kernel, dim3(m * a.n_kv, n_parts), dim3(warps * 32),
-                   (size_t) warps * group * a.dim * sizeof(float), cs(stream), a, t0, nk_max, parts, n_parts);
+        launch_pdl(a.kv8 ? ink_value_kernel<true> : ink_value_kernel<false>, dim3(m * a.n_kv, n_parts),
+                   dim3(warps * 32), (size_t) warps * group * a.dim * sizeof(float), cs(stream), a, t0, nk_max, parts,
+                   n_parts);
         launched("ink_value");
         launch_pdl(ink_join_kernel, dim3(m * a.n_head), dim3(128), 0, cs(stream), a, t0, parts, n_parts, norm);
         launched("ink_join");
