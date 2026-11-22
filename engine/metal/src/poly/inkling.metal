@@ -32,7 +32,8 @@ inline float sigm(float x) { return 1.0f / (1.0f + exp(-x)); }
 // p[67] its output (out[0]'s rms_norm()); n: states, queries, n_embd; f[0] the norm's eps.  A row and a job a
 // threadgroup (grid rows x jobs).
 kernel void ink_mix(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_position_in_grid]],
-                    uint tid [[thread_index_in_threadgroup]], uint nt [[threads_per_threadgroup]]) {
+                    uint tid [[thread_index_in_threadgroup]], uint2 shape [[threads_per_threadgroup]]) {
+    const uint nt = shape.x;
     threadgroup float part[30][32];
     threadgroup float coef[6][4];
     threadgroup float npart[32];
@@ -103,7 +104,8 @@ kernel void ink_mix(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_positi
 // ---- the loop controllers ----
 // ink_cat_norm_set(): p[j] cur, p[3 + j] msg, p[6 + j] out; n[0] n_embd.  A row and a pair a threadgroup.
 kernel void ink_cat_norm(constant Args& a [[buffer(0)]], uint2 g [[threadgroup_position_in_grid]],
-                         uint tid [[thread_index_in_threadgroup]], uint nt [[threads_per_threadgroup]]) {
+                         uint tid [[thread_index_in_threadgroup]], uint2 shape [[threads_per_threadgroup]]) {
+    const uint nt = shape.x;
     threadgroup float part[32];
     const int n = a.n[0];
     const ulong row = ulong(g.x) * n;
