@@ -85,7 +85,7 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     if(!lane) out_y[yrow*a.ystride+group.x]=acc;
 }
 #define MUL(name,QK) template [[host_name("poly_mul_" #name)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>>) poly_mul<block_##name,QK,dequantize_##name<float4x4>>;
-MUL(q4_0,32) MUL(q4_1,32) MUL(q5_0,32) MUL(q5_1,32) MUL(q8_0,32) MUL(q2_0,64) MUL(mxfp4,32)
+MUL(q4_0,32) MUL(q4_1,32) MUL(q5_0,32) MUL(q5_1,32) MUL(q8_0,32) MUL(q2_0,64) MUL(mxfp4,32) MUL(nvfp4,64)
 MUL(q2_K,256) MUL(q3_K,256) MUL(q4_K,256) MUL(q5_K,256) MUL(q6_K,256)
 MUL(iq2_xxs,256) MUL(iq2_xs,256) MUL(iq3_xxs,256) MUL(iq1_s,256) MUL(iq4_nl,32)
 MUL(iq3_s,256) MUL(iq2_s,256) MUL(iq4_xs,256) MUL(iq1_m,256)
@@ -100,7 +100,7 @@ kernel void q36_embed(constant QArgs& a [[buffer(0)]],uint2 group [[threadgroup_
 }
 #define EMB(name,QK) template [[host_name("q36_embed_" #name)]] kernel decltype(q36_embed<block_##name,QK,dequantize_##name<float4x4>>) q36_embed<block_##name,QK,dequantize_##name<float4x4>>;
 EMB(q4_0,32) EMB(q4_1,32) EMB(q5_0,32) EMB(q5_1,32) EMB(q8_0,32) EMB(q2_0,64) EMB(iq4_nl,32) EMB(iq4_xs,256)
-EMB(iq2_xxs,256) EMB(iq2_xs,256) EMB(iq3_xxs,256) EMB(iq1_s,256) EMB(iq3_s,256) EMB(iq2_s,256) EMB(iq1_m,256) EMB(mxfp4,32)
+EMB(iq2_xxs,256) EMB(iq2_xs,256) EMB(iq3_xxs,256) EMB(iq1_s,256) EMB(iq3_s,256) EMB(iq2_s,256) EMB(iq1_m,256) EMB(mxfp4,32) EMB(nvfp4,64)
 EMB(q2_K,256) EMB(q3_K,256) EMB(q4_K,256) EMB(q5_K,256) EMB(q6_K,256)
 template [[host_name("q36_embed_f32")]] kernel decltype(q36_embed<float4x4,16,dequantize_f32<float4x4>>) q36_embed<float4x4,16,dequantize_f32<float4x4>>;
 template [[host_name("q36_embed_f16")]] kernel decltype(q36_embed<half4x4,16,dequantize_f16<float4x4>>) q36_embed<half4x4,16,dequantize_f16<float4x4>>;

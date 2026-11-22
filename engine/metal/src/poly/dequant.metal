@@ -6,6 +6,7 @@
 // include/strata/quant/strata-quant-common.h in its Metal mode (quantized.cpp puts the two together).  One change:
 // that mode has IQ1_S's grid as iq1s_grid, a signed byte a value, where ggml's has iq1s_grid_gpu, value + 1 in 4-bit
 // fields; dequantize_iq1_s and dequantize_iq1_m read the bytes and add the 1, which gives the same integers.
+// dequantize_nvfp4 is not ggml's: it is ours, after src/quant's dequant_nvfp4.
 
 constexpr constant static float kvalues_iq4nl_f[16] = {
     -127.f, -104.f, -83.f, -65.f, -49.f, -35.f, -22.f, -10.f, 1.f, 13.f, 25.f, 38.f, 53.f, 69.f, 89.f, 113.f
@@ -185,6 +186,35 @@ void dequantize_mxfp4(device const block_mxfp4 * xb, short il, thread type4x4 & 
         reg[i][2] = d * kvalues_mxfp4_f[(q2[4*i + 2] >> shr) & 0x0F];
         reg[i][3] = d * kvalues_mxfp4_f[(q2[4*i + 3] >> shr) & 0x0F];
     }
+}
+
+// NVFP4: piece il is sub-block il, its values j and j + 8 in the low and high nibble of qs[8 il + j], times the UE4M3
+// scale d[il].  Every product is exact (a 2-bit by a 4-bit significand), so the floats are src/quant's to the bit and
+// the halves too (|v| <= 2880).  That needs its +0 at code 8, where kvalues_mxfp4_f has -0.  The scale's bits go
+// straight into a float's and the codes come in two word loads (a block is 36 bytes, qs 4 bytes in), as in the Strata
+// engine's SF4 decode.
+constexpr constant static float kvalues_nvfp4_f[16] = {
+    0, .5f, 1.f, 1.5f, 2.f, 3.f, 4.f, 6.f, 0, -.5f, -1.f, -1.5f, -2.f, -3.f, -4.f, -6.f
+};
+
+// src/quant's ue4m3_formula without its halving (kvalues_nvfp4_f is E2M1 itself, not twice it): bit 7 is not read,
+// and only 0x7F is NaN's 0
+static inline float nvfp4_scale(uint x) {
+    const uint e = (x >> 3) & 15u, m = x & 7u;
+    return x == 0x7Fu ? 0.0f : e ? as_type<float>(((e + 120u) << 23) | (m << 20)) : float(m) * (1.0f / 512.0f);
+}
+
+template <typename type4x4>
+void dequantize_nvfp4(device const block_nvfp4 * xb, short il, thread type4x4 & reg) {
+    device const uint * q = (device const uint *) (xb->qs + 8*il);
+    const uint lo = q[0], hi = q[1];
+    const float d = nvfp4_scale(xb->d[il]);
+    float4x4 r;
+    r[0] = d * float4(kvalues_nvfp4_f[lo & 15], kvalues_nvfp4_f[(lo >> 8) & 15], kvalues_nvfp4_f[(lo >> 16) & 15], kvalues_nvfp4_f[(lo >> 24) & 15]);
+    r[1] = d * float4(kvalues_nvfp4_f[hi & 15], kvalues_nvfp4_f[(hi >> 8) & 15], kvalues_nvfp4_f[(hi >> 16) & 15], kvalues_nvfp4_f[(hi >> 24) & 15]);
+    r[2] = d * float4(kvalues_nvfp4_f[(lo >> 4) & 15], kvalues_nvfp4_f[(lo >> 12) & 15], kvalues_nvfp4_f[(lo >> 20) & 15], kvalues_nvfp4_f[lo >> 28]);
+    r[3] = d * float4(kvalues_nvfp4_f[(hi >> 4) & 15], kvalues_nvfp4_f[(hi >> 12) & 15], kvalues_nvfp4_f[(hi >> 20) & 15], kvalues_nvfp4_f[hi >> 28]);
+    reg = (type4x4) r;
 }
 
 template <typename type4x4>

@@ -221,3 +221,30 @@ kernel void poly_likeliest(constant BasicArgs& a [[buffer(0)]],uint tid [[thread
     for(uint g=0;g<groups;++g) { sum+=ts[g]; at=min(at,ta[g]); }
     reinterpret_cast<device int*>(a.p[1])[0]=at<a.n?at:0; a.p[1][1]=1.0f/sum;
 }
+
+// The global scales of NVFP4 experts (ExpertScales; mirrors ExpertArgs in basic.cpp), as CUDA's activations put them
+// on: rows of n gate values and then n up values (gu), row r's expert ids[r], or e[r] without ids; a missing scale is
+// 1.  kind 0: out = the rows scaled (out may be gu); 5 and 6: poly_elementwise's kinds 5 and 6 (SwiGLU clamped at
+// limit, GELU) of the scaled rows, n values a row; 1: out[r] *= gate[ids[r]], expert_weights()'s product.
+struct ExpertArgs {
+    device const float* gu;
+    device float* out;
+    device const float* gate;
+    device const float* up;
+    device const int* ids;
+    int e[32];
+    int n, rows, kind;
+    float limit;
+};
+kernel void poly_expert_rows(constant ExpertArgs& a [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+    if (a.kind == 1) { if (i < uint(a.rows)) a.out[i] *= a.gate[a.ids[i]]; return; }
+    const uint per = a.kind ? a.n : 2 * a.n, row = i / per, col = i % per;
+    if (row >= uint(a.rows)) return;
+    const int e = a.gate || a.up ? (a.ids ? a.ids[row] : a.e[row]) : 0;
+    const float sg = a.gate ? a.gate[e] : 1.0f, su = a.up ? a.up[e] : 1.0f;
+    device const float* x = a.gu + ulong(row) * 2 * a.n;
+    if (!a.kind) { a.out[i] = x[col] * (col < uint(a.n) ? sg : su); return; }
+    float g = x[col] * sg, u = x[a.n + col] * su;
+    if (a.kind == 5) { g = min(g, a.limit); u = clamp(u, -a.limit, a.limit); a.out[i] = g / (1.0f + exp(-g)) * u; }
+    else a.out[i] = 0.5f * g * (1.0f + precise::tanh(0.7978845608028654f * g * (1.0f + 0.044715f * g * g))) * u;
+}
