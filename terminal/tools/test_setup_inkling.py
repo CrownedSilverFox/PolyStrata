@@ -1,4 +1,4 @@
-"""Tests for setup.py's Inkling 2 Mini (docs/models/inkling.md): its two pinned files under the repository's
+"""Tests for setup.py's Inkling 2 Mini (docs/models/inkling.md): its three pinned files under the repository's
 Mainline_Support folder, where their names end in .gguf_file, and the install with no draft model, no image encoder
 and one request at a time.  Mocked like tools/test_setup_glm.py, whose harness this uses.
 
@@ -17,7 +17,7 @@ import setup  # noqa: E402
 from tools import test_setup_glm as glm_tests  # noqa: E402
 
 FAM = setup.FAMILIES["inkling"]
-SIZES = [("UD-Q4_K_XL", 17629760736), ("UD-Q3_K_XL", 13631779296)]
+SIZES = [("UD-Q4_K_XL", 17629760736), ("UD-Q3_K_XL", 13631779296), ("UD-Q2_K_XL", 9138716608)]
 
 
 class Pins(unittest.TestCase):

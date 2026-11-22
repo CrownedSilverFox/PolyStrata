@@ -25,7 +25,7 @@ a second machine, a Windows laptop whose card has 8 GB.
 | Flint 40B-A2.5B | `flint` | `strata-poly` | Unsloth UD-Q4_K_XL, UD-Q3_K_XL, UD-Q6_K_XL and Q8_0, 18.5 to 42.3 GB | repeats only: there is no draft model |
 | Kolibri 1 | `kolibri1` | `strata-poly` | Hob-forge Q4_K_M, Q2_K and Q3_K_M, 28.6 to 47.5 GB | repeats only: there is no draft model |
 | Clover-35B-A3B-Preview | `clover_moe` | `strata-poly` | maternion Q3_K_M and Q4_K_M, IsValorum APEX-I-NanoPlus, 12.6 to 21.2 GB | repeats only: its own block guesses are off ([below](#clover-35b-a3b-preview)) |
-| Inkling 2 Mini (experimental) | `inkling2_loop` | `strata-poly` | Unsloth UD-Q4_K_XL and UD-Q3_K_XL, 17.6 and 13.6 GB | none: it answers one token at a time ([below](#inkling-2-mini-one-card-text-only)) |
+| Inkling 2 Mini (experimental) | `inkling2_loop` | `strata-poly` | Unsloth UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, 9.1 to 17.6 GB | none: it answers one token at a time ([below](#inkling-2-mini-one-card-text-only)) |
 
 `strata` is the first engine and runs Qwen3.8 only; nothing in it changed. `strata-poly` is the engine that reads a
 GGUF in place, and it now has nine architectures. It was called `strata-glm`, after its first model; an install
@@ -49,8 +49,8 @@ specific card preset. Installation and estimates are in [groot.md](models/groot.
 
 ### Inkling 2 Mini (one card, text only)
 
-`python setup.py --family inkling` installs one of two of Unsloth's quantizations (UD-Q4_K_XL by default, 17.6 GB,
-or UD-Q3_K_XL, 13.6 GB). They are the files under the repository's `Mainline_Support` folder,
+`python setup.py --family inkling` installs one of Unsloth's three quantizations (UD-Q4_K_XL by default, 17.6 GB;
+UD-Q3_K_XL, 13.6 GB; UD-Q2_K_XL, 9.1 GB). They are the files under the repository's `Mainline_Support` folder,
 `general.architecture` `inkling2_loop`, the layout llama.cpp runs. The files at the top of that repository are
 another layout (`inkling2`), and the engine refuses them by name.
 
@@ -64,9 +64,8 @@ It has run on Linux with an RTX 5090: chat, streaming, separate reasoning, a too
 conversation continued from the cache. On Windows UD-Q3_K_XL was installed by setup and ran the README's benchmark
 on an RTX 4070 Laptop (8 GB). Not run yet: its image tower, its draft file, AMD cards, a Mac, several cards and
 several requests at once, which the engine refuses for it (setup writes `"parallel": 1`).
-UD-Q2_K_XL is not offered: six of its layers have 1-bit (IQ1_S) experts, which the card's expert cache does not
-hold, and with them on the CPU the RTX 5090 wrote 46 tokens/s where llama.cpp wrote 86. Speeds and the
-comparison with llama.cpp are in [inkling.md](models/inkling.md).
+UD-Q2_K_XL's 1-bit (IQ1_S) experts, in six of its layers, are held in the card's expert cache like the others. Speeds
+and the comparison with llama.cpp are in [inkling.md](models/inkling.md).
 
 ## Install
 

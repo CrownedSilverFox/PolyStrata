@@ -925,13 +925,12 @@ FAMILIES = {
     # context token is the rows of the eight full-attention applications ("row_bytes"); the forty window ones keep
     # rings.  The files are the repository's Mainline_Support ones, the layout llama.cpp runs: the repository names them
     # .gguf_file ("remote_suffix") and its top-level files are another layout (architecture inkling2), which the
-    # engine refuses.  UD-Q2_K_XL is not offered: six of its layers have IQ1_S experts, which the card's expert cache
-    # does not hold, and with them on the CPU an RTX 5090 wrote 46 tokens/s where llama.cpp wrote 86.  The engine keeps one sequence's state for it, so it answers one
+    # engine refuses.  The engine keeps one sequence's state for it, so it answers one
     # request at a time ("one_request": setup writes "parallel": 1).  "vram_beside_gb" is the peak VRAM measured on an RTX 5090 with no expert on the card, a 10,081-token
     # prompt read 1,024 tokens at a time at a 32K context (2,916 MiB), plus the rows of the context's other tokens.
     "inkling": {"title": "Inkling 2 Mini", "by": "Thinking Machines; quantized by Unsloth",
                 "about": "experimental, on the strata-poly engine: one NVIDIA card, Linux or Windows, text only so "
-                         "far; a 17.6 GB file, or 13.6 GB",
+                         "far; a 17.6 GB file, or 13.6 or 9.1 GB",
                 "hf": hf("unsloth/Inkling-2-Mini-GGUF") + "Mainline_Support/", "file": "Inkling-2-Mini-{q}.gguf",
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": False, "experimental": True,
@@ -941,11 +940,16 @@ FAMILIES = {
                                           "vram_beside_gb": 3.7},
                            "UD-Q3_K_XL": {"about": "3-bit i-quant and 4-bit experts mixed",
                                           "download_gb": 13.6, "ram_gb": 17, "arena_gb": 12.198739968,
-                                          "vram_beside_gb": 3.6}},
+                                          "vram_beside_gb": 3.6},
+                           "UD-Q2_K_XL": {"about": "1- to 2-bit experts: the smallest",
+                                          "download_gb": 9.1, "ram_gb": 13, "arena_gb": 7.888306176,
+                                          "vram_beside_gb": 3.5}},
                 "sha256": {"Inkling-2-Mini-UD-Q4_K_XL.gguf":
                            (17629760736, "e64276656f072e9b2197a61723667cbdb71da66a716ffd966e572c21088f3cd3"),
                            "Inkling-2-Mini-UD-Q3_K_XL.gguf":
-                           (13631779296, "e2d03e8c92ac21cff0e3309b95f40dfd27d1825184f0d2bc09db249797273639")}},
+                           (13631779296, "e2d03e8c92ac21cff0e3309b95f40dfd27d1825184f0d2bc09db249797273639"),
+                           "Inkling-2-Mini-UD-Q2_K_XL.gguf":
+                           (9138716608, "b42841608ea380ddde5a3f1125081357128a3c71b80d006246de4e31292fc6c1")}},
     # Flint (llama.cpp's flint): no draft block and no image encoder.  Its window layers' caches are rings, so a context
     # token is the full layers' rows only.  UD-Q4_K_XL is taken unasked only with 15 GB of RAM past its estimate,
     # about 40 GB beside an 8 GB card: on the 32 GB laptop its file did not stay in RAM beside the desktop's programs,

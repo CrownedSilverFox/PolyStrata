@@ -2,7 +2,7 @@
 
 Back to [README.md](../../README.md)
 
-**Inkling 2 Mini** by Thinking Machines: a file of 14 or 18 GB. It is experimental here. It has run on Linux with an
+**Inkling 2 Mini** by Thinking Machines: a file of 9 to 18 GB. It is experimental here. It has run on Linux with an
 RTX 5090 and on Windows with an 8 GB laptop card, text only, one request at a time. Its 24 layers of weights run as 48: the twelve in the middle run three
 times for every token. Forty of the 48 look back 1,024 tokens only, so a long conversation takes little VRAM:
 32,768 bytes a token.
@@ -10,7 +10,7 @@ times for every token. Forty of the 48 look back 1,024 tokens only, so a long co
 ## How fast is it?
 
 Measured on an RTX 5090 (32 GB) with a Xeon Platinum 8470Q (25 vCPU) and 90 GB of RAM, on Linux. The card holds
-every expert of both sizes. Each run writes 256 tokens, the most likely one each time, at a 32K context, and each
+every expert of all three sizes. Each run writes 256 tokens, the most likely one each time, at a 32K context, and each
 number is the range of three runs.
 
 | Size | Writes after a 19-token prompt | Writes after a 10,081-token prompt | Reads that prompt |
@@ -50,8 +50,8 @@ run).
 | | |
 | --- | --- |
 | **Graphics card** | One **NVIDIA** card with **8 GB of VRAM or more**. It has run on an RTX 5090 (32 GB) and on an RTX 4070 Laptop (8 GB). About 3.7 GB are taken before any expert at a 32K context. |
-| **RAM** | About **21 or 17 GB** beside an 8 GB card for UD-Q4_K_XL and UD-Q3_K_XL, the installer's estimate. A 32 GB card holds either size whole. |
-| **Disk** | 17.6 or 13.6 GB for the model file. |
+| **RAM** | About **21, 17 or 13 GB** beside an 8 GB card for UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, the installer's estimate. A 32 GB card holds any of them whole. |
+| **Disk** | 9.1 to 17.6 GB for the model file. |
 | **System** | Linux or Windows 10 / 11, and a current NVIDIA driver. |
 
 Not run yet: an AMD card, a Mac, several cards, and UD-Q4_K_XL on the 8 GB card. The model also reads
@@ -64,7 +64,7 @@ for this model, and the installer writes `"parallel": 1`. Its license is Apache 
 ./setup.sh --family inkling
 ```
 
-Add `--model UD-Q3_K_XL` for the smaller size.
+Add `--model UD-Q3_K_XL` or `--model UD-Q2_K_XL` for a smaller size.
 
 ## Which model should I pick?
 
@@ -72,13 +72,10 @@ Add `--model UD-Q3_K_XL` for the smaller size.
 | --- | --- | ---: | ---: |
 | **UD-Q4_K_XL** | 4-bit experts, 8-bit where they write ([Unsloth](https://huggingface.co/unsloth/Inkling-2-Mini-GGUF)) | 17.6 GB | about 21 GB |
 | **UD-Q3_K_XL** | 3- and 4-bit experts mixed | 13.6 GB | about 17 GB |
+| **UD-Q2_K_XL** | 1- to 2-bit experts: the smallest | 9.1 GB | about 13 GB |
 
 The installer downloads the files under the repository's `Mainline_Support` folder, the layout llama.cpp runs
 (`inkling2_loop`). The files at the top of the repository are another layout, which the engine refuses by name.
-
-UD-Q2_K_XL (9.1 GB) is not offered. Six of its layers have 1-bit experts, which the card's expert cache does not
-hold, so they are computed on the CPU: the RTX 5090 wrote 44 to 46 tokens/s after the short prompt and 43 after the
-long one, where llama.cpp wrote 86 to 87 and 79.
 
 ## How does it work?
 

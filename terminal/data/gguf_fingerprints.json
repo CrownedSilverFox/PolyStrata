@@ -911,6 +911,22 @@
    ]
   }
  },
+ "inkling/UD-Q2_K_XL": {
+  "engine": "strata-poly",
+  "archs": [
+   "inkling2_loop"
+  ],
+  "files": [
+   "Inkling-2-Mini-UD-Q2_K_XL.gguf"
+  ],
+  "repo": "unsloth/Inkling-2-Mini-GGUF",
+  "pins": {
+   "Inkling-2-Mini-UD-Q2_K_XL.gguf": [
+    9138716608,
+    "b42841608ea380ddde5a3f1125081357128a3c71b80d006246de4e31292fc6c1"
+   ]
+  }
+ },
  "flint/UD-Q4_K_XL": {
   "engine": "strata-poly",
   "archs": [
