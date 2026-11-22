@@ -78,7 +78,7 @@ const char* quant_name(int t) {
 #define Q(id,name) case id:return #name;
     Q(2,q4_0) Q(3,q4_1) Q(6,q5_0) Q(7,q5_1) Q(8,q8_0) Q(10,q2_K) Q(11,q3_K) Q(12,q4_K) Q(13,q5_K)
     Q(14,q6_K) Q(16,iq2_xxs) Q(17,iq2_xs) Q(18,iq3_xxs) Q(19,iq1_s) Q(20,iq4_nl) Q(21,iq3_s)
-    Q(22,iq2_s) Q(23,iq4_xs) Q(29,iq1_m) Q(39,mxfp4) Q(42,q2_0)
+    Q(22,iq2_s) Q(23,iq4_xs) Q(29,iq1_m) Q(39,mxfp4) Q(40,nvfp4) Q(42,q2_0)
 #undef Q
     default:return nullptr;
     }

@@ -94,7 +94,7 @@ GEMM(half,64,64,4) GEMM(half,64,32,4) GEMM(float,64,64,4) GEMM(float,64,32,4)
 #define MM_(name,QK,TM,TN,TK,SG) template [[host_name("poly_mm_" #name "_" #TM "_" #TN "_" #TK "_" #SG)]] kernel decltype(poly_mm<block_##name,QK,dequantize_##name<half4x4>,TM,TN,TK,SG>) poly_mm<block_##name,QK,dequantize_##name<half4x4>,TM,TN,TK,SG>;
 #define MM(name,QK) MM_(name,QK,64,64,64,4) MM_(name,QK,32,64,64,4) template [[host_name("poly_dq_" #name)]] kernel decltype(poly_dq<block_##name,QK,dequantize_##name<half4x4>>) poly_dq<block_##name,QK,dequantize_##name<half4x4>>;
 #define MM_TRY(name,QK) MM_(name,QK,64,64,32,4) MM_(name,QK,128,64,64,4)
-MM(q4_0,32) MM(q4_1,32) MM(q5_0,32) MM(q5_1,32) MM(q8_0,32) MM(q2_0,64) MM(mxfp4,32)
+MM(q4_0,32) MM(q4_1,32) MM(q5_0,32) MM(q5_1,32) MM(q8_0,32) MM(q2_0,64) MM(mxfp4,32) MM(nvfp4,64)
 MM(q2_K,256) MM(q3_K,256) MM(q4_K,256) MM(q5_K,256) MM(q6_K,256)
 MM(iq2_xxs,256) MM(iq2_xs,256) MM(iq3_xxs,256) MM(iq1_s,256) MM(iq4_nl,32)
 MM(iq3_s,256) MM(iq2_s,256) MM(iq4_xs,256) MM(iq1_m,256)
