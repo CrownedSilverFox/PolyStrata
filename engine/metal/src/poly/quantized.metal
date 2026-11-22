@@ -25,11 +25,23 @@ kernel void poly_tohalf(constant QArgs& a [[buffer(0)]],uint2 tg [[threadgroup_p
     const float4 v=a.xstride%4?float4(x[0],x[1],x[2],x[3]):*reinterpret_cast<device const float4*>(x);
     *reinterpret_cast<device half4*>(static_cast<device half*>(a.p[1])+ulong(row)*a.ni+k)=half4(v);
 }
-// NR outputs a SIMD group (group.x * NR on), the rows' values read once for them: NVFP4's 4 (quantized.cpp's
-// kNvfp4Rows), 1 for the others
-template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),int NR=1>
+// Sum over the 16-value piece il of a block of its weights times xv (the row's values there; xs their sum, where the
+// dot asks for it with kSum): from the block decoder, or with a dot of the type's own (dot_<type>)
+template<typename Block,void Deq(device const Block*,short,thread float4x4&)>
+struct DeqDot {
+    enum { kSum=0 };
+    static float run(device const Block* b,short il,thread const float* xv,float) {
+        float4x4 d; Deq(b,il,d);
+        float s=0;
+        for(int j=0;j<16;++j) s+=d[j/4][j%4]*xv[j];
+        return s;
+    }
+};
+// A threadgroup is a SIMD group of NR outputs, the rows' values read once for them: 4 where a launch has 8,192 outputs
+// or more (qrun() in quantized.cpp), else 1 (poly_mul_<type>_1).  Its 32 lanes take 16 values at a time, 512 apart.
+template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),typename Dot,int NR>
 kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_position_in_grid]],
-                     uint lane [[thread_index_in_threadgroup]],uint3 shape [[threads_per_threadgroup]]) {
+                     uint lane [[thread_index_in_threadgroup]]) {
     uint row=group.y; ulong yrow=row;
     device const uchar* w=static_cast<device uchar*>(a.p[0]);
     device float* out_y=static_cast<device float*>(a.p[2]);
@@ -68,38 +80,56 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
         if(a.kind==4)xrow=static_cast<device int*>(a.p[3])[row];
         else yrow=static_cast<device int*>(a.p[3])[row];
     }
-    device const Block* weights=reinterpret_cast<device const Block*>(w)+ulong(group.x)*NR*(a.ni/QK);
     device const uchar* x=a.kind==8
         ? static_cast<device const uchar*>(a.p[3*row+1])
         : static_cast<device uchar*>(a.p[1])+ulong(xrow/a.every)*a.xstride;
-    const int nr=NR==1?1:min(NR,a.no-int(group.x)*NR);   // fewer in the last group
+    const int o0=int(group.x)*NR,nr=min(NR,a.no-o0);   // fewer in the last group
     const ulong per=a.ni/QK;
+    device const Block* weights=reinterpret_cast<device const Block*>(w)+ulong(o0)*per;
     float acc[NR]={};
     for(int start=lane*16;start<a.ni;start+=32*16) {
         float xv[16];
         if(a.kind==3) for(int j=0;j<16;++j) xv[j]=float(reinterpret_cast<device const half*>(x)[start+j]);
-        else {
+        else {   // a q8_1 block: its scale, then 32 codes (4-byte aligned: 36-byte blocks)
             device const uchar* block=x+(start/32)*36;
-            float d=float(*reinterpret_cast<device const half*>(block));
-            for(int j=0;j<16;++j) xv[j]=d*float(reinterpret_cast<device const char*>(block+4)[start%32+j]);
+            const float d=float(*reinterpret_cast<device const half*>(block));
+            device const char4* q=reinterpret_cast<device const char4*>(block+4+start%32);
+            for(int j=0;j<4;++j) { const float4 v=d*float4(q[j]); xv[4*j]=v[0];xv[4*j+1]=v[1];xv[4*j+2]=v[2];xv[4*j+3]=v[3]; }
         }
+        float xs=0;
+        if(Dot::kSum) for(int j=0;j<16;++j) xs+=xv[j];
         for(int r=0;r<nr;++r) {
-            float4x4 deq; Deq(weights+r*per+start/QK,short((start%QK)/16),deq);
-            if(a.kind==3) for(int j=0;j<16;++j) acc[r]+=float(half(deq[j/4][j%4]))*xv[j];
-            else for(int j=0;j<16;++j) acc[r]+=deq[j/4][j%4]*xv[j];
+            device const Block* b=weights+r*per+start/QK;
+            const short il=short((start%QK)/16);
+            if(a.kind==3) { float4x4 deq; Deq(b,il,deq); for(int j=0;j<16;++j) acc[r]+=float(half(deq[j/4][j%4]))*xv[j]; }
+            else acc[r]+=Dot::run(b,il,xv,xs);
         }
     }
     for(int r=0;r<nr;++r) {
         const float sum=simd_sum(acc[r]);
-        if(!lane) out_y[yrow*a.ystride+group.x*NR+r]=sum;
+        if(!lane) out_y[yrow*a.ystride+o0+r]=sum;
     }
 }
-#define MUL_(name,QK,NR) template [[host_name("poly_mul_" #name)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>,NR>) poly_mul<block_##name,QK,dequantize_##name<float4x4>,NR>;
-#define MUL(name,QK) MUL_(name,QK,1)
-MUL(q4_0,32) MUL(q4_1,32) MUL(q5_0,32) MUL(q5_1,32) MUL(q8_0,32) MUL(q2_0,64) MUL(mxfp4,32) MUL_(nvfp4,64,NVFP4_ROWS)
-MUL(q2_K,256) MUL(q3_K,256) MUL(q4_K,256) MUL(q5_K,256) MUL(q6_K,256)
-MUL(iq2_xxs,256) MUL(iq2_xs,256) MUL(iq3_xxs,256) MUL(iq1_s,256) MUL(iq4_nl,32)
-MUL(iq3_s,256) MUL(iq2_s,256) MUL(iq4_xs,256) MUL(iq1_m,256)
+#define MUL_(name,QK,DOT,NR,SUFFIX) template [[host_name("poly_mul_" #name SUFFIX)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>) poly_mul<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>;
+#define MUL(name,QK) MUL_(name,QK,dot_##name,4,"") MUL_(name,QK,dot_##name,1,"_1")
+#define DEQDOT(name,QK) typedef DeqDot<block_##name,dequantize_##name<float4x4>> dot_##name;
+#define MV_TYPES(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q8_0,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) \
+    M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
+    M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
+#define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q8_0,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) \
+    M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) \
+    M(iq1_s,256) M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
+MV_TYPES_DEQ(DEQDOT)
+MV_TYPES(MUL)
+#ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
+template<typename Block,void Deq(device const Block*,short,thread float4x4&)> struct BenchDot {
+    enum { kSum=0 };
+    static float run(device const Block* b,short il,thread const float* xv,float xs) { return DeqDot<Block,Deq>::run(b,il,xv,xs); }
+};
+#define MULD(name,QK) typedef BenchDot<block_##name,dequantize_##name<float4x4>> benchdot_##name; \
+    MUL_(name,QK,benchdot_##name,4,"_deq4") MUL_(name,QK,benchdot_##name,1,"_deq1")
+MV_TYPES(MULD)
+#endif
 
 template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&)>
 kernel void q36_embed(constant QArgs& a [[buffer(0)]],uint2 group [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]]) {
