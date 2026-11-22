@@ -15,7 +15,8 @@
 
 namespace strata::quant {
 
-enum class Isa : int { Scalar = 0, Neon = 1, Avx1 = 2, Avx2 = 3, Avx512 = 4 };
+/// AvxVnni: AVX2 with the VEX-encoded AVX-VNNI dot products (Alder Lake and later hybrid Intel CPUs, Zen 5), below AVX-512.
+enum class Isa : int { Scalar = 0, Neon = 1, Avx1 = 2, Avx2 = 3, AvxVnni = 4, Avx512 = 5 };
 
 /// The arithmetic contract of a kernel.  Generic = ggml's `_generic` C code (what a build without SIMD runs), Avx = its `__AVX__`
 /// branches, Avx2 = its `__AVX2__` branches (also what a native AVX-512 build runs for floats), Neon = its Arm branches.
@@ -24,7 +25,8 @@ enum class Arith : int { Generic = 0, Avx = 1, Avx2 = 2, Neon = 3 };
 const char* isa_name(Isa i) noexcept;
 const char* arith_name(Arith a) noexcept;
 
-/// What this CPU (and OS) can run.  Probed once; STRATA_FORCE_ISA=avx2|avx|sse caps it the way the pool's own probes do (tests, older-CPU runs).
+/// What this CPU (and OS) can run.  Probed once; STRATA_FORCE_ISA=avx2|avx|sse caps it the way the pool's own probes do (tests, older-CPU runs):
+/// avx2 is AVX2 without AVX-512 and without AVX-VNNI.
 struct Caps {
     bool sse42 = false;
     bool avx = false;       ///< AVX with OS support for the YMM state

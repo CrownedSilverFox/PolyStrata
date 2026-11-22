@@ -445,7 +445,6 @@ void dot_iq4_nl_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRIC
 
     const __m128i values128 = _mm_loadu_si128((const __m128i*)kvalues_iq4nl);
     const __m128i m4b  = _mm_set1_epi8(0x0f);
-    const __m256i mone = _mm256_set1_epi16(1);
 
     __m256 accum1 = _mm256_setzero_ps();
     __m256 accum2 = _mm256_setzero_ps();
@@ -458,10 +457,8 @@ void dot_iq4_nl_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRIC
                                               _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_1, m4b)));
         const __m256i q4b_2 = MM256_SET_M128I(_mm_shuffle_epi8(values128, _mm_and_si128(_mm_srli_epi16(q4bits_2, 4), m4b)),
                                               _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_2, m4b)));
-        const __m256i p16_1 = mul_add_epi8(q4b_1, q8b_1);
-        const __m256i p16_2 = mul_add_epi8(q4b_2, q8b_2);
-        const __m256i p_1 = _mm256_madd_epi16(p16_1, mone);
-        const __m256i p_2 = _mm256_madd_epi16(p16_2, mone);
+        const __m256i p_1 = mul_sum_i8_quads(q4b_1, q8b_1);
+        const __m256i p_2 = mul_sum_i8_quads(q4b_2, q8b_2);
         accum1 = _mm256_fmadd_ps(_mm256_set1_ps(h2f(y[ib + 0].d)*h2f(x[ib + 0].d)),
                 _mm256_cvtepi32_ps(p_1), accum1);
         accum2 = _mm256_fmadd_ps(_mm256_set1_ps(h2f(y[ib + 1].d)*h2f(x[ib + 1].d)),
@@ -527,7 +524,6 @@ void dot_mxfp4_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT
 
     const __m128i values128 = _mm_loadu_si128((const __m128i*)kvalues_fp4);
     const __m128i m4b  = _mm_set1_epi8(0x0f);
-    const __m256i mone = _mm256_set1_epi16(1);
 
     __m256 accum1 = _mm256_setzero_ps();
     __m256 accum2 = _mm256_setzero_ps();
@@ -541,10 +537,8 @@ void dot_mxfp4_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT
                                               _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_1, m4b)));
         const __m256i q4b_2 = MM256_SET_M128I(_mm_shuffle_epi8(values128, _mm_and_si128(_mm_srli_epi16(q4bits_2, 4), m4b)),
                                               _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_2, m4b)));
-        const __m256i p16_1 = mul_add_epi8(q4b_1, q8b_1);
-        const __m256i p16_2 = mul_add_epi8(q4b_2, q8b_2);
-        const __m256i p_1 = _mm256_madd_epi16(p16_1, mone);
-        const __m256i p_2 = _mm256_madd_epi16(p16_2, mone);
+        const __m256i p_1 = mul_sum_i8_quads(q4b_1, q8b_1);
+        const __m256i p_2 = mul_sum_i8_quads(q4b_2, q8b_2);
         const __m256 scale0 = _mm256_set1_ps(h2f(y[ib + 0].d)*e8m0_to_fp32_half(x[ib + 0].e));
         const __m256 scale1 = _mm256_set1_ps(h2f(y[ib + 1].d)*e8m0_to_fp32_half(x[ib + 1].e));
         accum1 = _mm256_fmadd_ps(scale0, _mm256_cvtepi32_ps(p_1), accum1);
@@ -606,7 +600,6 @@ void dot_nvfp4_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT
 
     const __m128i values128 = _mm_loadu_si128((const __m128i*)kvalues_fp4);
     const __m128i m4b  = _mm_set1_epi8(0x0f);
-    const __m256i mone = _mm256_set1_epi16(1);
 
     __m256 accum = _mm256_setzero_ps();
     for(; ib < nb; ib++){
@@ -626,11 +619,9 @@ void dot_nvfp4_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT
         const __m256i q4_01 = MM256_SET_M128I(_mm_unpackhi_epi64(q4_01_lo,q4_01_hi), _mm_unpacklo_epi64(q4_01_lo,q4_01_hi));
         const __m256i q4_23 = MM256_SET_M128I(_mm_unpackhi_epi64(q4_23_lo,q4_23_hi),_mm_unpacklo_epi64(q4_23_lo,q4_23_hi));
 
-        const __m256i p01 = mul_add_epi8(q4_01,q8_01);
-        const __m256i p_1 = _mm256_madd_epi16(p01, mone);
+        const __m256i p_1 = mul_sum_i8_quads(q4_01,q8_01);
 
-        const __m256i p23 = mul_add_epi8(q4_23,q8_23);
-        const __m256i p_2 = _mm256_madd_epi16(p23, mone);
+        const __m256i p_2 = mul_sum_i8_quads(q4_23,q8_23);
 
         const float dy0 = h2f(y[2*ib].d);
         const float dy1 = h2f(y[2*ib+1].d);

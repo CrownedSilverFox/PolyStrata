@@ -23,12 +23,20 @@ macro(strata_quant_layer)
     target_sources(strata_quant PRIVATE ${_sq}/src/quant/x86/dot_avx2.cpp ${_sq}/src/quant/x86/act_avx2.cpp ${_sq}/src/quant/x86/dot_avx.cpp
                                        ${_sq}/src/quant/x86/act_avx.cpp ${_sq}/src/quant/x86/dot_avx512.cpp)
     target_compile_definitions(strata_quant PRIVATE STRATA_QUANT_X86_TIERS=1)
+    # the AVX-VNNI tier where the compiler has the instructions (GCC 11 and later; MSVC has the intrinsics under /arch:AVX2)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(-mavxvnni STRATA_QUANT_HAS_MAVXVNNI)
+    if(MSVC OR STRATA_QUANT_HAS_MAVXVNNI)
+      target_sources(strata_quant PRIVATE ${_sq}/src/quant/x86/dot_avxvnni.cpp)
+      target_compile_definitions(strata_quant PRIVATE STRATA_QUANT_AVXVNNI=1)
+    endif()
     if(MSVC)
       # MSVC contracts neither ggml-cpu's C nor these files' intrinsics (measured: 0 differences from its own ggml in all three flavours); the Windows bits
       # differ from GCC's in the Q5_K and IQ1_S dots, see below
       set_source_files_properties(${_sq}/src/quant/x86/dot_avx2.cpp ${_sq}/src/quant/x86/act_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
       set_source_files_properties(${_sq}/src/quant/x86/dot_avx.cpp ${_sq}/src/quant/x86/act_avx.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX")
       set_source_files_properties(${_sq}/src/quant/x86/dot_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
+      set_source_files_properties(${_sq}/src/quant/x86/dot_avxvnni.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     else()
       # What is pinned, and against what: the reference is ggml-cpu as GCC 13.3 builds it (C, gnu11, where GCC contracts a multiply and an add into an
       # FMA wherever it can, the intrinsics' `_mm256_add_ps(_mm256_mul_ps(a, b), c)` patterns included).  -ffp-contract=fast keeps this C++ (-std=c++20,
@@ -46,6 +54,8 @@ macro(strata_quant_layer)
       # the 512-bit kernels of the Avx2 contract: F/DQ/BW/VL + VNNI (what Isa::Avx512 means), called only behind caps()
       set_source_files_properties(${_sq}/src/quant/x86/dot_avx512.cpp PROPERTIES COMPILE_OPTIONS
                                   "-mavx512f;-mavx512bw;-mavx512vl;-mavx512dq;-mavx512vnni;-mavx2;-mfma;-mf16c;-ffp-contract=fast")
+      # the AVX2 kernels with VEX AVX-VNNI (what Isa::AvxVnni means), called only behind caps()
+      set_source_files_properties(${_sq}/src/quant/x86/dot_avxvnni.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c;-mavxvnni;-ffp-contract=fast")
     endif()
   endif()
   if(NOT STRATA_CPU_X86 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")

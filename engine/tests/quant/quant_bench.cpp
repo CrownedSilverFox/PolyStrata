@@ -1,4 +1,5 @@
-// tests/quant/quant_bench.cpp - one-thread speed of every dot kernel of the layer (all contracts and ISAs this CPU can run), no ggml.
+// tests/quant/quant_bench.cpp - one-thread speed of every dot kernel of the layer (all contracts and ISAs this CPU can run), no ggml,
+// and whether the kernels of a contract give the same bits (exit 1 when not).
 //
 // usage: quant_bench [--type NAME] [--mb N] [--reps N] [--n N] [--arith avx2|avx|generic]
 // For each weight type and each runnable kernel: GB/s of weight bytes with the rows streamed from DRAM (a --mb MB set) and with them resident in L2
@@ -58,6 +59,7 @@ int main(int argc, char** argv) {
     std::printf("quant_bench: contract %s, best isa %s, DRAM set %d MB, L2 set 256 KB, n=%d, median of %d\n", sq::arith_name(want), sq::isa_name(sq::best_isa()),
                 mb, n_el, reps);
     float sink = 0.f;
+    int bad = 0;
     for (int t = 0; t < 150; ++t) {
         const sq::TypeInfo* ti = sq::type_info(t);
         if (ti == nullptr || !ti->has_dot || (only && std::strcmp(only, ti->name))) continue;
@@ -86,6 +88,19 @@ int main(int argc, char** argv) {
         const sq::ActKernel* ak = sq::act_kernel(ti->act, want);
         if (ak == nullptr) continue;
         ak->fn(x.data(), act.data(), n);
+        // the tiers of a contract differ in instructions, not in arithmetic: every kernel gives the last one's bits, row by row
+        for (size_t i = 0; i + 1 < run_k.size(); ++i) {
+            const size_t rows = std::min<size_t>(rows_dram, 65536);
+            size_t diff = 0;
+            for (size_t r = 0; r < rows; ++r) {
+                float a, b;
+                run_k[i]->fn(n, &a, w.data() + r * rb, act.data());
+                run_k.back()->fn(n, &b, w.data() + r * rb, act.data());
+                diff += std::memcmp(&a, &b, sizeof a) != 0;
+            }
+            if (diff) std::printf("  %-8s %s: %zu of %zu rows not the bits of %s\n", ti->name, run_k[i]->name, diff, rows, run_k.back()->name);
+            bad += diff != 0;
+        }
         std::vector<std::vector<double>> td(run_k.size()), tl(run_k.size());
         for (int rep = 0; rep < reps; ++rep)
             for (size_t i = 0; i < run_k.size(); ++i) {
@@ -102,5 +117,5 @@ int main(int argc, char** argv) {
         }
     }
     if (sink == 12345.f) std::printf("\n");
-    return 0;
+    return bad ? 1 : 0;
 }
