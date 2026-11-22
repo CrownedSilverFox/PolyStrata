@@ -345,6 +345,15 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_include_directories(poly_dsv4_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                    ${_strata_gpu_include_directories})
   target_link_libraries(poly_dsv4_test PRIVATE ${_strata_gpu_runtime_target})
+  # Inkling 2's kernels (inkling2.cu) against the same arithmetic on the host, and the fused launches against the
+  # calls they stand for; needs a card (77 without one)
+  add_executable(poly_inkling2_test src/poly/inkling2_test.cu src/poly/inkling2.cu src/poly/kernels.cu)
+  target_include_directories(poly_inkling2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                       ${_strata_gpu_include_directories})
+  target_link_libraries(poly_inkling2_test PRIVATE strata_kernels ${_strata_gpu_blas_target}
+                                                   ${_strata_gpu_runtime_target})
+  add_test(NAME poly_inkling2_test COMMAND poly_inkling2_test)
+  set_tests_properties(poly_inkling2_test PROPERTIES SKIP_RETURN_CODE 77)
   # the pool of the CPU experts, without a model
   add_executable(poly_workers_test src/poly/workers_test.cpp src/poly/cpu_experts.cpp)
   target_link_libraries(poly_workers_test PRIVATE strata_quant Threads::Threads)
