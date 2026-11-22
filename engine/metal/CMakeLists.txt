@@ -294,7 +294,15 @@ if(STRATA_METAL_POLY)
   add_executable(poly_mm_bench poly_tests/mm_bench.cpp)
   target_include_directories(poly_mm_bench PRIVATE ${S}/poly ${_strata_ggml_root}/ggml/include)
   target_link_libraries(poly_mm_bench PRIVATE strata_poly_metal_kernels ggml-base)
-  foreach(t attention quantized recurrent operations nvfp4 inkling)
+  # one token's quantized products (poly_mul) per type on a decode step's shapes, run by hand
+  add_executable(poly_mv_bench poly_tests/mv_bench.cpp)
+  target_include_directories(poly_mv_bench PRIVATE ${S}/poly ${_strata_ggml_root}/ggml/include)
+  target_link_libraries(poly_mv_bench PRIVATE strata_poly_metal_kernels ggml-base)
+  target_compile_definitions(poly_mv_bench PRIVATE   # (its tiles' kernels from the same sources as quantized.cpp's)
+    STRATA_POLY_QUANT_COMMON="${GGML_COMMON}"
+    STRATA_POLY_DEQUANT_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/src/poly/dequant.metal"
+    STRATA_POLY_QUANT_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/src/poly/quantized.metal")
+  foreach(t attention quantized recurrent operations nvfp4 mv inkling)
     add_executable(poly_${t}_parity poly_tests/${t}_parity.cpp)
     target_include_directories(poly_${t}_parity PRIVATE ${S}/poly ${_strata_ggml_root}/ggml/include)
     target_link_libraries(poly_${t}_parity PRIVATE strata_poly_metal_kernels ggml-base)
