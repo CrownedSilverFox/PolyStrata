@@ -588,23 +588,33 @@ __global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
         r[hp] = hp < per && lane < a.n_rel ? rs[hp * a.n_rel + lane] : 0.0f;
     }
     float* s = a.score + (size_t(tt) * a.n_head + size_t(g) * per) * nk_max;
+    // the warp's keys and their bias values first, so that their reads are on their way together (the scores'
+    // stores between them could be to the same memory, as far as the compiler knows)
+    float k[kScoreKeys][kLaneHalves], rb[kScoreKeys];
     long long row = a.ring > 0 ? (lo + j0) % a.ring : lo + j0;
-    for (int j = j0; j < j1; ++j) {
-        float k[kLaneHalves];
-        lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, k);
-        const long long dist = p - (lo + j);
-        const float rb = lane < a.n_rel && dist < a.extent ? a.rel_bias[size_t(dist) * a.n_rel + lane] : 0.0f;
 #pragma unroll
-        for (int hp = 0; hp < kMaxPer; ++hp) {
-            if (hp < per) {
-                float d = rb * r[hp];
+    for (int u = 0; u < kScoreKeys; ++u) {
+        if (j0 + u < j1) {
+            lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, k[u]);
+            const long long dist = p - (lo + j0 + u);
+            rb[u] = lane < a.n_rel && dist < a.extent ? a.rel_bias[size_t(dist) * a.n_rel + lane] : 0.0f;
+            if (++row == a.ring) row = 0;
+        }
+    }
 #pragma unroll
-                for (int c = 0; c < kLaneHalves; ++c) d += q[hp][c] * k[c];
-                d = warp_sum(d);
-                if (lane == 0) s[size_t(hp) * nk_max + j] = d - sinks[hp];
+    for (int u = 0; u < kScoreKeys; ++u) {
+        if (j0 + u < j1) {
+#pragma unroll
+            for (int hp = 0; hp < kMaxPer; ++hp) {
+                if (hp < per) {
+                    float d = rb[u] * r[hp];
+#pragma unroll
+                    for (int c = 0; c < kLaneHalves; ++c) d += q[hp][c] * k[u][c];
+                    d = warp_sum(d);
+                    if (lane == 0) s[size_t(hp) * nk_max + j0 + u] = d - sinks[hp];
+                }
             }
         }
-        if (++row == a.ring) row = 0;
     }
 }
 
@@ -652,19 +662,28 @@ __global__ void ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, in
 #pragma unroll
         for (int c = 0; c < kLaneHalves; ++c) acc[hp][c] = 0.0f;
     }
+    // the warp's values first, so that their reads are on their way together; then each in its turn
     long long row = a.ring > 0 ? (lo + j0) % a.ring : lo + j0;
-    for (int j = j0; j < j1; ++j) {
-        float v[kLaneHalves];
-        lane_halves((const __half*) a.vals + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, v);
+    float v[kValueKeys][kLaneHalves];
 #pragma unroll
-        for (int hp = 0; hp < kMaxPer; ++hp) {
-            if (hp < per) {
-                const float w = __shfl_sync(0xffffffff, weight, hp * kValueKeys + (j - j0), WARP);
+    for (int u = 0; u < kValueKeys; ++u) {
+        if (j0 + u < j1) {
+            lane_halves((const __half*) a.vals + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, v[u]);
+            if (++row == a.ring) row = 0;
+        }
+    }
 #pragma unroll
-                for (int c = 0; c < kLaneHalves; ++c) acc[hp][c] += w * v[c];
+    for (int u = 0; u < kValueKeys; ++u) {
+        if (j0 + u < j1) {
+#pragma unroll
+            for (int hp = 0; hp < kMaxPer; ++hp) {
+                if (hp < per) {
+                    const float w = __shfl_sync(0xffffffff, weight, hp * kValueKeys + u, WARP);
+#pragma unroll
+                    for (int c = 0; c < kLaneHalves; ++c) acc[hp][c] += w * v[u][c];
+                }
             }
         }
-        if (++row == a.ring) row = 0;
     }
 #pragma unroll
     for (int hp = 0; hp < kMaxPer; ++hp) {
