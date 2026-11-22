@@ -185,6 +185,11 @@ int main(int argc, char** argv) {
         std::printf("no CUDA device: skipped\n");
         return 77;
     }
+    // STRATA_IQ3_LANES=0 turns the lane kernel off, so every case would compare the old kernel with itself
+    if (const char* v = std::getenv("STRATA_IQ3_LANES"); v && v[0] == '0') {
+        std::printf("STRATA_IQ3_LANES=0 is set, so the lane kernel is off: skipped\n");
+        return 77;
+    }
     // merbanan's AD-IQ3_S file (IQ3_S gate and up) and UD-IQ3_XXS: a warp's rows as one run of calls, and its tails
     for (int count : {1, 8}) {
         test_slots_lanes(21, "IQ3_S", 2304, 2304, count);
