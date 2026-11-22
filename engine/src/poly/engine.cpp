@@ -4310,6 +4310,7 @@ void Engine::moe_router(const Layer& L, int n) {
     }
 #endif
     router_scores(L, n);
+    if (!ahead && !router_rows_to_host(n)) return;
     copy2(rl_, h_rl_, n * n_expert_, xn_, h_x_, n * n_embd_, st_);
     if (!ahead) return;
     float* d = ahead_dev_ + part * 16 * ne;   // pool_ahead()
@@ -5199,7 +5200,9 @@ bool Engine::moe_card(Layer& L, int il, int n) {
     if (situ_beta_ > 0) situ_rows(g_, h_, n_ff_exp_, rr, situ_beta_, situ_lb_, st_, q8_, &es);
     else if (gelu_) geglu_rows(g_, h_, n_ff_exp_, rr, st_, &es);
     else swiglu_clamp_rows(g_, h_, n_ff_exp_, rr, clamp_exp_[(size_t) il], st_, &es);
-    if (!L.h_s_down.empty()) expert_weights(d_wts_, fp(L.s_down), d_ids_, rr, st_);
+    // the down product's scales on the weights; a family that sums the experts later multiplies them there
+    moe_left_scale_ = moe_sum_later(n) && !L.h_s_down.empty() ? fp(L.s_down) : nullptr;
+    if (!L.h_s_down.empty() && !moe_left_scale_) expert_weights(d_wts_, fp(L.s_down), d_ids_, rr, st_);
     if (!(situ_beta_ > 0)) kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_ * rr, 1, st_);   // the rows back to back, as one vector
     const kernels::MmvqIds down{table, d_ids_, L.gu2(), q8_, kernels::native_q8_1_bytes(n_ff_exp_), 1, d_,
                                 (size_t) n_embd_};

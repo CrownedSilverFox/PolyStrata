@@ -388,14 +388,18 @@ __global__ void ink_conv_add_kernel(const float* __restrict__ x, float* state, c
     }
 }
 
-__global__ void ink_moe_conv_add_kernel(const float* __restrict__ x, const float* __restrict__ w, int n_used, float* fo,
-                                        float* state, const float* __restrict__ cw, float* __restrict__ out,
+__global__ void ink_moe_conv_add_kernel(const float* __restrict__ x, const float* __restrict__ w,
+                                        const float* __restrict__ scale, const int* __restrict__ ids, int n_used,
+                                        float* fo, float* state, const float* __restrict__ cw, float* __restrict__ out,
                                         float* acc, float a, int channels, int taps, float norm) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= channels) return;
     float s = 0.0f;
-    for (int k = 0; k < n_used; ++k) s += w[k] * x[size_t(k) * channels + i];
-    fo[i] += s;
+    for (int k = 0; k < n_used; ++k) {
+        const float wk = scale ? w[k] * scale[ids[k]] : w[k];   // expert_weights_kernel's product
+        s += wk * x[size_t(k) * channels + i];
+    }
+    fo[i] = 0.0f + s;   // moe_sum() onto the zeros fo was
     const float y = conv_value(fo, state, cw, nullptr, channels, 1, taps, 0, i, norm);
     out[i] = y;
     conv_state_at(fo, state, channels, taps, 1, i);
@@ -849,12 +853,13 @@ void ink_conv_add(const float* x, float* state, const float* w, float* out, floa
     launched("ink_conv_add");
 }
 
-void ink_moe_conv_add(const float* x, const float* w, int n_used, float* fo, float* state, const float* cw, float* out,
-                      float* acc, float a, int channels, int taps, void* stream) {
+void ink_moe_conv_add(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
+                      float* state, const float* cw, float* out, float* acc, float a, int channels, int taps,
+                      void* stream) {
     if (taps < 2 || taps > 8) throw std::invalid_argument("ink_moe_conv_add: 2 to 8 taps");
     const float norm = 1.0f / std::sqrt((float) (taps + 1));
-    ink_moe_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, w, n_used, fo, state, cw, out, acc,
-                                                                                a, channels, taps, norm);
+    ink_moe_conv_add_kernel<<<grid((size_t) channels, 256), 256, 0, cs(stream)>>>(x, w, scale, ids, n_used, fo, state, cw,
+                                                                                out, acc, a, channels, taps, norm);
     launched("ink_moe_conv_add");
 }
 

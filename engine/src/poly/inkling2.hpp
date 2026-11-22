@@ -100,6 +100,8 @@ private:
     bool control_ffn(const float* msg, const Ctrl& c, const Block& B);
     // only where moe_card() and layer_tail() are recorded together (whole_rec_)
     bool moe_sum_later(int n) const override { return n == 1 && whole_rec_; }
+    // routed on the card in that recording: the host reads neither
+    bool router_rows_to_host(int n) const override { return !(n == 1 && whole_rec_); }
     void copy_rows(const float* from, float* to, int n);
     template <class F> void window_runs(int64_t pos, F&& f) const;
 

@@ -72,10 +72,12 @@ void ink_conv(const float* x, float* state, const float* w, const float* dyn, fl
 /// acc = acc + out * a (axpy()), mode 1 keep = acc and then acc = out, mode 2 acc = out.  The same bits.
 void ink_conv_add(const float* x, float* state, const float* w, float* out, float* acc, float* keep, float a, int mode,
                   int channels, int taps, void* stream);
-/// One token's routed experts' sum onto fo (moe_sum(): fo += the n_used rows of x weighted by w), then ink_conv_add()
-/// of fo in mode 0, in one launch with the same bits.
-void ink_moe_conv_add(const float* x, const float* w, int n_used, float* fo, float* state, const float* cw, float* out,
-                      float* acc, float a, int channels, int taps, void* stream);
+/// One token's routed experts' sum into fo (moe_sum() onto zeros: fo = 0 + the n_used rows of x weighted by w, each
+/// weight first times scale[ids[k]] where scale is set, expert_weights()'s product), then ink_conv_add() of fo in
+/// mode 0, in one launch with the same bits.
+void ink_moe_conv_add(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
+                      float* state, const float* cw, float* out, float* acc, float a, int channels, int taps,
+                      void* stream);
 
 /// Each head's `dim` values, times scale (null: none; [dim] a head), brought down to an L2 norm of at most `thr`
 /// (the norm has 1e-6 added), then times tau = 1 + alpha * log(max(1, (pos + row + 1) / floor)) when alpha > 0.

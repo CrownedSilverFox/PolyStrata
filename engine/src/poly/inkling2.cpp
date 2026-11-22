@@ -599,8 +599,8 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
 void Inkling2::layer_tail(Layer&, int il, int n) {
     const Slot& S = slots_[(size_t) slot_of(il, pass_of(il))];
     if (n == 1 && std::exchange(moe_left_, false)) {   // moe_card() left the experts' sum here
-        ink_moe_conv_add(d_, d_wts_, n_used_, fo_, past_f(S), fp(blocks_[(size_t) il].f_conv), fc_, r_, 1.f, n_embd_,
-                         taps_, st_);
+        ink_moe_conv_add(d_, d_wts_, moe_left_scale_, d_ids_, n_used_, fo_, past_f(S), fp(blocks_[(size_t) il].f_conv),
+                         fc_, r_, 1.f, n_embd_, taps_, st_);
         return;
     }
     if (n == 1) {
@@ -677,8 +677,9 @@ bool Inkling2::route_card(int il, int n, int32_t* ids, float* w) {
     return true;
 }
 
-// No shared expert: the routed experts' sum starts from nothing.
+// No shared expert: the routed experts' sum starts from nothing (where layer_tail() sums them, it starts there).
 void Inkling2::moe_shared(const Layer&, int, int n) {
+    if (moe_sum_later(n)) return;
     ck(cudaMemsetAsync(fo_, 0, (size_t) n * n_embd_ * sizeof(float), cs(st_)), "experts");
 }
 
