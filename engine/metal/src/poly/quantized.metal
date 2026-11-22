@@ -80,6 +80,17 @@ struct dot_iq2_s {
         return dl*(signed_grid8(g1,signs[0],xv)+signed_grid8(g2,signs[1],xv+8));
     }
 };
+struct dot_iq2_xxs {
+    enum { kSum=0 };
+    static float run(device const block_iq2_xxs* b,short il,thread const float* xv,float) {
+        const int ib32=il/2,h=il%2;
+        device const uint16_t* q2=b->qs+4*ib32;
+        const uint aux_g=uint(q2[0])|(uint(q2[1])<<16),aux_s=uint(q2[2])|(uint(q2[3])<<16);
+        const float dl=float(b->d)*(0.5f+(aux_s>>28))*0.25f;
+        const uint2 g1=as_type<uint2>(iq2xxs_grid[(aux_g>>(16*h))&255]),g2=as_type<uint2>(iq2xxs_grid[(aux_g>>(16*h+8))&255]);
+        return dl*(signed_grid8(g1,ksigns_iq2xs[(aux_s>>(14*h))&127],xv)+signed_grid8(g2,ksigns_iq2xs[(aux_s>>(14*h+7))&127],xv+8));
+    }
+};
 struct dot_iq1_s {   // dl (grid + 1) + ml: dl (the grid's sum) + (dl + ml) xs
     enum { kSum=1 };
     static float run(device const block_iq1_s* b,short il,thread const float* xv,float xs) {
@@ -176,8 +187,8 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
     M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
 #define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) M(q3_K,256) \
-    M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) \
-    M(iq4_xs,256) M(iq1_m,256)
+    M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) \
+    M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
