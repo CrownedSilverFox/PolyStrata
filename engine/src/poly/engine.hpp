@@ -133,6 +133,9 @@ struct Options {
     float cache_bias = 0;         ///< a token's few-at-a-time routing adds this to the score of each expert in VRAM
                                   ///< before it picks its experts; their weights stay the softmax of the scores the
                                   ///< router gave (--cache-bias, qwen35moe only); 0: the router's own picks
+    int expert_gpu = -1;          ///< Inkling 2: a second CUDA device (this process's number) for the routed experts
+                                  ///< the first card has no room for (--expert-gpu, expert_card.hpp); -1: none
+    int expert_gpu_reserve_mib = -1;   ///< VRAM that card keeps free beside them (--expert-gpu-reserve-mib); -1: 512
     std::string layer_split;      ///< the layers across the CUDA devices this process sees, in their order: "auto"
                                   ///< (by each card's free VRAM) or the first layer of each later card ("20,30");
                                   ///< empty, or one device: the current card alone
@@ -213,6 +216,7 @@ struct Stats {
 int most_likely(const float* logits, int n);
 
 class Mmq;
+class ExpertCard;
 
 /// A piece of Engine's pinned mirror of the experts outside VRAM: the process's own memory pinned by
 /// cudaHostRegister(), or cudaMallocHost()'s.
@@ -659,6 +663,8 @@ protected:
     /// The layer's ExpertScales for rows of the experts ids[r] (on the card), or none.
     ExpertScales expert_scales(const Layer& L, const int32_t* ids = nullptr) const;
     void fill_expert_cache();
+    /// --expert-gpu: the second card takes the experts fill_expert_cache() left out (expert_card.cpp).
+    void fill_expert_card();
     void ensure_stage();
     void stage_pins();   ///< h_stage_, once an expert is staged
     void start_swaps();
@@ -807,6 +813,9 @@ protected:
     const Shards* block_ = nullptr;   ///< the file the draft block is in: gg_ or dg_
     std::shared_ptr<Workers> workers_;   ///< on several cards, one for all of them: they take turns
     std::unique_ptr<Aside> aside_;       ///< hands the card a call's cached experts while the workers do the CPU's
+#if !defined(STRATA_GPU_METAL)
+    std::unique_ptr<ExpertCard> ecard_;  ///< --expert-gpu's card, or null
+#endif
     int node_ = -1;
     // A layer split (open()).  The layers of the model are [lo_, hi_) here, and the engine of the next card has
     // the ones after.  A later card's engine reads its first layer's input from pass_, which the one before wrote:

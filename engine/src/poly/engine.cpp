@@ -12,6 +12,7 @@
 #if !defined(STRATA_GPU_METAL)
 #include "laguna.hpp"   // CUDA and HIP: its YaRN turn and softplus gate have no Metal kernels yet
 #include "inkling2.hpp" // CUDA and HIP: its kernels (inkling2.cu) have no Metal form yet
+#include "expert_card.hpp"
 #endif
 #include "mmq.hpp"
 #include "qwen35.hpp"
@@ -1876,6 +1877,9 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
         throw std::runtime_error("--cache-bias is supported for qwen35moe models; this is a '" + name + "' model");
     if ((!o.attn_requant.empty() || o.loop_bf16) && name != "inkling2_loop")
         throw std::runtime_error("--attn-requant and --loop-bf16 are Inkling 2's; this is a '" + name + "' model");
+    if (o.expert_gpu >= 0 && (name != "inkling2_loop" || !o.layer_split.empty()))
+        throw std::runtime_error("--expert-gpu is Inkling 2's, on one card beside it (no --layer-split); this is a '" +
+                                 name + "' model");
     if (!o.attn_requant.empty() && o.attn_requant != "q4_0" && o.attn_requant != "q5_0" && o.attn_requant != "iq4_nl")
         throw std::runtime_error("--attn-requant takes q4_0, q5_0 or iq4_nl");
     const auto make = [&]() -> std::unique_ptr<Engine> {
@@ -3187,6 +3191,9 @@ void Engine::load(const Options& o) {
     alloc();
     if (!opt_.profile.empty()) read_profile(opt_.profile, (int) layers_.size(), n_expert_, prior_);
     fill_expert_cache();
+#if !defined(STRATA_GPU_METAL)
+    fill_expert_card();
+#endif
     ensure_stage();
     if (mmq_ && !all_cached()) stage_pins();
     // The weights and the expert cache are written on st_ now (h2d(), zero_vram()): the load is not over until
@@ -4875,6 +4882,10 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         CpuExpert host[kCpuRows * kMaxUsed];
         Cached cached[kCpuRows * kMaxUsed];
         int32_t host_e[kCpuRows * kMaxUsed], host_k[kCpuRows * kMaxUsed];   // a host entry's expert and its place
+#if !defined(STRATA_GPU_METAL)
+        ExpertCard::Job far[kCpuRows * kMaxUsed];   // --expert-gpu: the experts the second card holds
+        int n_far = 0;
+#endif
         float host_rel[kCpuRows * kMaxUsed];   // and its weight's share of its token's experts' weight
         int n_host = 0, n_cached = 0;
         // A row's routing is a softmax over every expert and a search for the likeliest: 3.4 us a row of Qwen3.6's
@@ -4933,6 +4944,12 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                     ++stats_.ahead_used;
                     continue;
                 }
+#if !defined(STRATA_GPU_METAL)
+                if (const uint8_t* s = ecard_ ? ecard_->slot(il, (int) e) : nullptr) {
+                    far[n_far++] = {s, we, t, (int) e};
+                    continue;
+                }
+#endif
                 host_e[n_host] = (int32_t) e;
                 host_k[n_host] = k;
                 const float gs = L.h_s_gate.empty() ? 1.f : L.h_s_gate[e], us = L.h_s_up.empty() ? 1.f : L.h_s_up[e];
@@ -5008,6 +5025,12 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         }
         if (pool_) pool_take(L, il, host, n_host);
         stats_.gpu_experts += n_cached;
+#if !defined(STRATA_GPU_METAL)
+        if (n_far > 0) {   // on the second card while the first one and the CPU do theirs
+            ecard_->start(L, il, h_x_ + (size_t) at * e_row, m, far, n_far, limit, gelu_, situ_beta_, situ_lb_);
+            stats_.gpu_experts += n_far;
+        }
+#endif
         stats_.cpu_experts += n_host;
         // The launches cost this thread more than they cost the card, so each one less counts.  The cached experts
         // go kSlots at a time, a launch a stage for all of them: gate and up, the activation, its quantization,
@@ -5097,6 +5120,12 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         if (n_host == 0) {
             launch();
             std::fill(cpu, cpu + (size_t) m * e_row, 0.f);
+#if !defined(STRATA_GPU_METAL)
+            if (n_far > 0) {   // the second card's sums take the CPU's place in moe_add()
+                ecard_->finish_into(cpu);
+                any_host = true;
+            }
+#endif
             continue;
         }
         any_host = true;
@@ -5151,6 +5180,9 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
             throw;
         }
         if (aside) aside_->finish();
+#if !defined(STRATA_GPU_METAL)
+        if (n_far > 0) ecard_->finish_into(cpu);
+#endif
         pool_reads_.clear();
         stats_.cpu_ms += ms_since(t0);
     }
@@ -5166,6 +5198,9 @@ void Engine::moe_add(int n) { axpy(h_cpu_, 1.f, fo_, n * n_embd_, true, st_); }
 // (moe_card()), so a layer never waits for the host.  The cache's slots go to the card again when they changed.
 bool Engine::card_moe(int n) {
     if (!card_routes() || !d_slots_ || n * n_used_ > card_rows() || opt_.dump) return false;
+#if !defined(STRATA_GPU_METAL)
+    if (ecard_) return false;   // --expert-gpu: the host routes, and hands the second card its experts (moe())
+#endif
     const bool mirrored = !all_cached();
     const auto far_of = [&](int il, int e) -> void* {
         return layers_[(size_t) il].slot[(size_t) e] ? nullptr : (void*) mirror(il, e);

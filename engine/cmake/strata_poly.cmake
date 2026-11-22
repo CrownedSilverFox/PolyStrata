@@ -185,7 +185,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
     add_test(NAME poly_gdn_mma_test COMMAND poly_gdn_mma_test)
     set_tests_properties(poly_gdn_mma_test PROPERTIES SKIP_RETURN_CODE 77)
     # Optional model/state check; run by hand with an MTP GGUF and frozen prompt IDs.
-    add_executable(poly_gdn_mma_state_test src/poly/gdn_mma_state_test.cpp src/poly/engine.cpp src/poly/glm5next.cpp
+    add_executable(poly_gdn_mma_state_test src/poly/gdn_mma_state_test.cpp src/poly/engine.cpp src/poly/expert_card.cpp src/poly/glm5next.cpp
                    src/poly/qwen35.cpp src/poly/gemma4.cpp src/poly/deepseek4.cpp src/poly/lfm2moe.cpp
                    src/poly/flint.cpp src/poly/kolibri1.cpp src/poly/laguna.cpp src/poly/inkling2.cpp src/poly/inkling2.cu src/poly/cpu_experts.cpp src/poly/kernels.cu
                    src/poly/kernels_dsv4.cu src/core/conversation_memory.cpp)
@@ -194,7 +194,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
                          ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target} CUDA::cuda_driver Threads::Threads)
   endif()
 
-  add_executable(strata-poly src/poly/main.cpp src/poly/engine.cpp src/poly/glm5next.cpp src/poly/qwen35.cpp
+  add_executable(strata-poly src/poly/main.cpp src/poly/engine.cpp src/poly/expert_card.cpp src/poly/glm5next.cpp src/poly/qwen35.cpp
                             src/poly/gemma4.cpp src/poly/deepseek4.cpp src/poly/lfm2moe.cpp src/poly/flint.cpp
                             src/poly/kolibri1.cpp src/poly/laguna.cpp src/poly/inkling2.cpp src/poly/inkling2.cu src/poly/cpu_experts.cpp src/poly/kernels.cu src/poly/kernels_dsv4.cu
                             src/poly/spill.cpp src/core/conversation_memory.cpp src/core/conversation_file.cpp)
@@ -219,7 +219,7 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
                                                   Threads::Threads)
   # a read with the draft block repeats bit for bit; needs the model file, so it is run by hand:
   # poly_draft_race_test MODEL.gguf [RUNS] [LAYER_SPLIT]
-  add_executable(poly_draft_race_test src/poly/draft_race_test.cpp src/poly/engine.cpp src/poly/glm5next.cpp
+  add_executable(poly_draft_race_test src/poly/draft_race_test.cpp src/poly/engine.cpp src/poly/expert_card.cpp src/poly/glm5next.cpp
                                       src/poly/qwen35.cpp src/poly/gemma4.cpp src/poly/deepseek4.cpp
                                       src/poly/lfm2moe.cpp src/poly/flint.cpp src/poly/kolibri1.cpp src/poly/laguna.cpp src/poly/inkling2.cpp src/poly/inkling2.cu
                                       src/poly/cpu_experts.cpp src/poly/kernels.cu src/poly/kernels_dsv4.cu

@@ -1619,6 +1619,10 @@ void usage() {
                  "  --layer-split S        the model's layers across the CUDA devices this process sees, in their\n"
                  "                         order: S is auto (by each card's free VRAM) or the first layer of each\n"
                  "                         later card, as 20 or 20,30 (default: the first card alone)\n"
+                 "  --expert-gpu N         Inkling 2: CUDA device N holds the routed experts the first card has no room\n"
+                 "                         for, as many as fit, and computes them for an answer's tokens; the CPU\n"
+                 "                         takes the rest (default: none)\n"
+                 "  --expert-gpu-reserve-mib N  VRAM that device keeps free beside them (default 512)\n"
                  "  --expert-profile FILE  expert use counts: read to choose the cached experts, written back on\n"
                  "                         exit and by --serve after an answer, every 10 s at most\n"
                  "  --no-gpu-experts       keep every routed expert on the CPU\n"
@@ -1845,6 +1849,8 @@ int main(int argc, char** argv) {
         else if (a == "--skip-weight") o.skip_weight = (float) std::atof(val());
         else if (a == "--cache-bias") o.cache_bias = (float) std::atof(val());
         else if (a == "--layer-split") o.layer_split = val();
+        else if (a == "--expert-gpu") o.expert_gpu = std::atoi(val());
+        else if (a == "--expert-gpu-reserve-mib") o.expert_gpu_reserve_mib = std::atoi(val());
         else if (a == "--batch" || a == "--slots") o.batch = std::atoi(val());
         else if (a == "--batch-mtp") o.batch_mtp = true;
         else if (a == "--check-batch") check = std::atoi(val());
