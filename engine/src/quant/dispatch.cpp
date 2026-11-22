@@ -1,5 +1,6 @@
 // src/quant/dispatch.cpp - kernel lookup: the best kernel of an arithmetic contract that this CPU can run.
 #include <algorithm>
+#include <cstdlib>
 
 #include "registry.hpp"
 #include "strata/quant/act.hpp"
@@ -54,13 +55,21 @@ int collect_acts(Type act, Arith a, const ActKernel** out, int cap) {
 
 }  // namespace
 
+bool iq3s_own_on() noexcept {
+    static const bool on = [] {
+        const char* v = std::getenv("STRATA_CPU_IQ3S");
+        return v == nullptr || v[0] != '0';
+    }();
+    return on;
+}
+
 int dot_kernels(Type w, Arith a, const DotKernel** out, int cap) noexcept { return collect_dots(w, a, out, cap); }
 
 const DotKernel* dot_kernel(Type w, Arith a, Isa max_isa) noexcept {
     const DotKernel* v[kMaxK];
     const int n = collect_dots(w, a, v, kMaxK);
     for (int i = 0; i < n; ++i)
-        if ((int) v[i]->isa <= (int) max_isa && isa_ok(v[i]->isa)) return v[i];
+        if ((int) v[i]->isa <= (int) max_isa && isa_ok(v[i]->isa) && dot_kernel_on(*v[i])) return v[i];
     return nullptr;
 }
 
