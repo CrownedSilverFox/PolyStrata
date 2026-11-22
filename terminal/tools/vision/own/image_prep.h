@@ -47,6 +47,9 @@ void resize_bicubic(const ImageU8& src, ImageU8& dst, int target_w, int target_h
 // mtmd's img_tool::resize with PAD_CEIL and a black canvas: aspect kept, centred, padded
 void resize_pad_ceil(const ImageU8& src, ImageU8& dst, Size2 target);
 
+// Inkling 2 Mini (g.inkling()) is prepared as llama.cpp's mtmd_image_preprocessor_inkling2v does it: the picture as it is, padded at the right
+// and the bottom to multiples of patch * merge with the raw value -1 (normalised as a pixel would be), not resized; only a picture whose padded
+// area is over the token limit is first resized (bicubic, aspect kept, sides multiples of patch * merge) to the largest that fits.
 // The whole step 2-4 for a geometry.  min_tokens / max_tokens > 0 replace the geometry's limits (the helper's --min-tokens / --max-tokens).
 // The resized picture (before the normalisation) is returned in `resized` when it is not null (for tests).
 bool prepare_image(const ImageU8& src, const VitGeometry& g, int min_tokens, int max_tokens, PreparedImage& out, std::string& err,

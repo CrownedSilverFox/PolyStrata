@@ -135,6 +135,56 @@ bool minicpmv47_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
     return true;
 }
 
+// Inkling 2 Mini's tower (llama.cpp's mtmd_graph_inkling2v and its hparams): patches without a bias, a learned position table of side pos_grid
+// resized bilinearly to the picture's patch grid, a CLS token in front (its own embedding plus its own position), a LayerNorm before the first
+// layer, then LayerNorm layers with q / k / v / o biases, a 2D rotary (the first half of a head by the column, the second by the row, adjacent
+// pairs, positions counted from 1 with the CLS token at 0), layer scales on the attention's and the MLP's outputs and an erf-GELU MLP; the
+// CLS row dropped, every 2x2 patches merged into one row, then mm.1, the erf GELU and mm.2.  Pictures of 1 to 4,096 tokens, sides a multiple
+// of patch * merge, padded and not resized (image_prep.h).
+bool inkling2v_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
+    g.norm = NormKind::LayerNorm;
+    g.act = ActKind::GeluErf;
+    g.fused_qkv = false;
+    g.gated_ffn = false;
+    g.patch_taps = 1;
+    g.pre_ln = true;
+    g.min_tokens = 1;
+    g.max_tokens = 4096;
+    const int64_t W = g.width, F = g.ffn;
+    if (!shape_is(gg, "v.patch_embd.weight", {g.patch, g.patch, 3, W}, err)) return false;
+    if (gg.tensor("v.patch_embd.bias")) { err = "an inkling2v patch embedding with a bias, which this tower does not read"; return false; }
+    const GgufTensorInfo* pos = gg.tensor("v.position_embd.weight");
+    if (!pos || pos->ne.size() != 2 || pos->ne[0] != W) { err = "the vision projector's position table is missing or not [width, rows]"; return false; }
+    g.pos_grid = (int) std::lround(std::sqrt((double) pos->ne[1]));
+    if ((int64_t) g.pos_grid * g.pos_grid != pos->ne[1]) { err = "the position table's rows are not a square grid"; return false; }
+    if (!shape_is(gg, "v.class_embd", {W}, err) || !shape_is(gg, "v.class_position_embd.weight", {W}, err) ||
+        !shape_is(gg, "v.pre_ln.weight", {W}, err) || !shape_is(gg, "v.pre_ln.bias", {W}, err))
+        return false;
+    g.post_ln = gg.tensor("v.post_ln.weight") != nullptr;
+    if (g.post_ln && (!shape_is(gg, "v.post_ln.weight", {W}, err) || !shape_is(gg, "v.post_ln.bias", {W}, err))) return false;
+    auto vec = [&](const std::string& n, int64_t len) { return shape_is(gg, n, {len}, err); };
+    for (int il = 0; il < g.layers; ++il) {
+        for (const char* n : {"ln1", "ln2"})
+            if (!vec(blk(il, n, "weight"), W) || !vec(blk(il, n, "bias"), W)) return false;
+        for (const char* n : {"attn_q", "attn_k", "attn_v", "attn_out"})
+            if (!shape_is(gg, blk(il, n, "weight"), {W, W}, err) || !vec(blk(il, n, "bias"), W)) return false;
+        if (!vec(blk(il, "ls1", "weight"), W) || !vec(blk(il, "ls2", "weight"), W)) return false;
+        if (!shape_is(gg, blk(il, "ffn_up", "weight"), {W, F}, err) || !vec(blk(il, "ffn_up", "bias"), F) ||
+            !shape_is(gg, blk(il, "ffn_down", "weight"), {F, W}, err) || !vec(blk(il, "ffn_down", "bias"), W))
+            return false;
+        if (gg.tensor(blk(il, "ffn_gate", "weight"))) { err = "an inkling2v layer with a gated MLP, which this tower does not read"; return false; }
+    }
+    g.merger_in = (int) (W * g.merge * g.merge);
+    const GgufTensorInfo* m1 = gg.tensor("mm.1.weight");
+    if (!m1 || m1->ne.size() != 2 || m1->ne[0] != g.merger_in) { err = "the inkling2v tower's mm.1.weight is missing or not [width * merge^2, hidden]"; return false; }
+    g.merger_hidden = (int) m1->ne[1];
+    if (!shape_is(gg, "mm.2.weight", {g.merger_hidden, g.out_dim}, err)) return false;
+    g.mm_bias = gg.tensor("mm.1.bias") != nullptr;
+    if (g.mm_bias != (gg.tensor("mm.2.bias") != nullptr)) { err = "the inkling2v tower has a bias on one of mm.1 and mm.2 only"; return false; }
+    if (g.mm_bias && (!vec("mm.1.bias", g.merger_hidden) || !vec("mm.2.bias", g.out_dim))) return false;
+    return true;
+}
+
 }  // namespace
 
 bool vit_geometry_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
@@ -171,6 +221,7 @@ bool vit_geometry_from_gguf(const Gguf& gg, VitGeometry& g, std::string& err) {
     g.norm = g.projector == "qwen2.5vl_merger" ? NormKind::RMSNorm : NormKind::LayerNorm;
     if (g.projector == "gemma4v") return gemma4_from_gguf(gg, g, err);
     if (g.minicpmv()) return minicpmv47_from_gguf(gg, g, err);
+    if (g.inkling()) return inkling2v_from_gguf(gg, g, err);
 
     // the layer layout, from which tensors exist
     g.fused_qkv = gg.tensor(blk(0, "attn_qkv", "weight")) != nullptr;
@@ -231,6 +282,11 @@ bool vit_geometry_supported(const VitGeometry& g, std::string& why) {
     }
     if (g.minicpmv()) {
         if (g.act != ActKind::GeluTanh) { why = "an activation other than the tanh GELU"; return false; }
+        return true;
+    }
+    if (g.inkling()) {
+        if (g.head_dim % 4 != 0) { why = "a head size that is not a multiple of 4 (the 2D rotary turns pairs in each half of a head)"; return false; }
+        if (g.merge < 1 || g.pos_grid < 1) { why = "no merge size or position table"; return false; }
         return true;
     }
     if (g.projector != "qwen3vl_merger") { why = "projector type " + g.projector + " is not one of this tower's families"; return false; }

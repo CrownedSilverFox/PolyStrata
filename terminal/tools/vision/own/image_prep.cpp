@@ -204,10 +204,25 @@ void resize_pad_ceil(const ImageU8& src, ImageU8& dst, Size2 target) {
     dst = std::move(out);
 }
 
+namespace {
+int align_up(int v, int a) { return (v + a - 1) / a * a; }
+// inkling2v: the picture's own size, or the resized one when the padded area passes max_px
+Size2 inkling_content(int w, int h, const VitGeometry& g, int max_px) {
+    const int a = g.align();
+    if (max_px > 0 && (int64_t) align_up(w, a) * align_up(h, a) > max_px) return smart_resize(w, h, a, 0, max_px);
+    return {w, h};
+}
+}  // namespace
+
 Size2 prepared_size(int w, int h, const VitGeometry& g, int min_tokens, int max_tokens) {
     const int patch_area = g.patch * g.patch * g.merge * g.merge;
     const int min_px = (min_tokens > 0 ? min_tokens : g.min_tokens) * patch_area;
     const int max_px = (max_tokens > 0 ? max_tokens : g.max_tokens) * patch_area;
+    if (g.inkling()) {
+        if (w <= 0 || h <= 0) return {0, 0};
+        const Size2 c = inkling_content(w, h, g, max_px);
+        return {align_up(c.w, g.align()), align_up(c.h, g.align())};
+    }
     return smart_resize(w, h, g.align(), min_px, max_px);
 }
 
@@ -309,6 +324,30 @@ bool prepare_image(const ImageU8& src, const VitGeometry& g, int min_tokens, int
     if (src.w <= 0 || src.h <= 0 || src.rgb.size() != (size_t) src.w * src.h * 3) { err = "the picture is empty"; return false; }
     const Size2 t = prepared_size(src.w, src.h, g, min_tokens, max_tokens);
     if (t.w <= 0 || t.h <= 0) { err = "the picture has no usable size"; return false; }
+    if (g.inkling()) {   // the content at the top left, the rest the raw value -1, normalised as a pixel
+        const int patch_area = g.patch * g.patch * g.merge * g.merge;
+        const Size2 c = inkling_content(src.w, src.h, g, (max_tokens > 0 ? max_tokens : g.max_tokens) * patch_area);
+        ImageU8 r;
+        const ImageU8* in = &src;
+        if (c.w != src.w || c.h != src.h) {
+            resize_bicubic(src, r, c.w, c.h);
+            in = &r;
+        }
+        out.w = t.w;
+        out.h = t.h;
+        const size_t n = (size_t) t.w * t.h;
+        out.chw.resize(3 * n);
+        for (int ch = 0; ch < 3; ++ch) {
+            const float pad = (-1.0f / 255.0f - g.mean[ch]) / g.stdv[ch];
+            float* plane = &out.chw[(size_t) ch * n];
+            for (int y = 0; y < t.h; ++y)
+                for (int x = 0; x < t.w; ++x)
+                    plane[(size_t) y * t.w + x] = y < in->h && x < in->w
+                        ? ((float) in->rgb[((size_t) y * in->w + x) * 3 + ch] / 255.0f - g.mean[ch]) / g.stdv[ch] : pad;
+        }
+        if (resized) *resized = *in;
+        return true;
+    }
     ImageU8 r;
     resize_pad_ceil(src, r, t);
     normalise(r, g, out);

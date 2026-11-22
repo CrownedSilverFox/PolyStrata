@@ -848,7 +848,7 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     const size_t ne = (size_t) n * n_embd_;
     const int kv = n_kv_ * head_dim_, hq = n_head_ * head_dim_;
 
-    if (il == 0) {   // the tokens' embeddings, normed
+    if (il == 0 && !image_at(pos_)) {   // the tokens' embeddings, normed (a picture's rows are not: whole())
         rms_norm(r_, fp(tok_norm_), mixf_, n_embd_, n, rms_eps_, st_);
         copy_rows(mixf_, r_, n);
     }

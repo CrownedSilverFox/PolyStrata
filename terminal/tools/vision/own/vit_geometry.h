@@ -6,7 +6,9 @@
 // attention, a plain tanh-GELU MLP, a 2x2 merger) and Gemma 4's ("gemma4v": RMS norms, separate q/k/v with per-head norms, a 2D NeoX
 // rotary, post-norms, a gated FFN, x/y position tables, an average pool and a projection) and MiniCPM-V 4.7's ("minicpmv4_7": a SigLIP
 // tower with a bucketed position table, a 2x2 window attention and downsample after one layer, then a 2x2 merger; a picture is cut into
-// tiles, see image_prep.h).  A tower of these families with other numbers is a new file, not new code.
+// tiles, see image_prep.h) and Inkling 2 Mini's ("inkling2v": a ViT with a CLS token, a learned position table resized to the picture, a 2D
+// rotary, a norm before the first layer, layer scales and an erf-GELU MLP, then a 2x2 merge and a two-layer MLP; llama.cpp's mtmd_graph_inkling2v).
+// A tower of these families with other numbers is a new file, not new code.
 #pragma once
 
 #include "gguf_lite.h"
@@ -55,7 +57,11 @@ struct VitGeometry {
     int max_slices = 9;               // minicpmv4_7: tiles at most (clip.vision.max_slice_nums)
     int seps = 0;                     // minicpmv4_7: rows of v.tok_embd_sep, the text separators written between tiles
 
+    bool post_ln = false;             // inkling2v: a v.post_ln norm after the last layer (the file of 11-22 has none)
+    bool mm_bias = false;             // inkling2v: biases on mm.1 and mm.2 (the file of 11-22 has none)
+
     bool minicpmv() const { return projector == "minicpmv4_7"; }
+    bool inkling() const { return projector == "inkling2v"; }
     // tokens a patch grid gives: (w / merge) * (h / merge) for a w x h patch grid
     int align() const { return patch * merge; }   // image sides are multiples of this
 };
