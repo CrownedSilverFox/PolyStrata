@@ -571,6 +571,10 @@ protected:
     virtual void router_scores(const Layer& L, int n);
     /// router_scores() is lin(gate_inp) on xn_ with xq_: moe_router() may run it beside the next layer's
     virtual bool plain_router() const { return true; }
+    /// The router (ffn_gate_inp) goes to VRAM as BF16 when its F32 values are all BF16 ones (upload()'s kExactBF16):
+    /// lin() widens BF16 exactly and sums as for F32, so the same scores from half the bytes.  false (the default):
+    /// as its file has it.
+    virtual bool router_bf16() const { return false; }
     /// What is done to `rows` rows of logits on the card before they are copied out.
     virtual void finish_logits(float* logits, int rows) { (void) logits, (void) rows; }
     /// What a token's embedding is multiplied by on its way in.
@@ -645,7 +649,11 @@ protected:
     /// kGuessMat: quantized again to guess_type_ (Q4_0, Q5_0 or IQ4_NL), for a matrix only guesses are made with: a
     /// guess is checked, so a less exact one costs a wrong guess now and then and no token.  (Inkling 2 reads its
     /// attention's matrices so with --attn-requant: inkling2.cpp.)
-    enum Want { kF32, kFloatMat, kAnyMat, kGuessMat };
+    /// kExactBF16: an F32 tensor all of whose values are BF16 ones (exact_bf16()) goes to VRAM as BF16, the same
+    /// values in half the bytes; any other as kAnyMat.
+    enum Want { kF32, kFloatMat, kAnyMat, kGuessMat, kExactBF16 };
+    /// The tensor is F32 and every value of it is a BF16 one (its low 16 bits are zero).
+    bool exact_bf16(const TensorInfo* t) const;
     uint32_t guess_type_ = 2;   ///< kTypeQ4_0
     Dev upload(const TensorInfo* t, const std::string& name, int64_t n_in, int64_t n_out, Want want,
                float (*fix)(float) = nullptr);
