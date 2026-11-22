@@ -3,7 +3,7 @@
 Back to [README.md](../../README.md)
 
 **Inkling 2 Mini** by Thinking Machines: a file of 9 to 18 GB. It is experimental here. It has run on Linux with an
-RTX 5090 and on Windows with an 8 GB laptop card, text only, one request at a time. Its 24 layers of weights run as 48: the twelve in the middle run three
+RTX 5090 and on Windows with an 8 GB laptop card, one request at a time. It reads pictures too. Its 24 layers of weights run as 48: the twelve in the middle run three
 times for every token. Forty of the 48 look back 1,024 tokens only, so a long conversation takes little VRAM:
 32,768 bytes a token.
 
@@ -81,8 +81,9 @@ a 32K context.
 | **Disk** | 9.1 to 17.6 GB for the model file. |
 | **System** | Linux or Windows 10 / 11, and a current NVIDIA driver. |
 
-Not run yet: an AMD card, a Mac, several cards, and UD-Q4_K_XL on the 8 GB card. The model also reads
-pictures and has a draft file for faster answers; neither is used here yet. The engine takes one request at a time
+Not run yet: an AMD card, a Mac, two cards (`--expert-gpu`, built but not run), and UD-Q4_K_XL on the 8 GB card.
+Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card. The draft file is an
+option (`--draft-model`). The engine takes one request at a time
 for this model, and the installer writes `"parallel": 1`. Its license is Apache 2.0.
 
 ## Install
@@ -110,4 +111,4 @@ A reply is a list of typed blocks: thinking, text, or a tool call with its argum
 them into the same reasoning, content and tool calls as for the other models, so the OpenAI and Anthropic APIs work
 as they do elsewhere. A request that asks for no thinking has its prompt end inside the text block, because the
 model otherwise opens a thinking block now and then. More in
-[BACKENDS.md](../BACKENDS.md#inkling-2-mini-one-card-text-only).
+[BACKENDS.md](../BACKENDS.md#inkling-2-mini-one-card).

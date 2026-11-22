@@ -41,7 +41,7 @@ with an 8 GB card as well, and Groot on a PC with an 8 GB RTX 5060.
   Q4_K_M, Q6_K and Q8_0 (12.5 to 20.2 GB), with MTP and an optional image projector. Q4_K_M text has run on an
   8 GB RTX 5060 and on an RTX 5090 under Linux; images, Q6_K and Q8_0 are still pending.
 - **[Inkling 2 Mini](docs/models/inkling.md)** by Thinking Machines, experimental: a file of 9 to 18 GB. It has run
-  on Linux with a 32 GB NVIDIA card and on Windows with an 8 GB laptop card: text only, one request at a time.
+  on Linux with a 32 GB NVIDIA card and on Windows with an 8 GB laptop card. It reads pictures too, one request at a time.
 - **[Clover-35B-A3B-Preview](docs/models/clover.md)** by DiffuSpace, Qwen3.6-35B-A3B trained further to also write a
   block of tokens at once: a file of 13 to 21 GB. It reads text only.
 - **[Ornith 1.5](docs/models/ornith.md)**, which has Qwen3.6-35B-A3B's architecture and other weights: a file of 14 to 24 GB. It

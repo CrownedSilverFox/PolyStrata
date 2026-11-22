@@ -44,7 +44,7 @@ bilgisayarda, küçüklerden dokuzu ayrıca 8 GB kartlı bir dizüstünde, Groot
   Q6_K ve Q8_0 (12,5 ila 20,2 GB), MTP ve isteğe bağlı bir görüntü projektörüyle. Q4_K_M metinle 8 GB'lık bir RTX 5060'ta
   ve Linux'ta bir RTX 5090'da çalıştı; görüntüler, Q6_K ve Q8_0 henüz denenmedi.
 - **[Inkling 2 Mini](docs/models/inkling.md)**, Thinking Machines tarafından geliştirildi, deneysel: 9 ila 18 GB'lık bir
-  dosya. Linux'ta 32 GB'lık bir NVIDIA kartıyla ve Windows'ta 8 GB'lık bir dizüstü kartıyla çalıştı: yalnızca metin, aynı anda tek istek.
+  dosya. Linux'ta 32 GB'lık bir NVIDIA kartıyla ve Windows'ta 8 GB'lık bir dizüstü kartıyla çalıştı. Resimleri de okur, aynı anda tek istek.
 - **[Clover-35B-A3B-Preview](docs/models/clover.md)**, DiffuSpace tarafından, bir seferde bir blok token da yazabilmesi
   için daha fazla eğitilmiş Qwen3.6-35B-A3B: 13 ila 21 GB'lık bir dosya. Yalnızca metin okur.
 - **[Ornith 1.5](docs/models/ornith.md)**, Qwen3.6-35B-A3B'nin mimarisine ve farklı ağırlıklara sahip: 14 ila 24 GB'lık

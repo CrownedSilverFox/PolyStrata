@@ -44,7 +44,7 @@ de 32 Go, neuf des plus petits en plus sur un portable avec une carte de 8 Go, e
   Bartowski, Q4_K_M, Q6_K et Q8_0 (12,5 à 20,2 Go), avec MTP et un projecteur d'images en option. Q4_K_M a tourné en
   texte sur une RTX 5060 de 8 Go et sur une RTX 5090 sous Linux ; les images, Q6_K et Q8_0 restent à vérifier.
 - **[Inkling 2 Mini](docs/models/inkling.md)** de Thinking Machines, expérimental : un fichier de 9 à 18 Go. Il a tourné
-  sous Linux avec une carte NVIDIA de 32 Go et sous Windows avec une carte de portable de 8 Go : texte seulement, une requête à la fois.
+  sous Linux avec une carte NVIDIA de 32 Go et sous Windows avec une carte de portable de 8 Go. Il lit aussi les images, une requête à la fois.
 - **[Clover-35B-A3B-Preview](docs/models/clover.fr.md)** de DiffuSpace, Qwen3.6-35B-A3B entraîné plus loin pour écrire
   aussi un bloc de tokens d'un coup : un fichier de 13 à 21 Go. Il ne lit que du texte.
 - **[Ornith 1.5](docs/models/ornith.fr.md)**, qui a l'architecture de Qwen3.6-35B-A3B et d'autres poids : un fichier de 14 à 24 Go.

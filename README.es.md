@@ -43,7 +43,7 @@ pequeños además en un portátil con una tarjeta de 8 GB, y Groot en un PC con 
   Bartowski, Q4_K_M, Q6_K y Q8_0 (de 12,5 a 20,2 GB), con MTP y un proyector de imágenes opcional. Q4_K_M con texto ha
   funcionado en una RTX 5060 de 8 GB y en una RTX 5090 en Linux; las imágenes, Q6_K y Q8_0 siguen pendientes.
 - **[Inkling 2 Mini](docs/models/inkling.md)** de Thinking Machines, experimental: un archivo de 9 a 18 GB. Ha funcionado
-  en Linux con una tarjeta NVIDIA de 32 GB y en Windows con una tarjeta de portátil de 8 GB: solo texto, una petición a la vez.
+  en Linux con una tarjeta NVIDIA de 32 GB y en Windows con una tarjeta de portátil de 8 GB. También lee imágenes, una petición a la vez.
 - **[Clover-35B-A3B-Preview](docs/models/clover.es.md)** de DiffuSpace, Qwen3.6-35B-A3B entrenado más para escribir
   también un bloque de tokens de una vez: un archivo de 13 a 21 GB. Solo lee texto.
 - **[Ornith 1.5](docs/models/ornith.es.md)**, con la arquitectura de Qwen3.6-35B-A3B y otros pesos: un archivo de 14 a 24 GB.

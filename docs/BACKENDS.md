@@ -25,7 +25,7 @@ a second machine, a Windows laptop whose card has 8 GB.
 | Flint 40B-A2.5B | `flint` | `strata-poly` | Unsloth UD-Q4_K_XL, UD-Q3_K_XL, UD-Q6_K_XL and Q8_0, 18.5 to 42.3 GB | repeats only: there is no draft model |
 | Kolibri 1 | `kolibri1` | `strata-poly` | Hob-forge Q4_K_M, Q2_K and Q3_K_M, 28.6 to 47.5 GB | repeats only: there is no draft model |
 | Clover-35B-A3B-Preview | `clover_moe` | `strata-poly` | maternion Q3_K_M and Q4_K_M, IsValorum APEX-I-NanoPlus, 12.6 to 21.2 GB | repeats only: its own block guesses are off ([below](#clover-35b-a3b-preview)) |
-| Inkling 2 Mini (experimental) | `inkling2_loop` | `strata-poly` | Unsloth UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, 9.1 to 17.6 GB | none: it answers one token at a time ([below](#inkling-2-mini-one-card-text-only)) |
+| Inkling 2 Mini (experimental) | `inkling2_loop` | `strata-poly` | Unsloth UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, 9.1 to 17.6 GB | none: it answers one token at a time ([below](#inkling-2-mini-one-card)) |
 
 `strata` is the first engine and runs Qwen3.8 only; nothing in it changed. `strata-poly` is the engine that reads a
 GGUF in place, and it now has nine architectures. It was called `strata-glm`, after its first model; an install
@@ -47,7 +47,7 @@ offers 8K, 32K (default), 64K and 128K; `--context` overrides it. The engine det
 Hardware-aware expert caching, CPU experts, parallel requests and multi-GPU settings use the shared paths, not a
 specific card preset. Installation and estimates are in [groot.md](models/groot.md).
 
-### Inkling 2 Mini (one card, text only)
+### Inkling 2 Mini (one card)
 
 `python setup.py --family inkling` installs one of Unsloth's three quantizations (UD-Q4_K_XL by default, 17.6 GB;
 UD-Q3_K_XL, 13.6 GB; UD-Q2_K_XL, 9.1 GB). They are the files under the repository's `Mainline_Support` folder,

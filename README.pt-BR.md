@@ -43,7 +43,7 @@ notebook com uma placa de 8 GB, e o Groot num PC com uma RTX 5060 de 8 GB.
   Bartowski, Q4_K_M, Q6_K e Q8_0 (12,5 a 20,2 GB), com MTP e um projetor de imagens opcional. O Q4_K_M com texto rodou
   numa RTX 5060 de 8 GB e numa RTX 5090 no Linux; imagens, Q6_K e Q8_0 ainda estão pendentes.
 - **[Inkling 2 Mini](docs/models/inkling.md)** da Thinking Machines, experimental: um arquivo de 9 a 18 GB. Rodou no
-  Linux com uma placa NVIDIA de 32 GB e no Windows com uma placa de notebook de 8 GB: só texto, um pedido de cada vez.
+  Linux com uma placa NVIDIA de 32 GB e no Windows com uma placa de notebook de 8 GB. Também lê imagens, um pedido de cada vez.
 - **[Clover-35B-A3B-Preview](docs/models/clover.pt-BR.md)** da DiffuSpace, o Qwen3.6-35B-A3B treinado mais para
   escrever também um bloco de tokens de uma vez: um arquivo de 13 a 21 GB. Ele só lê texto.
 - **[Ornith 1.5](docs/models/ornith.pt-BR.md)**, com a arquitetura do Qwen3.6-35B-A3B e outros pesos: um arquivo de 14 a 24 GB. Ele

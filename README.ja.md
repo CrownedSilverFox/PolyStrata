@@ -38,7 +38,7 @@ GLM 5.3 Flash と DeepSeek V4 Flash 以外は Windows でも動きます。ま�
   ほとんどの層は直前の 513 トークンしか見ないので、長い会話でも VRAM をあまり使いません。128K のコンテキストでも 32K より 2.6 GB 多いだけです。
 - **[Qwen3.6-35B-A3B](docs/models/qwen36.ja.md)**：ファイルは 13〜23 GB。画像も読めます。
 - **[Groot 19B-A3B 261023](docs/models/groot.md)**：実験的なインストーラー対応。Bartowski の量子化 Q4_K_M、Q6_K、Q8_0 の 3 つ（12.5〜20.2 GB）で、MTP と画像プロジェクター（任意）付きです。Q4_K_M のテキストは 8 GB の RTX 5060 と、Linux の RTX 5090 で動きました。画像、Q6_K、Q8_0 はまだ確かめていません。
-- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines のモデル、実験的。ファイルは 9〜18 GB です。Linux の 32 GB の NVIDIA カードと、Windows の 8 GB のノート PC 用カードで動きました。テキストのみで、リクエストは一度に 1 つです。
+- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines のモデル、実験的。ファイルは 9〜18 GB です。Linux の 32 GB の NVIDIA カードと、Windows の 8 GB のノート PC 用カードで動きました。画像も読めます。リクエストは一度に 1 つです。
 - **[Clover-35B-A3B-Preview](docs/models/clover.ja.md)**：DiffuSpace のモデル。Qwen3.6-35B-A3B をさらに学習させ、トークンのまとまりを一度に書けるようにしたもの。ファイルは 13〜21 GB。読めるのはテキストだけです。
 - **[Ornith 1.5](docs/models/ornith.ja.md)**：構造は Qwen3.6-35B-A3B と同じで、重みが違います。ファイルは 14〜24 GB。画像も読めます。
 - **[Gemma 4 26B-A4B](docs/models/gemma4.ja.md)**：ファイルは 11〜17 GB。画像も読めます。

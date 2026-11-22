@@ -44,7 +44,7 @@ einer RTX 5060 mit 8 GB.
   Q4_K_M, Q6_K und Q8_0 (12,5 bis 20,2 GB), mit MTP und optionalem Bildprojektor. Q4_K_M lief mit Text auf einer
   RTX 5060 mit 8 GB und unter Linux auf einer RTX 5090; Bilder, Q6_K und Q8_0 stehen noch aus.
 - **[Inkling 2 Mini](docs/models/inkling.md)** von Thinking Machines, experimentell: eine Datei von 9 bis 18 GB. Es lief
-  unter Linux mit einer 32-GB-Karte von NVIDIA und unter Windows mit einer 8-GB-Laptopkarte: nur Text, eine Anfrage nach der anderen.
+  unter Linux mit einer 32-GB-Karte von NVIDIA und unter Windows mit einer 8-GB-Laptopkarte. Es liest auch Bilder, eine Anfrage nach der anderen.
 - **[Clover-35B-A3B-Preview](docs/models/clover.de.md)** von DiffuSpace, Qwen3.6-35B-A3B weiter trainiert, damit es
   auch einen Block von Tokens auf einmal schreibt: eine Datei von 13 bis 21 GB. Es liest nur Text.
 - **[Ornith 1.5](docs/models/ornith.de.md)**, mit der Architektur von Qwen3.6-35B-A3B und anderen Gewichten: eine Datei von

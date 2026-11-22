@@ -35,7 +35,7 @@ PolyStrata 能在普通电脑上运行通常要用服务器才能跑的大型 AI
   所以长对话占的显存很少：128K 上下文只比 32K 多占 2.6 GB。
 - **[Qwen3.6-35B-A3B](docs/models/qwen36.zh-CN.md)**：文件 13 到 23 GB。它还能看图片。
 - **[Groot 19B-A3B 261023](docs/models/groot.md)**：实验性的安装支持，用 Bartowski 的三种量化 Q4_K_M、Q6_K 和 Q8_0（12.5 到 20.2 GB），带 MTP，图片投影可选。Q4_K_M 的文字在 8 GB 的 RTX 5060 上和 Linux 下的 RTX 5090 上跑过；图片、Q6_K 和 Q8_0 还没验证。
-- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines 的模型，实验性，文件 9 到 18 GB。在 Linux 上用 32 GB 的 NVIDIA 显卡、在 Windows 上用 8 GB 的笔记本显卡跑过：只看文字，一次只答一个请求。
+- **[Inkling 2 Mini](docs/models/inkling.md)**：Thinking Machines 的模型，实验性，文件 9 到 18 GB。在 Linux 上用 32 GB 的 NVIDIA 显卡、在 Windows 上用 8 GB 的笔记本显卡跑过，也能看图，一次只答一个请求。
 - **[Clover-35B-A3B-Preview](docs/models/clover.zh-CN.md)**：DiffuSpace 的模型，在 Qwen3.6-35B-A3B 上接着训练，还能一次写出一整块 token，文件 13 到 21 GB。只看文字。
 - **[Ornith 1.5](docs/models/ornith.zh-CN.md)**：结构和 Qwen3.6-35B-A3B 相同，权重不同，文件 14 到 24 GB。它还能看图片。
 - **[Gemma 4 26B-A4B](docs/models/gemma4.zh-CN.md)**：文件 11 到 17 GB。它还能看图片。
