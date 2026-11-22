@@ -88,19 +88,19 @@ class Feed(unittest.TestCase):
             self.assertEqual(rc, 0)
             for name in ("strata-feed.json", "strata-feed.json.sig", "install-manifest.txt", "install.sh", "install.ps1", "test-trust.json"):
                 self.assertTrue((feed / name).is_file(), name)
-            line = (feed / "install-manifest.txt").read_text().split()
+            line = (feed / "install-manifest.txt").read_text(encoding="utf-8").split()
             self.assertEqual(line[0], PLAT)
             self.assertEqual(line[1], "9.9.9")
             control = feed / line[2]
             self.assertEqual(hashlib.sha256(control.read_bytes()).hexdigest(), line[3])
             self.assertEqual(control.stat().st_size, int(line[4]))
-            sh_text = (feed / "install.sh").read_text()
+            sh_text = (feed / "install.sh").read_text(encoding="utf-8")
             self.assertIn("http://127.0.0.1:1", sh_text)
             self.assertNotIn(mlf.RELEASE_FEED, sh_text)                  # the GitHub address was replaced everywhere by the local one
-            self.assertIn("Installed. Run:", (feed / "install.ps1").read_text())
-            doc = json.loads((feed / "strata-feed.json").read_text())
+            self.assertIn("Installed. Run:", (feed / "install.ps1").read_text(encoding="utf-8"))
+            doc = json.loads((feed / "strata-feed.json").read_text(encoding="utf-8"))
             self.assertEqual(doc["control"]["packages"][0]["sha256"], line[3])
-            self.assertNotIn("seed", (feed / "test-trust.json").read_text())      # only the public key is published
+            self.assertNotIn("seed", (feed / "test-trust.json").read_text(encoding="utf-8"))      # only the public key is published
             if os.name == "nt" or not (shutil.which("sh") and shutil.which("curl") and shutil.which("tar")):
                 self.skipTest("the real install.sh run needs POSIX sh, curl and tar")
             handler = partial(SimpleHTTPRequestHandler, directory=str(feed))
@@ -161,9 +161,9 @@ class Feed(unittest.TestCase):
             entry = feed_tool.pack_control(folder, release / "control", version="9.9.9", platform=PLAT, url_prefix="")
             shutil.move(str(release / "control" / entry["url"]), str(release / entry["url"]))        # GitHub assets are flat
             feed_tool.build_feed(release, key=key, sequence=1, control_dir=release / "control")
-            line = (release / "install-manifest.txt").read_text().split()
+            line = (release / "install-manifest.txt").read_text(encoding="utf-8").split()
             self.assertEqual(line, [PLAT, "9.9.9", entry["url"], entry["sha256"], str(entry["size"])])
-            self.assertEqual(json.loads((release / "strata-feed.json").read_text())["control"]["packages"][0]["sha256"], entry["sha256"])
+            self.assertEqual(json.loads((release / "strata-feed.json").read_text(encoding="utf-8"))["control"]["packages"][0]["sha256"], entry["sha256"])
             bad = work / "bad"                           # a Windows pack that is not a zip cannot be installed by install.ps1: left out of the manifest
             feed_tool.build_feed(bad, key=key, sequence=1, control_dir=self._windows_tar_pack(folder, work))
             self.assertFalse((bad / "install-manifest.txt").exists())

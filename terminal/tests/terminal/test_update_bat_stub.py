@@ -63,12 +63,16 @@ class Run(unittest.TestCase):
     def test_without_the_stub_the_old_file_ends_with_the_error_and_exit_1(self):
         done = self.run_update(None)                                    # the reproduction of K6
         self.assertEqual(done.returncode, 1)
-        self.assertIn("The batch file cannot be found.", done.stderr)
+        # cmd prints "The batch file cannot be found." in the console's language, so the test checks its shape:
+        # the same line twice
+        lines = [line for line in done.stderr.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 2, done.stderr)
+        self.assertEqual(lines[0], lines[1])
 
     def test_with_the_stub_it_ends_cleanly(self):
         done = self.run_update(STUB.read_bytes())
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertNotIn("cannot be found", done.stderr)
+        self.assertEqual(done.stderr.strip(), "")   # cmd's "cannot be found", in any language, is not there
         self.assertIn("fake-start-here --update", done.stdout)
 
     def test_the_stub_run_by_hand_passes_its_arguments_and_the_exit_code(self):
