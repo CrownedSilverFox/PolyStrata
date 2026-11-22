@@ -1465,42 +1465,114 @@ __global__ void ds_rope_kernel(float* x, int heads, const float* __restrict__ w,
     if (v) vcache[cell] = __float2half(v[((size_t) t * heads + h) * kDsHead + i]);
 }
 
-// query row t (blockIdx.x), head h (blockIdx.y): softmax attention over the cache's positions [lo, hi), every one of
-// them for every row (the block's rows see each other)
-__global__ void ds_attend_kernel(const float* q, const __half* keys, const __half* vals, long long cap, long long lo,
-                                 long long hi, int heads, int kv_heads, float scale, float* score, size_t score_stride,
-                                 float* out) {
-    __shared__ float qs[kDsHead];
-    __shared__ float part[32];
-    const int t = blockIdx.x, h = blockIdx.y, g = h / (heads / kv_heads), tid = threadIdx.x;
-    const int nk = (int) (hi - lo);
-    if (tid < kDsHead) qs[tid] = q[((size_t) t * heads + h) * kDsHead + tid] * scale;
+// The block's attention, the keys split among blocks so that a long context is read at once: block (g, s) takes kv
+// head g's query rows (block row t's head g * grp + k as row t * grp + k) over split s of the keys [lo, hi), a warp a
+// key, and softmaxes them online; ds_join_kernel joins the splits.  lo and hi follow the block's first position on
+// the card (a recorded block takes any): a window layer's window before the block and the block, a full layer every
+// position.  The split: the keys over kDsSplits, a whole number of tiles each.
+constexpr int kDsRows = 24;    // a kv head's query rows at most: 8 block rows of 3 heads
+constexpr int kDsTile = 64;    // keys a tile
+constexpr int kDsSplits = 64;  // splits at most
+constexpr int kDsPart = kDsHead + 2;   // a row's part: its values' weighted sum, its max, its sum
+
+__device__ __forceinline__ void ds_span(const DsPos& p, int nb, int window, long long& lo, long long& nk, int& per) {
+    const long long p0 = ds_pos(p, 0);
+    lo = window > 0 ? max(0LL, p0 - window) : 0LL;
+    nk = p0 + nb - lo;
+    per = (int) (((nk + kDsSplits - 1) / kDsSplits + kDsTile - 1) / kDsTile * kDsTile);
+}
+
+__global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __half* keys, const __half* vals,
+                                                      long long cap, DsPos p, int nb, int window, int heads,
+                                                      int kv_heads, float scale, float* part) {
+    __shared__ __align__(16) float qs[kDsRows][kDsHead];
+    __shared__ float sc[kDsRows][kDsTile];
+    __shared__ float mrun[kDsRows], lrun[kDsRows], corr[kDsRows];
+    const int g = blockIdx.x, s = blockIdx.y, tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    const int grp = heads / kv_heads, R = nb * grp;
+    long long lo, nk;
+    int per;
+    ds_span(p, nb, window, lo, nk, per);
+    const long long k0 = (long long) s * per;
+    if (k0 >= nk) return;
+    const long long k1 = min(nk, k0 + per);
+    for (int i = tid; i < R * kDsHead; i += blockDim.x) {
+        const int r = i / kDsHead, d = i % kDsHead;
+        qs[r][d] = q[((size_t) (r / grp) * heads + g * grp + r % grp) * kDsHead + d] * scale;
+    }
+    if (tid < R) mrun[tid] = -INFINITY, lrun[tid] = 0.0f;
+    const int d = tid % kDsHead, r0 = tid / kDsHead;   // the values: d of rows r0, r0 + 2, ...
+    float acc[kDsRows / 2];
+#pragma unroll
+    for (int i = 0; i < kDsRows / 2; ++i) acc[i] = 0.0f;
+    const size_t at_g = (size_t) g * kDsHead, cell = (size_t) kv_heads * kDsHead;
     __syncthreads();
-    float* s = score + ((size_t) t * heads + h) * score_stride;
-    float m = -INFINITY;
-    for (int j = tid; j < nk; j += blockDim.x) {
-        const __half* k = keys + (size_t) ((lo + j) % cap) * kv_heads * kDsHead + (size_t) g * kDsHead;
-        float d = 0.0f;
-        for (int c = 0; c < kDsHead; c += 2) {
-            const float2 kv = __half22float2(*(const half2*) (k + c));
-            d += qs[c] * kv.x + qs[c + 1] * kv.y;
+    for (long long t0 = k0; t0 < k1; t0 += kDsTile) {
+        const int nt = (int) min((long long) kDsTile, k1 - t0);
+        for (int j = warp; j < kDsTile; j += 8) {
+            if (j >= nt) continue;
+            const __half* k = keys + (size_t) ((lo + t0 + j) % cap) * cell + at_g + lane * 4;
+            const float2 a = __half22float2(*(const half2*) k), b = __half22float2(*(const half2*) (k + 2));
+            for (int r = 0; r < R; ++r) {
+                const float4 qr = *(const float4*) (qs[r] + lane * 4);
+                const float x = warp_sum(qr.x * a.x + qr.y * a.y + qr.z * b.x + qr.w * b.y);
+                if (lane == 0) sc[r][j] = x;
+            }
         }
-        s[j] = d;
-        m = fmaxf(m, d);
+        __syncthreads();
+        if (tid < R) {
+            float m = mrun[tid];
+            for (int j = 0; j < nt; ++j) m = fmaxf(m, sc[tid][j]);
+            corr[tid] = expf(mrun[tid] - m);
+            mrun[tid] = m;
+        }
+        __syncthreads();
+        for (int i = tid; i < R * kDsTile; i += blockDim.x) {
+            const int r = i / kDsTile, j = i % kDsTile;
+            if (j < nt) sc[r][j] = expf(sc[r][j] - mrun[r]);
+        }
+        __syncthreads();
+        if (tid < R) {
+            float l = 0.0f;
+            for (int j = 0; j < nt; ++j) l += sc[tid][j];
+            lrun[tid] = lrun[tid] * corr[tid] + l;
+        }
+#pragma unroll
+        for (int i = 0; i < kDsRows / 2; ++i)
+            if (r0 + 2 * i < R) acc[i] *= corr[r0 + 2 * i];
+        for (int j = 0; j < nt; ++j) {
+            const float v = __half2float(vals[(size_t) ((lo + t0 + j) % cap) * cell + at_g + d]);
+#pragma unroll
+            for (int i = 0; i < kDsRows / 2; ++i)
+                if (r0 + 2 * i < R) acc[i] += sc[r0 + 2 * i][j] * v;
+        }
+        __syncthreads();
     }
-    m = block_max(m, part);
-    float sum = 0.0f;
-    for (int j = tid; j < nk; j += blockDim.x) {
-        const float e = expf(s[j] - m);
-        s[j] = e;
-        sum += e;
+    float* out = part + ((size_t) g * kDsSplits + s) * kDsRows * kDsPart;
+#pragma unroll
+    for (int i = 0; i < kDsRows / 2; ++i)
+        if (r0 + 2 * i < R) out[(r0 + 2 * i) * kDsPart + d] = acc[i];
+    if (tid < R) out[tid * kDsPart + kDsHead] = mrun[tid], out[tid * kDsPart + kDsHead + 1] = lrun[tid];
+}
+
+// query row t (blockIdx.x), head h (blockIdx.y), a thread a value: the splits' parts joined
+__global__ void ds_join_kernel(const float* part, DsPos p, int nb, int window, int heads, int kv_heads, float* out) {
+    const int t = blockIdx.x, h = blockIdx.y, d = threadIdx.x, grp = heads / kv_heads;
+    long long lo, nk;
+    int per;
+    ds_span(p, nb, window, lo, nk, per);
+    const int ns = (int) ((nk + per - 1) / per);
+    const size_t step = (size_t) kDsRows * kDsPart;
+    const float* in = part + (size_t) (h / grp) * kDsSplits * step + (size_t) (t * grp + h % grp) * kDsPart;
+    float m = -INFINITY;
+    for (int s = 0; s < ns; ++s) m = fmaxf(m, in[s * step + kDsHead]);
+    float l = 0.0f, a = 0.0f;
+    for (int s = 0; s < ns; ++s) {
+        const float w = expf(in[s * step + kDsHead] - m);
+        l += w * in[s * step + kDsHead + 1];
+        a += w * in[s * step + d];
     }
-    sum = block_sum(sum, part);
-    if (tid >= kDsHead) return;
-    float acc = 0.0f;
-    for (int j = 0; j < nk; ++j)
-        acc += s[j] * __half2float(vals[(size_t) ((lo + j) % cap) * kv_heads * kDsHead + (size_t) g * kDsHead + tid]);
-    out[((size_t) t * heads + h) * kDsHead + tid] = acc / sum;
+    out[((size_t) t * heads + h) * kDsHead + d] = a / l;
 }
 
 __global__ void ds_swiglu_kernel(float* g, const float* __restrict__ u, size_t n) {
@@ -1508,11 +1580,18 @@ __global__ void ds_swiglu_kernel(float* g, const float* __restrict__ u, size_t n
     if (i < n) g[i] = g[i] / (1.0f + expf(-g[i])) * u[i];
 }
 
-// rows 1 .. rows - 1 of x: the mask row
-__global__ void ds_mask_rows_kernel(float* x, const float* __restrict__ mask, int n, int rows) {
+// The block's inputs beside its first row: rows 1 .. nb - 1 of x the mask; the Markov head's start (its state zeros,
+// the anchor *token as the token before the first guess) and its context, the ring row of the position before the
+// block's
+__global__ void ds_block_in_kernel(float* x, const float* __restrict__ mask, int n, int nb, DsPos p,
+                                   const long long* token, float* state, int rank, int32_t* prev,
+                                   const float* ring, int ring_rows, float* ctx) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    for (int r = 1; r < rows; ++r) x[(size_t) r * n + i] = mask[i];
+    for (int r = 1; r < nb; ++r) x[(size_t) r * n + i] = mask[i];
+    ctx[i] = ring[(size_t) ((ds_pos(p, 0) - 1) % ring_rows) * n + i];
+    if (i < rank) state[i] = 0.0f;
+    if (i == 0) *prev = (int32_t) *token;
 }
 
 // [state ; w1's row of the token before] (rank + rank values), the token *prev
@@ -1623,6 +1702,405 @@ __global__ void ds_fold_q8_kernel(const float* __restrict__ ft, int n_rows, int 
     for (int k = 0; k < 32; ++k) blk[2 + k] = (uint8_t) (int8_t) roundf(x[k] * id);
 }
 
+// ---- the Markov head's pick, screened (ds_head_base(), ds_head_pick()) ----
+//
+// Basalt's include/basalt/kernels/head_proxy.cuh and src/models/inkling2/kernels/dspark.cu (MIT, the notice above):
+// draft i's scores l[v] = cap tanh((head_v . h_i + fold_v . lat_i + fold_b[v]) / cap) are first scored from 2-bit
+// copies of the head's and the fold's rows (the head term once for all the block's rows, the fold term a guess), each
+// tile of 32 copy rows keeps its best kScrPer and its softmax partial; the rows within kScrDelta of the best are then
+// scored exactly from their Q8_0 rows and the exact best is the guess.  The copy holds the tokens transposed over its
+// tiles (copy row r is token (r % 32) T + r / 32, T the tiles), so that a tokenizer's frequent tokens, which sit
+// together, fall in different tiles.
+
+constexpr int kScrPer = 4;          // candidates a tile keeps
+constexpr int kScrMaxCand = 64;     // rows scored exactly at most
+constexpr float kScrDelta = 5.0f;   // a row is scored exactly when its copy's score is within this of the best
+constexpr int kDsDraftsMax = 7;
+
+__host__ __device__ inline int64_t scr_tiles(int64_t n) { return (n + 31) / 32; }
+__host__ __device__ constexpr int scr_nw4(int n_in) { return n_in / 64; }   // uint4 words of a copy row
+inline size_t scr_bytes(int64_t n, int n_in) { return (size_t) scr_tiles(n) * scr_nw4(n_in) * 32 * (16 + 4); }
+inline uint16_t* scr_scales(const void* copy, int64_t n, int n_in) {
+    return (uint16_t*) ((char*) copy + (size_t) scr_tiles(n) * scr_nw4(n_in) * 32 * 16);
+}
+__host__ __device__ __forceinline__ int64_t scr_token(int64_t r, int64_t tiles) { return (r & 31) * tiles + (r >> 5); }
+
+__device__ __forceinline__ int scr_level(float w, float sh) { return min(3, max(0, (int) floorf(w / sh + 2.0f))); }
+
+// A 32-weight group's scale for four levels: of a few candidates, the one of least squared error, then stretched by
+// sqrt(|w|^2 / <w, w_hat>) (the least-squares copy scores the rows near the best low)
+__device__ __forceinline__ __half scr_fit(const float* w, float& sh_out) {
+    float amax = 1e-9f;
+    for (int l = 0; l < 32; ++l) amax = fmaxf(amax, fabsf(w[l]));
+    float best_s = amax / 1.5f, best_e = INFINITY;
+    for (int t = 0; t < 6; ++t) {
+        const float s = amax / 1.5f * (1.0f - 0.1f * (float) t);
+        const float sh = __half2float(__float2half(s));
+        float e = 0.0f;
+        for (int l = 0; l < 32; ++l) {
+            const float r = ((float) scr_level(w[l], sh) - 1.5f) * sh - w[l];
+            e += r * r;
+        }
+        if (e < best_e) best_e = e, best_s = s;
+    }
+    __half hs = __float2half(best_s);
+    const float sh = __half2float(hs);
+    sh_out = sh;
+    float ww = 0.0f, wr = 0.0f;
+    for (int l = 0; l < 32; ++l) {
+        const float r = ((float) scr_level(w[l], sh) - 1.5f) * sh;
+        ww += w[l] * w[l];
+        wr += w[l] * r;
+    }
+    if (wr > 0.0f) hs = __float2half(sh * sqrtf(ww / wr));
+    return hs;
+}
+
+// a thread a 32-weight group g of copy row `row`: its token's Q8_0 group into the copy
+template <int N_IN>
+__global__ void scr_pack_kernel(const uint8_t* __restrict__ q8, int64_t n_rows, uint4* __restrict__ wq,
+                                uint16_t* __restrict__ sc) {
+    constexpr int NB = N_IN / 32, kNw4 = scr_nw4(N_IN);
+    const int64_t tiles = scr_tiles(n_rows);
+    const int64_t i = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= tiles * 32 * NB) return;
+    const int64_t row = i / NB, tok = scr_token(row, tiles);
+    const int g = (int) (i % NB);
+    if (tok >= n_rows) return;   // past the vocabulary: zeros, masked when scored
+    const uint8_t* b = q8 + (tok * NB + g) * 34;
+    const float d = __half2float(*(const __half*) b);
+    float w[32];
+    for (int l = 0; l < 32; ++l) w[l] = d * (float) (int8_t) b[2 + l];
+    float sh;
+    const __half hs = scr_fit(w, sh);
+    const int tile = (int) (row >> 5), lane = (int) (row & 31), w4 = g / 2, h = g & 1;
+    uint32_t words[2] = {0u, 0u};
+    for (int c = 0; c < 2; ++c)
+        for (int ii = 0; ii < 4; ++ii)
+            for (int bb = 0; bb < 4; ++bb)
+                words[c] |= (uint32_t) scr_level(w[c * 16 + 4 * ii + bb], sh) << (8 * bb + 2 * ii);
+    uint32_t* wd = (uint32_t*) wq + (((size_t) tile * kNw4 + w4) * 32 + lane) * 4 + 2 * h;
+    wd[0] = words[0];
+    wd[1] = words[1];
+    sc[(((size_t) tile * kNw4 + w4) * 32 + lane) * 2 + h] = __half_as_ushort(hs);
+}
+
+// by_row[r] = by_token[the token of copy row r], 0 past the vocabulary
+__global__ void scr_order_kernel(const float* __restrict__ by_token, int64_t n, int64_t tiles, float* by_row) {
+    const int64_t r = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= tiles * 32) return;
+    const int64_t tok = scr_token(r, tiles);
+    by_row[r] = tok < n ? by_token[tok] : 0.0f;
+}
+
+// a copy row's score (a lane a row) over this thread's uint4 words j0 .. j0 + NW - 1
+template <int NW>
+__device__ __forceinline__ float scr_acc(const uint4 (&w)[NW], const uint32_t (&s)[NW], int j0, const int* xi,
+                                         const float* xs, const float* xdd) {
+    float acc = 0.0f;
+#pragma unroll
+    for (int j = 0; j < NW; ++j) {
+        const int w4 = j0 + j;
+        const uint32_t ww[4] = {w[j].x, w[j].y, w[j].z, w[j].w};
+#pragma unroll
+        for (int hh = 0; hh < 2; ++hh) {
+            const int g = 2 * w4 + hh;
+            int P = 0;
+#pragma unroll
+            for (int c = 0; c < 2; ++c) {
+                const uint32_t v = ww[2 * hh + c];
+                const int4 x0 = *(const int4*) &xi[g * 8 + c * 4];
+                P = __dp4a((int) (v & 0x03030303u), x0.x, P);
+                P = __dp4a((int) ((v >> 2) & 0x03030303u), x0.y, P);
+                P = __dp4a((int) ((v >> 4) & 0x03030303u), x0.z, P);
+                P = __dp4a((int) ((v >> 6) & 0x03030303u), x0.w, P);
+            }
+            const float sg = __half2float(__ushort_as_half((unsigned short) (hh ? (s[j] >> 16) : (s[j] & 0xffff))));
+            acc += sg * (xdd[g] * (float) P - 1.5f * xs[g]);
+        }
+    }
+    return acc;
+}
+
+// q8_1 blocks into the scoring layout: the codes as ints, each block's scale and scaled code sum
+__device__ __forceinline__ void scr_x(const QB* x, int nb, int* xi, float* xs, float* xdd, int tid, int nthreads) {
+    for (int i = tid; i < nb * 8; i += nthreads) xi[i] = ((const int*) x[i / 8].qs)[i % 8];
+    for (int b = tid; b < nb; b += nthreads) {
+        const int* q = (const int*) x[b].qs;
+        int sum = 0;
+#pragma unroll
+        for (int i = 0; i < 8; ++i) sum = __dp4a(0x01010101, q[i], sum);
+        const float d8 = __low2float(x[b].ds);
+        xdd[b] = d8;
+        xs[b] = d8 * (float) sum;
+    }
+}
+
+// tile blockIdx.x: approx[r][copy row] = the head copy's score of q8_1 row r of x (r < rows), four warps splitting the
+// row, lane = copy row; the copy is read once for all the rows
+template <int N_IN>
+__global__ void __launch_bounds__(128) scr_base_kernel(const uint4* __restrict__ wq, const uint32_t* __restrict__ sc,
+                                                       const QB* x, int rows, int64_t n_pad, float* approx) {
+    constexpr int NB = N_IN / 32, kNw4 = scr_nw4(N_IN), NW = kNw4 / 4;
+    __shared__ __align__(16) int xi[kDsDraftsMax][N_IN / 4];
+    __shared__ float xs[kDsDraftsMax][NB], xdd[kDsDraftsMax][NB];
+    __shared__ float red[kDsDraftsMax][4][32];
+    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
+    const int64_t tile = blockIdx.x;
+    const size_t base = ((size_t) tile * kNw4 + warp * NW) * 32 + lane;
+    uint4 w[NW];
+    uint32_t s[NW];
+#pragma unroll
+    for (int j = 0; j < NW; ++j) {
+        w[j] = __ldcs(wq + base + (size_t) j * 32);
+        s[j] = __ldcs(sc + base + (size_t) j * 32);
+    }
+    for (int r = 0; r < rows; ++r) scr_x(x + (size_t) r * NB, NB, xi[r], xs[r], xdd[r], tid, 128);
+    __syncthreads();
+#pragma unroll
+    for (int r = 0; r < kDsDraftsMax; ++r)
+        if (r < rows) red[r][warp][lane] = scr_acc<NW>(w, s, warp * NW, xi[r], xs[r], xdd[r]);
+    __syncthreads();
+    const int64_t row = tile * 32 + lane;
+    for (int r = warp; r < rows; r += 4)
+        approx[r * n_pad + row] = red[r][0][lane] + red[r][1][lane] + red[r][2][lane] + red[r][3][lane];
+}
+
+// a warp a tile of 32 copy rows (lane = row): the fold copy's score of the latent plus the head term and the bias,
+// capped; the tile's softmax partial and its best kScrPer rows
+constexpr int kScrTilesPerBlock = 4;
+template <int RANK>
+__global__ void __launch_bounds__(32 * kScrTilesPerBlock)
+    scr_step_kernel(const uint4* __restrict__ wq, const uint32_t* __restrict__ sc, const QB* lat, const float* approx,
+                    const float* __restrict__ fold_bp, float cap, int64_t n_rows, int n_tiles, float2* cand,
+                    float2* part) {
+    constexpr int kNw4 = scr_nw4(RANK), NB = RANK / 32;
+    __shared__ __align__(16) int xi[RANK / 4];
+    __shared__ float xs[NB], xdd[NB];
+    const int tid = threadIdx.x, lane = tid & 31;
+    const int tile = (int) blockIdx.x * kScrTilesPerBlock + (tid >> 5);
+    const int64_t row = (int64_t) tile * 32 + lane;
+    const bool live = tile < n_tiles, real = live && scr_token(row, n_tiles) < n_rows;
+    uint4 w[kNw4];
+    uint32_t s[kNw4];
+#pragma unroll
+    for (int j = 0; j < kNw4; ++j) {
+        const size_t at = ((size_t) (live ? tile : 0) * kNw4 + j) * 32 + lane;
+        w[j] = __ldcs(wq + at);
+        s[j] = __ldcs(sc + at);
+    }
+    const float fb = live ? __ldg(fold_bp + row) : 0.0f;
+    scr_x(lat, NB, xi, xs, xdd, tid, 32 * kScrTilesPerBlock);
+    __syncthreads();
+    if (!live) return;
+    const float ninf = -INFINITY;
+    float v = ninf;
+    if (real) v = cap * tanhf((approx[row] + scr_acc<kNw4>(w, s, 0, xi, xs, xdd) + fb) / cap);
+    const float m = warp_max(v);
+    const float e = warp_sum(v > ninf ? __expf(v - m) : 0.0f);
+    if (lane == 0) part[tile] = make_float2(m, e);
+    for (int k = 0; k < kScrPer; ++k) {
+        float bv = v;
+        int bi = lane;
+#pragma unroll
+        for (int o = 16; o; o >>= 1) {
+            const float ov = __shfl_xor_sync(0xffffffffu, bv, o);
+            const int oi = __shfl_xor_sync(0xffffffffu, bi, o);
+            if (ov > bv || (ov == bv && oi < bi)) bv = ov, bi = oi;
+        }
+        if (lane == 0) cand[tile * kScrPer + k] = make_float2(bv, __int_as_float(tile * 32 + bi));
+        if (lane == bi) v = ninf;
+    }
+}
+
+struct ScrFinal {
+    float wmax[16];
+    int list[kScrMaxCand];
+    float lp[kScrMaxCand], ex[kScrMaxCand];
+    int cnt;
+    int hist[256];
+    unsigned long long want;
+    int need;
+};
+
+// a candidate's key: its approximate score, then the lower row on a tie
+__device__ __forceinline__ unsigned long long scr_key(float2 c) {
+    const unsigned u = __float_as_uint(c.x);
+    const unsigned o = (u & 0x80000000u) ? ~u : (u | 0x80000000u);
+    return ((unsigned long long) o << 32) | (unsigned) (0xffffffffu - (unsigned) __float_as_int(c.y));
+}
+
+// the kScrMaxCand-th largest key of the nc candidates within kScrDelta of m: a radix select over the key's bytes
+__device__ unsigned long long scr_kth(ScrFinal& f, int nc, const float2* cand, float m) {
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    if (tid == 0) f.want = 0ull, f.need = kScrMaxCand;
+    unsigned long long mask = 0ull;
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        if (tid < 256) f.hist[tid] = 0;
+        __syncthreads();
+        const unsigned long long want = f.want;
+        for (int i = tid; i < nc; i += 512) {
+            const float2 c = __ldcg(&cand[i]);
+            if (!(c.x > -INFINITY && c.x >= m - kScrDelta)) continue;
+            const unsigned long long k = scr_key(c);
+            if ((k & mask) == want) atomicAdd(&f.hist[(int) ((k >> shift) & 255u)], 1);
+        }
+        __syncthreads();
+        if (warp == 0) {   // lane l holds bins 255 - 8l .. 248 - 8l
+            int b[8], s = 0;
+#pragma unroll
+            for (int j = 0; j < 8; ++j) b[j] = f.hist[255 - 8 * lane - j], s += b[j];
+            int incl = s;
+#pragma unroll
+            for (int o = 1; o < 32; o <<= 1) {
+                const int v = __shfl_up_sync(0xffffffffu, incl, o);
+                if (lane >= o) incl += v;
+            }
+            const int need = f.need, excl = incl - s;
+            if (excl < need && incl >= need) {
+                int acc = excl, j = 0;
+                while (acc + b[j] < need) acc += b[j++];
+                f.want = want | ((unsigned long long) (255 - 8 * lane - j) << shift);
+                f.need = need - acc;
+            }
+        }
+        mask |= 255ull << shift;
+        __syncthreads();
+    }
+    return f.want;
+}
+
+// the tiles' candidates within kScrDelta of the best into f.list (ascending copy row), the kScrMaxCand best of them
+// where there are more; the count
+__device__ int scr_collect(ScrFinal& f, int n_tiles, const float2* cand, const float2* part) {
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    float m = -INFINITY;
+    for (int t = tid; t < n_tiles; t += 512) m = fmaxf(m, __ldcg(&part[t].x));
+    m = warp_max(m);
+    if (lane == 0) f.wmax[warp] = m;
+    __syncthreads();
+    m = f.wmax[0];
+    for (int w = 1; w < 16; ++w) m = fmaxf(m, f.wmax[w]);
+    if (m == -INFINITY) return 0;
+    for (int t = tid; t < n_tiles; t += 512) {
+        const float tm = __ldcg(&part[t].x);
+        if (!(tm > -INFINITY && tm >= m - kScrDelta)) continue;
+        for (int k = 0; k < kScrPer; ++k) {
+            const float2 c = __ldcg(&cand[t * kScrPer + k]);
+            if (c.x > -INFINITY && c.x >= m - kScrDelta) {
+                const int p = atomicAdd(&f.cnt, 1);
+                if (p < kScrMaxCand) f.list[p] = __float_as_int(c.y), f.lp[p] = c.x;
+            }
+        }
+    }
+    __syncthreads();
+    const int total = f.cnt;
+    if (total > kScrMaxCand) {
+        const int nc = n_tiles * kScrPer;
+        const unsigned long long kth = scr_kth(f, nc, cand, m);
+        if (tid == 0) f.cnt = 0;
+        __syncthreads();
+        for (int i = tid; i < nc; i += 512) {
+            const float2 c = __ldcg(&cand[i]);
+            if (c.x > -INFINITY && c.x >= m - kScrDelta && scr_key(c) >= kth) {
+                const int p = atomicAdd(&f.cnt, 1);
+                if (p < kScrMaxCand) f.list[p] = __float_as_int(c.y), f.lp[p] = c.x;
+            }
+        }
+        __syncthreads();
+    }
+    const int n = min(total, kScrMaxCand);
+    int row = 0, rank = 0;
+    float lp = 0.0f;
+    if (tid < n) {
+        row = f.list[tid];
+        lp = f.lp[tid];
+        for (int j = 0; j < n; ++j) rank += f.list[j] < row;
+    }
+    __syncthreads();
+    if (tid < n) f.list[rank] = row, f.lp[rank] = lp;
+    __syncthreads();
+    return n;
+}
+
+// a Q8_0 row of nb blocks by a q8_1 row, on a warp: lane L takes words 2 (L % 4), +1 of blocks L / 4 + 8 j
+__device__ __forceinline__ float scr_dot(const uint8_t* w, const QB* x, int nb, int lane) {
+    const int k = 2 * (lane & 3);
+    float s = 0.0f;
+    for (int b = lane >> 2; b < nb; b += 8) {
+        const uint8_t* blk = w + (size_t) b * 34;
+        const uint16_t* q16 = (const uint16_t*) (blk + 2);
+        const int* xq = (const int*) x[b].qs;
+        const int w0 = (int) q16[2 * k] | ((int) q16[2 * k + 1] << 16);
+        const int w1 = (int) q16[2 * k + 2] | ((int) q16[2 * k + 3] << 16);
+        const int sumi = __dp4a(w1, xq[k + 1], __dp4a(w0, xq[k], 0));
+        s += __half2float(*(const __half*) blk) * __low2float(x[b].ds) * (float) sumi;
+    }
+    return warp_sum(s);
+}
+
+// One block: the candidates scored exactly (a warp a row), the exact best is guess i: out[i] and *prev, with its
+// probability from the tiles' softmax sums with the rescored rows made exact
+template <int NE, int NR>
+__global__ void __launch_bounds__(512) scr_final_kernel(DsScreen h, const QB* xh_g, const QB* xl_g, int n_tiles,
+                                                         const float2* cand, const float2* part, int32_t* prev,
+                                                         Likeliest* out) {
+    __shared__ QB xh[NE], xl[NR];
+    __shared__ ScrFinal f;
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    if (tid == 0) f.cnt = 0;
+    for (int k = tid; k < (NE + NR) * 9; k += 512) {   // nine words a block
+        const int b = k / 9, j = k % 9;
+        ((int*) (b < NE ? xh + b : xl + (b - NE)))[j] = ((const int*) (b < NE ? xh_g + b : xl_g + (b - NE)))[j];
+    }
+    __syncthreads();
+    const int n = scr_collect(f, n_tiles, cand, part);
+    if (n == 0) {   // never: the vocabulary has rows
+        if (tid == 0) out->token = *prev, out->prob = 0.0f;
+        return;
+    }
+    for (int c = warp; c < n; c += 16) {   // by token from here: a tie goes to the lower token
+        const int64_t tok = scr_token(f.list[c], n_tiles);
+        const float a = scr_dot((const uint8_t*) h.head + tok * NE * 34, xh, NE, lane);
+        const float b = scr_dot((const uint8_t*) h.fold + tok * NR * 34, xl, NR, lane);
+        if (lane == 0) f.ex[c] = h.cap * tanhf((a + b + h.fold_b[tok]) / h.cap), f.list[c] = (int) tok;
+    }
+    __syncthreads();
+    if (warp == 0) {
+        float bv = -INFINITY;
+        int bi = 0x7fffffff;
+        for (int c = lane; c < n; c += 32)
+            if (f.ex[c] > bv || (f.ex[c] == bv && f.list[c] < bi)) bv = f.ex[c], bi = f.list[c];
+#pragma unroll
+        for (int o = 16; o; o >>= 1) {
+            const float ov = __shfl_xor_sync(0xffffffffu, bv, o);
+            const int oi = __shfl_xor_sync(0xffffffffu, bi, o);
+            if (ov > bv || (ov == bv && oi < bi)) bv = ov, bi = oi;
+        }
+        if (lane == 0) f.wmax[0] = bv, f.cnt = bi;
+    }
+    __syncthreads();
+    const float bv = f.wmax[0];
+    const int bi = f.cnt;
+    float sum = 0.0f;
+    for (int t = tid; t < n_tiles; t += 512) {
+        const float2 p = __ldcg(&part[t]);
+        if (p.y > 0.0f) sum += p.y * __expf(p.x - bv);
+    }
+    for (int c = tid; c < n; c += 512) sum += __expf(f.ex[c] - bv) - __expf(f.lp[c] - bv);
+    sum = warp_sum(sum);
+    __syncthreads();   // f.wmax is free again
+    if (lane == 0) f.wmax[warp] = sum;
+    __syncthreads();
+    if (tid == 0) {
+        sum = 0.0f;
+        for (int w = 0; w < 16; ++w) sum += f.wmax[w];
+        out->token = bi;
+        out->prob = 1.0f / fmaxf(sum, 1.0f);
+        *prev = bi;
+    }
+}
+
 }  // namespace
 
 void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream) {
@@ -1639,13 +2117,17 @@ void ds_rope(float* x, int heads, int rows, const float* w, float eps, float the
     launched("ds_rope");
 }
 
-void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, int64_t lo, int64_t hi,
-               int rows, int heads, int kv_heads, float scale, float* score, size_t score_stride, float* out,
-               void* stream) {
-    ds_attend_kernel<<<dim3(rows, heads), 256, 0, cs(stream)>>>(q, (const __half*) keys, (const __half*) vals,
-                                                                (long long) cap, (long long) lo, (long long) hi, heads,
-                                                                kv_heads, scale, score, score_stride, out);
-    launched("ds_attend");
+size_t ds_attend_floats(int kv_heads) { return (size_t) kv_heads * kDsSplits * kDsRows * kDsPart; }
+
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, const DsPos& p, int window,
+               int rows, int heads, int kv_heads, float scale, float* part, float* out, void* stream) {
+    if (heads % kv_heads || rows * (heads / kv_heads) > kDsRows)
+        throw std::logic_error("ds_attend: more query rows a kv head than it holds");
+    ds_part_kernel<<<dim3(kv_heads, kDsSplits), 256, 0, cs(stream)>>>(
+        q, (const __half*) keys, (const __half*) vals, (long long) cap, p, rows, window, heads, kv_heads, scale, part);
+    launched("ds_part");
+    ds_join_kernel<<<dim3(rows, heads), kDsHead, 0, cs(stream)>>>(part, p, rows, window, heads, kv_heads, out);
+    launched("ds_join");
 }
 
 void ds_swiglu(float* g, const float* u, size_t n, void* stream) {
@@ -1653,9 +2135,11 @@ void ds_swiglu(float* g, const float* u, size_t n, void* stream) {
     launched("ds_swiglu");
 }
 
-void ds_mask_rows(float* x, const float* mask, int n, int rows, void* stream) {
-    ds_mask_rows_kernel<<<grid((size_t) n, 256), 256, 0, cs(stream)>>>(x, mask, n, rows);
-    launched("ds_mask_rows");
+void ds_block_in(float* x, const float* mask, int n, int rows, const DsPos& p, const long long* token, float* state,
+                 int rank, int32_t* prev, const float* ring, int ring_rows, float* ctx, void* stream) {
+    ds_block_in_kernel<<<grid((size_t) n, 256), 256, 0, cs(stream)>>>(x, mask, n, rows, p, token, state, rank, prev,
+                                                                       ring, ring_rows, ctx);
+    launched("ds_block_in");
 }
 
 void ds_markov_in(const float* state, const uint16_t* w1, const int32_t* prev, float* in, int rank, void* stream) {
@@ -1683,6 +2167,57 @@ void ds_pick(const float* base, const float* fy, const float* fb, int n_keep, fl
 void ds_fold_q8(const float* ft, int n_rows, int blocks, int b, void* fold, void* stream) {
     ds_fold_q8_kernel<<<grid((size_t) n_rows, 256), 256, 0, cs(stream)>>>(ft, n_rows, blocks, b, (uint8_t*) fold);
     launched("ds_fold_q8");
+}
+
+bool ds_screens(int n_embd, int rank) { return n_embd == 2304 && rank == 256; }
+
+size_t ds_screen_bytes(int n_in, int64_t n_rows) { return scr_bytes(n_rows, n_in); }
+
+int64_t ds_screen_rows(int64_t n_rows) { return scr_tiles(n_rows) * 32; }
+
+size_t ds_screen_scratch_bytes(int64_t n_rows) { return (size_t) scr_tiles(n_rows) * (kScrPer + 1) * sizeof(float2); }
+
+void ds_screen_pack(const void* q8_0, int n_in, int64_t n_rows, void* copy, void* stream) {
+    if (n_in != 2304 && n_in != 256) throw std::logic_error("ds_screen_pack: rows of 2,304 or 256");
+    // the last tile's rows past n_rows score as zeros
+    if (cudaMemsetAsync(copy, 0, scr_bytes(n_rows, n_in), cs(stream)) != cudaSuccess) launched("ds_screen_pack");
+    const int64_t total = scr_tiles(n_rows) * 32 * (n_in / 32);
+    const unsigned blocks = (unsigned) ((total + 127) / 128);
+    uint16_t* sc = scr_scales(copy, n_rows, n_in);
+    const uint8_t* q = (const uint8_t*) q8_0;
+    if (n_in == 2304) scr_pack_kernel<2304><<<blocks, 128, 0, cs(stream)>>>(q, n_rows, (uint4*) copy, sc);
+    else scr_pack_kernel<256><<<blocks, 128, 0, cs(stream)>>>(q, n_rows, (uint4*) copy, sc);
+    launched("ds_screen_pack");
+}
+
+void ds_screen_order(const float* by_token, int64_t n_rows, float* by_row, void* stream) {
+    const int64_t n = ds_screen_rows(n_rows);
+    scr_order_kernel<<<(unsigned) ((n + 255) / 256), 256, 0, cs(stream)>>>(by_token, n_rows, scr_tiles(n_rows), by_row);
+    launched("ds_screen_order");
+}
+
+void ds_head_base(const DsScreen& h, const void* hq, int rows, float* approx, void* stream) {
+    if (rows < 1 || rows > kDsDraftsMax) throw std::logic_error("ds_head_base: 1 to 7 rows");
+    scr_base_kernel<2304><<<(unsigned) scr_tiles(h.n_rows), 128, 0, cs(stream)>>>(
+        (const uint4*) h.head_sc, (const uint32_t*) scr_scales(h.head_sc, h.n_rows, 2304), (const QB*) hq, rows,
+        ds_screen_rows(h.n_rows), approx);
+    launched("ds_head_base");
+}
+
+void ds_head_pick(const DsScreen& h, const void* hq, const void* latq, const float* approx, int i, void* scratch,
+                  int32_t* prev, Likeliest* out, void* stream) {
+    const int tiles = (int) scr_tiles(h.n_rows);
+    float2* cand = (float2*) scratch;
+    float2* part = cand + (size_t) tiles * kScrPer;
+    scr_step_kernel<256><<<(unsigned) ((tiles + kScrTilesPerBlock - 1) / kScrTilesPerBlock), 32 * kScrTilesPerBlock, 0,
+                           cs(stream)>>>((const uint4*) h.fold_sc,
+                                         (const uint32_t*) scr_scales(h.fold_sc, h.n_rows, 256), (const QB*) latq,
+                                         approx + (size_t) i * ds_screen_rows(h.n_rows), h.fold_bp, h.cap, h.n_rows,
+                                         tiles, cand, part);
+    launched("ds_head_step");
+    scr_final_kernel<2304 / 32, 256 / 32><<<1, 512, 0, cs(stream)>>>(h, (const QB*) hq + (size_t) i * (2304 / 32),
+                                                                     (const QB*) latq, tiles, cand, part, prev, out);
+    launched("ds_head_final");
 }
 
 }  // namespace strata::poly

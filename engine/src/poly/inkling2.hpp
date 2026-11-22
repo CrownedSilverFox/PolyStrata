@@ -127,6 +127,8 @@ private:
     void ds_load();
     void ds_commit(int n);
     void ds_fold();
+    void ds_block(int nb);
+    DsScreen ds_screen() const;
     template <class F> void window_runs(int64_t pos, F&& f) const;
 
     std::vector<Block> blocks_;   ///< one a layer
@@ -153,6 +155,7 @@ private:
         int64_t cap = 0;
     };
     static constexpr int kDsRing = 16;   ///< positions whose Markov-head context ds_ring_ keeps
+    static constexpr int kDsRows = 8;    ///< a block's rows at most
     std::unique_ptr<Shards> ds_file_;
     std::vector<DsLayer> ds_;
     int ds_block_ = 0, ds_window_ = 0, ds_ff_ = 0, ds_rank_ = 0, ds_visit_[3] = {};
@@ -161,15 +164,22 @@ private:
           *ds_ob_ = nullptr, *ds_wt_ = nullptr, *ds_fold_b_ = nullptr, *ds_ring_ = nullptr, *h_ds_row_ = nullptr;
     uint16_t* ds_w1_ = nullptr;   ///< the Markov head's token rows, BF16 [vocabulary][rank]
     Dev ds_wsp_, ds_wh_, ds_wf_, ds_fold_;
-    bool ds_folded_ = false;
-    int32_t *ds_prev_ = nullptr, *h_ds_tok_ = nullptr;
+    // the screen of the pick (ds_screen()): 2-bit copies of the output matrix's rows and the fold's, where the output
+    // matrix is Q8_0; null: every guess reads both whole
+    void *ds_head_sc_ = nullptr, *ds_fold_sc_ = nullptr;
+    float* ds_fold_bp_ = nullptr;
+    // a block's first position and the ones after it (at[2 t]), then its anchor token (at[2 kDsRows]): read on the
+    // card, so that a block's launches are recorded once for its length (ds_graph_)
+    long long *ds_at_ = nullptr, *h_ds_at_ = nullptr;
+    void* ds_graph_[kDsRows + 1] = {};
+    int32_t* ds_prev_ = nullptr;
     Likeliest* ds_pick_ = nullptr;
     float *ds_tap_ = nullptr, *ds_mix_ = nullptr, *ds_k_ = nullptr, *ds_v_ = nullptr, *ds_x_ = nullptr,
           *ds_y_ = nullptr, *ds_q_ = nullptr, *ds_att_ = nullptr, *ds_g_ = nullptr, *ds_u_ = nullptr, *ds_h_ = nullptr,
-          *ds_base_ = nullptr, *ds_z_ = nullptr, *ds_fy_ = nullptr, *ds_score_ = nullptr, *ds_ctxh_ = nullptr,
+          *ds_base_ = nullptr, *ds_z_ = nullptr, *ds_fy_ = nullptr, *ds_part_ = nullptr, *ds_ctxh_ = nullptr,
           *ds_ctxf_ = nullptr, *ds_in_ = nullptr, *ds_sp_ = nullptr, *ds_state_ = nullptr, *ds_lat_ = nullptr,
-          *ds_ft_ = nullptr;
-    size_t ds_score_n_ = 0;
+          *ds_frc_ = nullptr, *ds_approx_ = nullptr, *ds_hscr_ = nullptr;
+    void *ds_yq_ = nullptr, *ds_hq_ = nullptr, *ds_latq_ = nullptr;
     void* side_ = nullptr;                             ///< fork()'s stream
     void *side_go_ = nullptr, *side_done_ = nullptr;   ///< its fork and its join
 

@@ -133,8 +133,9 @@ void Inkling2::ds_open() {
              (int) key("attention.head_count_kv")->u == n_kv_ && (int) key("attention.key_length")->u == head_dim_ &&
              head_dim_ == 128 && (int) key("vocab_size")->u == n_vocab_,
          "the target's width, heads and vocabulary");
-    need(ds_block_ >= 2 && ds_block_ <= 8 && ds_rank_ % 32 == 0 && ds_rank_ <= 1024 && ds_ff_ > 0 && ds_window_ > 0,
-         "a block of 2 to 8, a Markov rank of a multiple of 32");
+    need(ds_block_ >= 2 && ds_block_ <= kDsRows && ds_rank_ % 32 == 0 && ds_rank_ <= 1024 && ds_ff_ > 0 &&
+             ds_window_ > 0 && n_head_ % n_kv_ == 0 && n_head_ / n_kv_ * ds_block_ <= 24,
+         "a block of 2 to 8, a Markov rank of a multiple of 32, 24 query rows a key head at most");
     need(!key("sample_from_anchor")->u && !key("attention.causal")->u, "drafts from the mask rows, a block's rows "
                                                                        "seeing each other");
     need(swa->type == MetaType::ARRAY && (int) swa->items.size() == layers && targets->type == MetaType::ARRAY &&
@@ -251,23 +252,62 @@ void Inkling2::ds_load() {
     ds_ring_ = (float*) dmalloc((size_t) kDsRing * E * 4, "the drafter");
     ds_prev_ = (int32_t*) dmalloc(64, "the drafter");
     ds_pick_ = (Likeliest*) dmalloc((size_t) ds_block_ * sizeof(Likeliest), "the drafter");
+    ds_at_ = (long long*) dmalloc((2 * kDsRows + 1) * sizeof(long long), "the drafter");
     h_ds_row_ = (float*) hmalloc(E * 4, "pinned memory");
-    h_ds_tok_ = (int32_t*) hmalloc(64, "pinned memory");
+    h_ds_at_ = (long long*) hmalloc((2 * kDsRows + 1) * sizeof(long long), "pinned memory");
+    ds_fold();
+    if (output_.type == 8u && ds_screens(n_embd_, ds_rank_)) {   // the pick's screen (ds_screen())
+        const int64_t n = n_unpadded_;
+        ds_head_sc_ = dmalloc(ds_screen_bytes(n_embd_, n), "the drafter");
+        ds_fold_sc_ = dmalloc(ds_screen_bytes(ds_rank_, n), "the drafter");
+        ds_fold_bp_ = (float*) dmalloc((size_t) ds_screen_rows(n) * 4, "the drafter");
+        ds_screen_pack(output_.p, n_embd_, n, ds_head_sc_, st_);
+        ds_screen_pack(ds_fold_.p, ds_rank_, n, ds_fold_sc_, st_);
+        ds_screen_order(ds_fold_b_, n, ds_fold_bp_, st_);
+        ck(cudaStreamSynchronize(cs(st_)), "the drafter's screen");
+    }
 }
 
-// The fold of the Markov head's output into the output matrix, made once: fold[v] = output[v] x hidden_out (a Q8_0 row
-// of rank values a token) and fold_b[v] = output[v] . hidden_out's bias, so that a draft's scores are output . h plus
-// fold . latent plus fold_b.
+// The fold of the Markov head's output into the output matrix, made as the drafter loads: fold[v] = output[v] x
+// hidden_out (a Q8_0 row of rank values a token) and fold_b[v] = output[v] . hidden_out's bias, so that a draft's
+// scores are output . h plus fold . latent plus fold_b.  Its scratch is its own: the engine's is not there yet.
 void Inkling2::ds_fold() {
     const int R = ds_rank_;
-    const size_t E = (size_t) n_embd_, V = (size_t) n_vocab_;
+    const size_t E = (size_t) n_embd_, V = (size_t) n_vocab_, row = kernels::native_q8_1_bytes(n_embd_);
+    float* ft = nullptr;
+    uint8_t* xq = nullptr;
+    ck(cudaMalloc((void**) &ft, 32 * V * sizeof(float)), "the drafter's fold");
+    if (cudaMalloc((void**) &xq, (size_t) (R + 1) * row) != cudaSuccess) {
+        cudaFree(ft);
+        ck(cudaErrorMemoryAllocation, "the drafter's fold");
+    }
+    // as lin() quantizes them: a row's blocks are the same alone or among others
+    kernels::native_quantize_q8_1(ds_wt_, xq, n_embd_ * R, 1, st_);
+    kernels::native_quantize_q8_1(ds_ob_, xq + R * row, n_embd_, 1, st_);
     for (int b = 0; b < R / 32; ++b) {
         for (int c = 0; c < 4; ++c)
-            lin(output_, ds_wt_ + (size_t) (b * 32 + c * 8) * E, ds_ft_ + (size_t) c * 8 * V, 8);
-        ds_fold_q8(ds_ft_, n_vocab_, R / 32, b, ds_fold_.p, st_);
+            lin(output_, ds_wt_ + (size_t) (b * 32 + c * 8) * E, ft + (size_t) c * 8 * V, 8,
+                xq + (b * 32 + c * 8) * row);
+        ds_fold_q8(ft, n_vocab_, R / 32, b, ds_fold_.p, st_);
     }
-    lin(output_, ds_ob_, ds_fold_b_, 1);
-    ds_folded_ = true;
+    lin(output_, ds_ob_, ds_fold_b_, 1, xq + R * row);
+    const cudaError_t e = cudaStreamSynchronize(cs(st_));
+    cudaFree(ft);
+    cudaFree(xq);
+    ck(e, "the drafter's fold");
+}
+
+DsScreen Inkling2::ds_screen() const {
+    DsScreen h;
+    h.head = output_.p;
+    h.fold = ds_fold_.p;
+    h.fold_b = ds_fold_b_;
+    h.fold_bp = ds_fold_bp_;
+    h.head_sc = ds_head_sc_;
+    h.fold_sc = ds_fold_sc_;
+    h.n_rows = n_unpadded_;
+    h.cap = ds_cap_;
+    return h;
 }
 
 // A call's rows' features for the drafter: their final normed state (the other three were copied as the layers ran),
@@ -296,64 +336,103 @@ void Inkling2::ds_commit(int n) {
 }
 
 // The drafter's block after `token` (the token at pos(), not yet run): its guesses of the tokens after it, with their
-// probabilities, into h_block_.  The weights read are the drafter's and the output matrix (once for every guess, and
-// the fold once a guess).
+// probabilities, into h_block_.  A block's launches read its position and anchor on the card (ds_at_), so they are
+// the same for every block of its length: recorded once, then replayed with one call.  Launched one by one, a
+// block's 123 kernels spanned 1.55 ms of an RTX 5090's time, 1.33 ms of it busy.
 void Inkling2::guess_block(int32_t token) {
     block_n_ = 0;
     const int nb = (int) std::min<int64_t>({(int64_t) ds_block_, (int64_t) opt_.window, opt_.max_context - pos_});
     if (!ds_file_ || nb < 2 || pos_ < 1) return;
-    if (!ds_folded_) ds_fold();
-    const int64_t p0 = pos_;
+    input(token, pos_, h_ds_row_);
+    for (int t = 0; t < kDsRows; ++t) h_ds_at_[2 * t] = pos_ + t;
+    h_ds_at_[2 * kDsRows] = token;
+    if (opt_.graphs && !prompt_scratch_) {   // the recording holds the few tokens' scratch
+        void*& g = ds_graph_[nb];
+        if (!g) {
+            cudaGraph_t graph = nullptr;
+            ck(cudaStreamBeginCapture(cs(st_), cudaStreamCaptureModeThreadLocal), "cudaStreamBeginCapture");
+            try {
+                ds_block(nb);
+            } catch (...) {
+                if (cudaStreamEndCapture(cs(st_), &graph) == cudaSuccess && graph) cudaGraphDestroy(graph);
+                cudaGetLastError();
+                throw;
+            }
+            ck(cudaStreamEndCapture(cs(st_), &graph), "cudaStreamEndCapture");
+            cudaGraphExec_t exec = nullptr;
+            const cudaError_t made = cudaGraphInstantiateWithFlags(&exec, graph, 0);
+            cudaGraphDestroy(graph);
+            ck(made, "cudaGraphInstantiate");
+            graphs_.push_back(exec);
+            g = exec;
+            recorded_ = true;
+        }
+        ck(cudaGraphLaunch((cudaGraphExec_t) g, cs(st_)), "the drafter");
+    } else {
+        ds_block(nb);
+    }
+    ck(cudaStreamSynchronize(cs(st_)), "the drafter");
+    block_n_ = nb - 1;
+}
+
+// guess_block()'s launches for a block of nb rows: the anchor's normed embedding and nb - 1 mask rows through the
+// layers, then the Markov head on the mask rows' final rows, a guess at a time from the one before.  The weights read
+// are the drafter's, and the output matrix and the fold, once for the guesses (or their 2-bit copies, ds_screen()).
+void Inkling2::ds_block(int nb) {
     const size_t E = (size_t) n_embd_, V = (size_t) n_vocab_, R = (size_t) ds_rank_;
-    // the block's rows: the anchor's normed embedding, then the mask
-    input(token, p0, h_ds_row_);
+    const int nd = nb - 1;
+    ck(cudaMemcpyAsync(ds_at_, h_ds_at_, (2 * kDsRows + 1) * sizeof(long long), cudaMemcpyHostToDevice, cs(st_)),
+       "the drafter");
     ck(cudaMemcpyAsync(ds_y_, h_ds_row_, E * 4, cudaMemcpyHostToDevice, cs(st_)), "the drafter");
     rms_norm(ds_y_, fp(tok_norm_), ds_x_, n_embd_, 1, rms_eps_, st_);
-    ds_mask_rows(ds_x_, ds_mask_, n_embd_, nb, st_);
-    const DsPos p{nullptr, (long long) p0};
+    const DsPos p{ds_at_, 0};
+    ds_block_in(ds_x_, ds_mask_, n_embd_, nb, p, ds_at_ + 2 * kDsRows, ds_state_, ds_rank_, ds_prev_, ds_ring_,
+                kDsRing, ds_frc_, st_);
     const float scale = 1.f / std::sqrt((float) head_dim_);
     for (DsLayer& L : ds_) {
         rms_norm(ds_x_, L.attn_norm, ds_y_, n_embd_, nb, ds_eps_, st_);
-        lin(L.wq, ds_y_, ds_q_, nb);
-        lin(L.wk, ds_y_, ds_k_, nb);
-        lin(L.wv, ds_y_, ds_v_, nb);
+        kernels::native_quantize_q8_1(ds_y_, ds_yq_, n_embd_ * nb, 1, st_);
+        lin(L.wq, ds_y_, ds_q_, nb, ds_yq_);
+        lin_pair(L.wk, L.wv, ds_y_, ds_k_, ds_v_, nb, ds_yq_);
         ds_rope(ds_q_, n_head_, nb, L.q_norm, ds_eps_, ds_theta_, p, nullptr, 0, nullptr, nullptr, st_);
         ds_rope(ds_k_, n_kv_, nb, L.k_norm, ds_eps_, ds_theta_, p, L.keys, L.cap, ds_v_, L.vals, st_);
         // a window layer's context is the window before the block, a full one's every position; and the block
-        const int64_t lo = L.swa ? std::max<int64_t>(0, p0 - ds_window_) : 0;
-        ds_attend(ds_q_, L.keys, L.vals, L.cap, lo, p0 + nb, nb, n_head_, n_kv_, scale, ds_score_, ds_score_n_, ds_att_,
-                  st_);
+        ds_attend(ds_q_, L.keys, L.vals, L.cap, p, L.swa ? ds_window_ : 0, nb, n_head_, n_kv_, scale, ds_part_,
+                  ds_att_, st_);
         lin(L.wo, ds_att_, ds_y_, nb);
         axpy(ds_y_, 1.f, ds_x_, nb * n_embd_, true, st_);
         rms_norm(ds_x_, L.ffn_norm, ds_y_, n_embd_, nb, ds_eps_, st_);
-        lin(L.gate, ds_y_, ds_g_, nb);
-        lin(L.up, ds_y_, ds_u_, nb);
+        kernels::native_quantize_q8_1(ds_y_, ds_yq_, n_embd_ * nb, 1, st_);
+        lin_pair(L.gate, L.up, ds_y_, ds_g_, ds_u_, nb, ds_yq_);
         ds_swiglu(ds_g_, ds_u_, (size_t) nb * ds_ff_, st_);
         lin(L.down, ds_g_, ds_y_, nb);
         axpy(ds_y_, 1.f, ds_x_, nb * n_embd_, true, st_);
     }
-    // the guesses come from the mask rows: their final rows through the output matrix, then the Markov head, a
-    // guess at a time from the one before
-    const int nd = nb - 1;
     rms_norm(ds_x_ + E, ds_norm_, ds_h_, n_embd_, nd, ds_eps_, st_);
-    lin(output_, ds_h_, ds_base_, nd);
+    const bool screen = ds_head_sc_ != nullptr;
+    if (screen) {
+        kernels::native_quantize_q8_1(ds_h_, ds_hq_, n_embd_ * nd, 1, st_);
+        ds_head_base(ds_screen(), ds_hq_, nd, ds_approx_, st_);
+    } else {
+        lin(output_, ds_h_, ds_base_, nd);
+    }
     lin(ds_wh_, ds_h_, ds_ctxh_, nd);
-    lin(ds_wf_, ds_ring_ + (size_t) ((p0 - 1) % kDsRing) * E, ds_ctxf_, 1);
-    ck(cudaMemsetAsync(ds_state_, 0, R * 4, cs(st_)), "the drafter");
-    *h_ds_tok_ = token;
-    ck(cudaMemcpyAsync(ds_prev_, h_ds_tok_, 4, cudaMemcpyHostToDevice, cs(st_)), "the drafter");
+    lin(ds_wf_, ds_frc_, ds_ctxf_, 1);
     for (int i = 0; i < nd; ++i) {
         ds_markov_in(ds_state_, ds_w1_, ds_prev_, ds_in_, ds_rank_, st_);
         lin(ds_wsp_, ds_in_, ds_sp_, 1);
         ds_markov_step(ds_ctxh_ + (size_t) i * 3 * R, ds_ctxf_, ds_jb_, ds_sp_, ds_state_, ds_lat_, ds_rank_, st_);
-        lin(ds_fold_, ds_lat_, ds_fy_, 1);
-        ds_pick(ds_base_ + (size_t) i * V, ds_fy_, ds_fold_b_, n_unpadded_, ds_cap_, ds_z_, ds_pick_ + i, ds_prev_,
-                st_);
+        if (screen) {
+            kernels::native_quantize_q8_1(ds_lat_, ds_latq_, ds_rank_, 1, st_);
+            ds_head_pick(ds_screen(), ds_hq_, ds_latq_, ds_approx_, i, ds_hscr_, ds_prev_, ds_pick_ + i, st_);
+        } else {
+            lin(ds_fold_, ds_lat_, ds_fy_, 1);
+            ds_pick(ds_base_ + (size_t) i * V, ds_fy_, ds_fold_b_, n_unpadded_, ds_cap_, ds_z_, ds_pick_ + i,
+                    ds_prev_, st_);
+        }
     }
     ck(cudaMemcpyAsync(h_block_, ds_pick_, (size_t) nd * sizeof(Likeliest), cudaMemcpyDeviceToHost, cs(st_)),
        "the drafter");
-    ck(cudaStreamSynchronize(cs(st_)), "the drafter");
-    block_n_ = nd;
 }
 
 void Inkling2::load_layer(int il) {
@@ -508,15 +587,20 @@ void Inkling2::assign_scratch() {
         ds_base_ = fbuf(B * V);
         ds_z_ = fbuf(V);
         ds_fy_ = fbuf(V);
-        ds_score_n_ = (size_t) opt_.max_context + 64 + B;
-        ds_score_ = fbuf(B * n_head_ * ds_score_n_);
+        ds_part_ = fbuf(ds_attend_floats(n_kv_));
         ds_ctxh_ = fbuf(B * 3 * R);
         ds_ctxf_ = fbuf(3 * R);
         ds_in_ = fbuf(2 * R);
         ds_sp_ = fbuf(3 * R);
         ds_state_ = fbuf(R);
         ds_lat_ = fbuf(R);
-        ds_ft_ = fbuf(32 * V);
+        ds_frc_ = fbuf(E);
+        const auto bytes = [&](size_t n) { return (void*) fbuf((n + sizeof(float) - 1) / sizeof(float)); };
+        ds_yq_ = bytes(B * kernels::native_q8_1_bytes(n_embd_));
+        ds_hq_ = bytes(B * kernels::native_q8_1_bytes(n_embd_));
+        ds_latq_ = bytes(kernels::native_q8_1_bytes(ds_rank_));
+        ds_approx_ = fbuf(B * (size_t) ds_screen_rows(n_unpadded_));
+        ds_hscr_ = (float*) bytes(ds_screen_scratch_bytes(n_unpadded_));
         if (!ds_ring_ && scratch_) ds_load();
     }
     if (!side_) {

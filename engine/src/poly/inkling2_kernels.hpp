@@ -188,15 +188,18 @@ void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream);
 /// vcache's beside it.
 void ds_rope(float* x, int heads, int rows, const float* w, float eps, float theta, const DsPos& p, uint16_t* cache,
              int64_t cap, const float* v, uint16_t* vcache, void* stream);
-/// Each of `rows` query rows' heads over the cache's positions [lo, hi), all of them (no causal mask); score has
-/// rows * heads rows of score_stride floats of scratch.
-void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, int64_t lo, int64_t hi,
-               int rows, int heads, int kv_heads, float scale, float* score, size_t score_stride, float* out,
-               void* stream);
+/// Each of `rows` query rows' heads (rows * heads / kv_heads at most 24) over the cache's positions [lo, p0 + rows),
+/// all of them (no causal mask), p0 the position of row 0 (p): lo = p0 - window (0 at least), or 0 with window 0.
+/// part: ds_attend_floats() floats of scratch.
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, const DsPos& p, int window,
+               int rows, int heads, int kv_heads, float scale, float* part, float* out, void* stream);
+size_t ds_attend_floats(int kv_heads);
 /// g = silu(g) * u
 void ds_swiglu(float* g, const float* u, size_t n, void* stream);
-/// rows 1 .. rows - 1 of x (n values a row) = mask
-void ds_mask_rows(float* x, const float* mask, int n, int rows, void* stream);
+/// A block's inputs beside its first row: rows 1 .. rows - 1 of x (n values a row) = mask; state[0, rank) = 0, *prev
+/// = *token, and ctx = ring row (p0 - 1) % ring_rows (n values), p0 the position of row 0 (p).  rank <= n.
+void ds_block_in(float* x, const float* mask, int n, int rows, const DsPos& p, const long long* token, float* state,
+                 int rank, int32_t* prev, const float* ring, int ring_rows, float* ctx, void* stream);
 /// in = [state ; BF16 row *prev of w1] (rank values each)
 void ds_markov_in(const float* state, const uint16_t* w1, const int32_t* prev, float* in, int rank, void* stream);
 /// The Markov head's step: raw = ctx_h + ctx_f + bias + sp (3 * rank); gate = sigmoid(raw[0:r]), state = gate *
@@ -210,5 +213,37 @@ void ds_pick(const float* base, const float* fy, const float* fb, int n_keep, fl
 size_t ds_pick_floats();
 /// Q8_0 block b of each of n_rows rows of `blocks` blocks (fold), from the 32 rows of ft (ft[k][v], k < 32).
 void ds_fold_q8(const float* ft, int n_rows, int blocks, int b, void* fold, void* stream);
+
+/// The Markov head's pick screened by 2-bit copies of its rows: draft i's scores cap tanh((head_v . h_i + fold_v .
+/// lat_i + fold_b[v]) / cap) over v < n_rows are scored from the copies, the rows near the best exactly (from head and
+/// fold, Q8_0 [vocabulary][2304] and [vocabulary][256]), and the exact best is the pick: the full head's whenever that
+/// row is among the ones scored exactly.  Its probability counts the rows not scored exactly at their copies' scores.
+struct DsScreen {
+    const void* head = nullptr;
+    const void* fold = nullptr;
+    const float* fold_b = nullptr;
+    const float* fold_bp = nullptr;   ///< fold_b in the copies' row order (ds_screen_order())
+    const void* head_sc = nullptr;    ///< the copies (ds_screen_pack())
+    const void* fold_sc = nullptr;
+    int64_t n_rows = 0;
+    float cap = 30.f;
+};
+/// Whether a model of this width and Markov rank can screen (the kernels are built for 2,304 and 256).
+bool ds_screens(int n_embd, int rank);
+size_t ds_screen_bytes(int n_in, int64_t n_rows);
+/// The copy of n_rows Q8_0 rows of n_in (2,304 or 256) values; it has ds_screen_rows() rows.
+void ds_screen_pack(const void* q8_0, int n_in, int64_t n_rows, void* copy, void* stream);
+int64_t ds_screen_rows(int64_t n_rows);
+/// by_row (ds_screen_rows() floats) = by_token in the copies' row order
+void ds_screen_order(const float* by_token, int64_t n_rows, float* by_row, void* stream);
+/// The bytes of scratch ds_head_pick() takes.
+size_t ds_screen_scratch_bytes(int64_t n_rows);
+/// The head copy's scores of the `rows` (1 .. 7) q8_1 rows of hq into approx (rows x ds_screen_rows() floats), once
+/// for a block.
+void ds_head_base(const DsScreen& h, const void* hq, int rows, float* approx, void* stream);
+/// Guess i: from hq's row i, the q8_1 latent latq and approx (ds_head_base()'s), the pick and its probability into
+/// *out, the pick into *prev.
+void ds_head_pick(const DsScreen& h, const void* hq, const void* latq, const float* approx, int i, void* scratch,
+                  int32_t* prev, Likeliest* out, void* stream);
 
 }  // namespace strata::poly
