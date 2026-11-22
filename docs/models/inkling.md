@@ -149,7 +149,8 @@ Add `--model UD-Q3_K_XL` or `--model UD-Q2_K_XL` for a smaller size.
 | **UD-Q2_K_XL** | 1- to 2-bit experts: the smallest | 9.1 GB | about 13 GB |
 
 The installer downloads the files under the repository's `Mainline_Support` folder, the layout llama.cpp runs
-(`inkling2_loop`). The files at the top of the repository are another layout, which the engine refuses by name.
+(`inkling2_loop`). The files at the top of the repository (architecture `inkling2`, for example UD-IQ3_XXS) are
+Unsloth's layout of the same weights: the engine reads them too, with `--gguf-dir` or `--model` set to the file.
 
 ## How does it work?
 

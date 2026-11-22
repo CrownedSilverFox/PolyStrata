@@ -37,8 +37,9 @@ class Pins(unittest.TestCase):
             self.assertEqual(d["ram_gb"], round(setup.poly_ram_need(d, 8.0)), size)
 
     def test_the_engine_s_name_for_its_files(self):
-        # the repository's top-level files are another layout (general.architecture inkling2), which is not taken
-        self.assertEqual(setup.POLY_GGUF_ARCHS["inkling"], ("inkling2_loop",))
+        # the repository's top-level files are Unsloth's layout (general.architecture inkling2), which the engine
+        # reads too (inkling2.cpp): a --gguf-dir file of either is taken
+        self.assertEqual(setup.POLY_GGUF_ARCHS["inkling"], ("inkling2_loop", "inkling2"))
 
 
 class Main(unittest.TestCase):

@@ -1,5 +1,6 @@
 // src/poly/inkling2.hpp - Thinking Machines' Inkling 2 with a looped core (llama.cpp architecture "inkling2_loop"):
-// Inkling 2 Mini.
+// Inkling 2 Mini.  Unsloth's top-level files (architecture "inkling2") are the same weights under other names; the
+// engine reads them through tensor_alias(), meta_alias() and msg_query() (inkling2.cpp).
 //
 // 24 layers of weights make 48 layer applications: the layers before the core run once, the core's run
 // loop.count times, each pass from the output of the layers before it, and the layers after it once.  A layer of a
@@ -31,6 +32,8 @@ public:
 protected:
     void load_geometry() override;
     void load_layer(int il) override;
+    const Names* tensor_alias(const char* name) const override;
+    const Names* meta_alias(const char* key) const override;
     void begin_pass() override;
     size_t recurrent_floats() const override;
     void save_layer(int il, int64_t pos, uint8_t* dst) override;
@@ -133,6 +136,7 @@ private:
         return il < core_start_ ? il : il < core_end_ ? core_start_ + pass * core + il - core_start_
                                                        : il + (n_pass_ - 1) * core;
     }
+    Dev msg_query(int il);
     void ds_open();
     void ds_load();
     void ds_commit(int n);
@@ -152,6 +156,7 @@ private:
     float qk_clip_ = 0, rel_clip_ = 0, log_alpha_ = 0, log_floor_ = 1, softcap_ = 0;
     float w_scale_ = 0;
     uint32_t attn_type_ = 0;   ///< --attn-requant's type for the attention's matrices; 0: the file's
+    bool unsloth_ = false;     ///< an "inkling2" file: block_count counts applications, the loop's names are Unsloth's
     bool ctrl_bf16_ = false;   ///< --loop-bf16: the loop controllers' matrices in BF16
     bool kv8_ = false;         ///< the attention caches in FP8 E4M3 (load_geometry()); else fp16
     size_t kv_row() const { return kv8_ ? ink_kv8_row(n_kv_, head_dim_) : (size_t) n_kv_ * head_dim_ * sizeof(uint16_t); }
