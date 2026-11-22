@@ -237,6 +237,33 @@ void Inkling2::assign_scratch() {
     zeros_ = fbuf((size_t) n_head_);
     xqo_ = fbuf((kernels::native_q8_1_bytes(n_head_ * head_dim_) + sizeof(float) - 1) / sizeof(float));
     if (rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
+    if (!side_) {
+        cudaStream_t s = nullptr;
+        cudaEvent_t go = nullptr, done = nullptr;
+        ck(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking), "cudaStreamCreate");
+        ck(cudaEventCreateWithFlags(&go, cudaEventDisableTiming), "cudaEventCreate");
+        ck(cudaEventCreateWithFlags(&done, cudaEventDisableTiming), "cudaEventCreate");
+        side_ = s;
+        side_go_ = go;
+        side_done_ = done;
+    }
+}
+
+Inkling2::~Inkling2() {
+    if (side_) cudaStreamSynchronize(cs(side_));
+    for (void* e : {side_go_, side_done_})
+        if (e) cudaEventDestroy((cudaEvent_t) e);
+    if (side_) cudaStreamDestroy(cs(side_));
+}
+
+void Inkling2::fork() {
+    ck(cudaEventRecord((cudaEvent_t) side_go_, cs(st_)), "branch");
+    ck(cudaStreamWaitEvent(cs(side_), (cudaEvent_t) side_go_, 0), "branch");
+}
+
+void Inkling2::join() {
+    ck(cudaEventRecord((cudaEvent_t) side_done_, cs(side_)), "branch");
+    ck(cudaStreamWaitEvent(cs(st_), (cudaEvent_t) side_done_, 0), "branch");
 }
 
 void Inkling2::copy_rows(const float* from, float* to, int n) {
@@ -461,6 +488,19 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
     }
     dbg("attn_in", il, xin_[0], n_embd_);
 
+    // A token's BF16 products (the sink's, a full layer's convolution taps) are a few microseconds each of a block
+    // an output, the card's memory idle: in a whole pass's recording they run beside the Q8_0 ones, a branch off
+    // the stream that it joins after them.  gemv_bf16() is lin()'s launch for them.
+    const auto plain_bf16 = [](const Dev& d) { return !d.p || (d.type == kTypeBF16 && d.scale == 1.0f); };
+    const bool branch = n == 1 && whole_rec_ && plain_bf16(B.sink) && plain_bf16(B.k_dyn) && plain_bf16(B.v_dyn);
+    if (branch) {
+        fork();
+        gemv_bf16((const uint16_t*) B.sink.p, x[0], sink_, B.sink.n_in, B.sink.n_out, B.sink.n_out, 1, side_);
+        if (!B.swa) {
+            gemv_bf16((const uint16_t*) B.k_dyn.p, x[1], kdyn_, B.k_dyn.n_in, B.k_dyn.n_out, B.k_dyn.n_out, 1, side_);
+            gemv_bf16((const uint16_t*) B.v_dyn.p, x[2], vdyn_, B.v_dyn.n_in, B.v_dyn.n_out, B.v_dyn.n_out, 1, side_);
+        }
+    }
     if (!project(B, x, n, quantized)) {
         lin(B.wq, x[0], q_, n);
         lin(B.wk, x[1], kraw_, n);
@@ -468,11 +508,14 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         lin(B.rel, x[0], rr_, n);
         lin(B.gate, x[0], gate_, n);
     }
-    lin(B.sink, x[0], sink_, n);
+    if (branch) join();
+    else lin(B.sink, x[0], sink_, n);
     const float *kd = nullptr, *vd = nullptr;
     if (!B.swa) {
-        lin(B.k_dyn, x[1], kdyn_, n);
-        lin(B.v_dyn, x[2], vdyn_, n);
+        if (!branch) {
+            lin(B.k_dyn, x[1], kdyn_, n);
+            lin(B.v_dyn, x[2], vdyn_, n);
+        }
         kd = kdyn_;
         vd = vdyn_;
     }

@@ -20,6 +20,7 @@ namespace strata::poly {
 
 class Inkling2 final : public Engine {
 public:
+    ~Inkling2() override;
     size_t card_row_bytes() const override;
     void save_card_rows(int64_t first, int64_t n, uint8_t* dst) override;
     void load_card_rows(const uint8_t* src, int64_t from, int64_t count, int64_t first, int64_t n) override;
@@ -96,6 +97,10 @@ private:
     float* past_a(const Slot& s) const { return s.past + (size_t) (taps_ - 1) * 2 * n_kv_ * head_dim_; }
     float* past_f(const Slot& s) const { return past_a(s) + (size_t) (taps_ - 1) * n_embd_; }
     InkStates streams_of(int blocks, size_t at) const;
+    /// Launches on side_ from here run beside the stream's, after what the stream has so far.
+    void fork();
+    /// The stream waits for what side_ has.
+    void join();
     void control(const float* cur, const float* msg, const Ctrl& c, float* out, int n);
     bool control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n);
     bool project(const Block& B, const float* const* x, int n, bool quantized = false);
@@ -118,6 +123,8 @@ private:
     float qk_clip_ = 0, rel_clip_ = 0, log_alpha_ = 0, log_floor_ = 1, softcap_ = 0;
     float w_scale_ = 0;
     int pass_ = 0;   ///< the core's pass the call under way is in
+    void* side_ = nullptr;                             ///< fork()'s stream
+    void *side_go_ = nullptr, *side_done_ = nullptr;   ///< its fork and its join
 
     // device scratch, a row a token
     float* bl_[kBlocks] = {};   ///< the residual streams the blocks started from
