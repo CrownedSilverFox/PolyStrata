@@ -218,8 +218,14 @@ void Inkling2::load_geometry() {
         for (int p = 0; p < (il >= core_start_ && il < core_end_ ? n_pass_ : 1); ++p)
             slots_[(size_t) slot_of(il, p)].il = il;
     swa_.assign((size_t) n_layer_, false);
-    for (int il = 0; il < n_layer_; ++il) swa_[(size_t) il] = pattern->items[(size_t) il].u != 0;
-    // an Unsloth file lists the applications: each must be its layer's
+    // an Unsloth file lists the applications (48 for Inkling 2 Mini), so a layer's value is its first application's;
+    // index il there would be right only while the pattern's period divides the loop's length
+    for (int il = 0; il < n_layer_; ++il) {
+        const size_t v = unsloth_ ? (size_t) visit_of(il, 0) : (size_t) il;
+        need(v < pattern->items.size(), "attention.sliding_window_pattern has no value for every layer");
+        swa_[(size_t) il] = pattern->items[v].u != 0;
+    }
+    // and every other application must be its layer's
     if (unsloth_)
         for (int il = 0; il < n_layer_; ++il)
             for (int p = 0; p < (il >= core_start_ && il < core_end_ ? n_pass_ : 1); ++p) {
