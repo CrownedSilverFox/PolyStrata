@@ -2531,14 +2531,16 @@ class Tools:
                        backend=None, low_ram=None, port=None, data_dir=None, confirm=False, cancel=False,
                        gguf_dir=None, drafter=None, mtp=None) -> dict:
         s = self.s
-        asked = time.monotonic()                         # when this call came in (before it waits for the lock)
+        # when this call came in (before it waits for the lock).  perf_counter: Windows' monotonic() moves in 15.6 ms steps, so a
+        # start right after a cancel could get the cancel's own stamp and be refused as one that came in before it
+        asked = time.perf_counter()
         with s.lock:
             job = s.install_job()
             if cancel:
                 if not job or not job["running"]:
                     # A start that came in before this cancel and is still waiting for the lock must not launch the job after it
                     # (the app quit while "Prepare and load" was starting: the job and its packer then ran on with nobody to stop them).
-                    s.install_cancelled_at = time.monotonic()
+                    s.install_cancelled_at = time.perf_counter()
                     return {"summary": "no install is running", "install": job}
                 j = s.state("install")
                 res = s.state("install-result")

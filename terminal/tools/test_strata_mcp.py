@@ -586,7 +586,7 @@ class Install(FakeRoot):
         res, err = self.call("strata_install", {"cancel": True})
         self.assertIn("no install is running", res["summary"])
         stamp = self.strata.install_cancelled_at
-        with mock.patch.object(M.time, "monotonic", return_value=stamp - 5.0):       # this start came in before the cancel
+        with mock.patch.object(M.time, "perf_counter", return_value=stamp - 5.0):       # this start came in before the cancel
             res, err = self.call("strata_install", {"family": "coder", "confirm": True})
         self.assertTrue(err)
         self.assertIn("cancelled before it started", res["error"])
