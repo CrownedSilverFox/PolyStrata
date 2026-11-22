@@ -5828,10 +5828,116 @@ __global__ void __launch_bounds__(128) mmvq_slots_kernel(S slots, size_t row_byt
     if (lane == 0) at.y[row] = s;
 }
 
+#if !defined(__HIPCC__)
+// IQ3_S and IQ3_XXS rows for MmvqSlots::lanes (Inkling 2's cached experts; CUDA only).  mmvq_slots_kernel gives a
+// row a warp: a 2304-value row is 72 calls, so the third pass over the lanes keeps 8 of 32 busy.  Here a warp takes
+// R rows as one run of R x C calls (C = calls a row), lane p taking call 32 i + p of the run.  Row r's calls
+// c = L (mod 32) all land on lane (L + r C) mod 32, in increasing c: that lane holds row_dot's lane-L sum, term for
+// term.  A shuffle moves it back to lane L before the same warp_sum, so a row's sum is mmvq_slots_kernel's to the
+// bit.  The grid is read from shared memory, and the sign bytes are made by a multiply (nibble bit k -> byte k) and
+// applied with xor + add: the same integers as __vcmpne4 / __vsub4 (every grid byte is at least 1, so no byte
+// carries).  Both ideas from merbanan's inkling2-turing decode kernels (his Strata branch); this is our own code.
+// STRATA_IQ3_LANES=0 keeps mmvq_slots_kernel.
+bool g_iq3_lanes = [] {
+    const char* v = std::getenv("STRATA_IQ3_LANES");
+    return v == nullptr || v[0] != '0';
+}();
+// sign bits b0..b3 -> 0x01 in the bytes whose bit is set
+__device__ __forceinline__ uint32_t sign_ones(uint32_t nibble) { return (nibble * 0x00204081u) & 0x01010101u; }
+__device__ __forceinline__ int signed_grid(uint32_t g, uint32_t ones) { return (int) ((g ^ (ones * 0xFFu)) + ones); }
+template<int TY> struct Iq3Lane;
+template<> struct Iq3Lane<21> {   // vec_dot_iq3_s_q8_1
+    static constexpr int GRID = 512;
+    __device__ static const uint32_t* src() { return iq3s_grid; }
+    __device__ static float dot(const uint8_t* row, const block_q8_1* bq8_1, int kbx, int iqs, const uint32_t* g) {
+        const block_iq3_s* bq3 = (const block_iq3_s*) row + kbx;
+        const int2 qs_packed = make_int2(get_int_b2(bq3->qs, iqs + 0), get_int_b2(bq3->qs, iqs + 1));
+        const uint8_t* qs = (const uint8_t*) &qs_packed;
+        const int qh = bq3->qh[iqs / 2];
+        const uint32_t sg = (uint32_t) get_int_b2(bq3->signs, iqs / 2);
+        int sumi = 0;
+#pragma unroll
+        for (int l0 = 0; l0 < 8; l0 += 2) {
+            const uint32_t g0 = g[qs[l0 + 0] | ((qh << (8 - l0)) & 0x100)], g1 = g[qs[l0 + 1] | ((qh << (7 - l0)) & 0x100)];
+            const int grid_l = signed_grid(g0, sign_ones((sg >> (4 * l0)) & 0xF));
+            const int grid_h = signed_grid(g1, sign_ones((sg >> (4 * l0 + 4)) & 0xF));
+            sumi = ggml_cuda_dp4a(grid_l, get_int_b4(bq8_1[iqs / 2].qs, l0 + 0), sumi);
+            sumi = ggml_cuda_dp4a(grid_h, get_int_b4(bq8_1[iqs / 2].qs, l0 + 1), sumi);
+        }
+        sumi *= 1 + 2 * ((bq3->scales[iqs / 4] >> ((iqs << 1) & 0x04)) & 0x0F);
+        const float d = __half2float(bq3->d) * __low2float(bq8_1[iqs / 2].ds);
+        return d * sumi;
+    }
+};
+template<> struct Iq3Lane<18> {   // vec_dot_iq3_xxs_q8_1
+    static constexpr int GRID = 256;
+    __device__ static const uint32_t* src() { return iq3xxs_grid; }
+    __device__ static float dot(const uint8_t* row, const block_q8_1* bq8_1, int kbx, int iqs, const uint32_t* g) {
+        const block_iq3_xxs* bq3 = (const block_iq3_xxs*) row + kbx;
+        const int2 q3_packed = make_int2(get_int_b2(bq3->qs, iqs), get_int_b2(bq3->qs, iqs + 1));
+        const uint8_t* q3 = (const uint8_t*) &q3_packed;
+        const uint32_t aux32 = get_int_b2(bq3->qs, QK_K / 16 + iqs / 2);
+        int sumi = 0;
+#pragma unroll
+        for (int l0 = 0; l0 < 8; l0 += 2) {
+            const uint32_t v = (aux32 >> (7 * l0 / 2)) & 0x7F, s8 = v ^ ((__popc(v) & 1) << 7);   // unpack_ksigns' byte
+            const int grid_l = signed_grid(g[q3[l0 + 0]], sign_ones(s8 & 0xF));
+            const int grid_h = signed_grid(g[q3[l0 + 1]], sign_ones(s8 >> 4));
+            sumi = ggml_cuda_dp4a(grid_l, get_int_b4(bq8_1[iqs / 2].qs, l0 + 0), sumi);
+            sumi = ggml_cuda_dp4a(grid_h, get_int_b4(bq8_1[iqs / 2].qs, l0 + 1), sumi);
+        }
+        const int ls = aux32 >> 28;
+        sumi = (ls * sumi + sumi / 2) / 2;
+        const float d = __half2float(bq3->d) * __low2float(bq8_1[iqs / 2].ds);
+        return d * sumi;
+    }
+};
+
+template<int TY, int R, typename S>
+__global__ void __launch_bounds__(128) mmvq_slots_iq3_kernel(S slots, size_t row_bytes, int n_in, int n_out) {
+    using T = Iq3Lane<TY>;
+    __shared__ uint32_t s_grid[T::GRID];
+    for (int i = threadIdx.y * 32 + threadIdx.x; i < T::GRID; i += 128) s_grid[i] = T::src()[i];
+    __syncthreads();
+    const int row0 = (blockIdx.x * 4 + threadIdx.y) * R;
+    if (row0 >= n_out) return;
+    const SlotPtrs at = slot_ptrs(slots, int(blockIdx.y));
+    const int lane = threadIdx.x, C = (n_in / 256) * 8, rows = min(R, n_out - row0);
+    const uint8_t* w = (const uint8_t*) at.w + (size_t) row0 * row_bytes;
+    const block_q8_1* x = (const block_q8_1*) at.x;
+    float acc[R];
+#pragma unroll
+    for (int q = 0; q < R; ++q) acc[q] = 0.0f;
+    for (int f = lane; f < rows * C; f += 32) {
+        const int r = f / C, c = f - r * C, kbx = c / 8, iqs = 2 * (c % 8);
+        const float v = T::dot(w + (size_t) r * row_bytes, x + kbx * 8, kbx, iqs, s_grid);
+#pragma unroll
+        for (int q = 0; q < R; ++q)
+            if (q == r) acc[q] += v;
+    }
+#pragma unroll
+    for (int q = 0; q < R; ++q) {
+        float v = __shfl_sync(0xffffffffu, acc[q], (lane + q * C) & 31);
+        v = warp_sum(v);
+        if (q < rows && lane == 0) at.y[row0 + q] = v;
+    }
+}
+#endif
+
 template<typename S>
 void slots_of(int t, const S& slots, int count, int n_in, int n_out, void* stream) {
     const size_t rb = iq_row_bytes(t, n_in);
     const dim3 grid((unsigned) ((n_out + 3) / 4), (unsigned) count), block(32, 4);
+#if !defined(__HIPCC__)
+    if ((t == 21 || t == 18) && slots.lanes && !g_old_kernels && g_iq3_lanes) {
+        constexpr int R = 4;   // 72 calls a 2304 row: 4 rows are 9 full passes over the lanes
+        const dim3 g4((unsigned) ((n_out + 4 * R - 1) / (4 * R)), (unsigned) count);
+        if (t == 21) mmvq_slots_iq3_kernel<21, R, S><<<g4, block, 0, (cudaStream_t) stream>>>(slots, rb, n_in, n_out);
+        else mmvq_slots_iq3_kernel<18, R, S><<<g4, block, 0, (cudaStream_t) stream>>>(slots, rb, n_in, n_out);
+        check("iq_mmvq_slots");
+        return;
+    }
+#endif
     switch (t) {
 #define STRATA_MMVQ(T) case T: mmvq_slots_kernel<T, S><<<grid, block, 0, (cudaStream_t) stream>>>(slots, rb, n_in, n_out); break;
         STRATA_MMVQ_FMTS(STRATA_MMVQ)
