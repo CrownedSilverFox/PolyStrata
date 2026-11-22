@@ -61,6 +61,24 @@ struct dot_q2_0 {   // 2-bit codes, the lowest first, minus 1
         return float(b->d)*(s-xs);
     }
 };
+struct dot_q6_K {   // dequantize_q6_K's 6-bit codes, four a word, minus 32
+    enum { kSum=1 };
+    static float run(device const block_q6_K* b,short il,thread const float* xv,float xs) {
+        device const ushort* ql=reinterpret_cast<device const ushort*>(b->ql)+32*(il/8)+16*((il/2)&1)+8*(il&1);
+        device const ushort* qh=reinterpret_cast<device const ushort*>(b->qh)+16*(il/8)+8*(il&1);
+        const float sc=reinterpret_cast<device const int8_t*>(b->scales)[(il%2)+2*(il/2)];
+        const short k=(il/2)&3;
+        const uint mask1=k>1?(k>2?0xC0C0C0C0u:0x30303030u):(k>0?0x0C0C0C0Cu:0x03030303u),mask2=k>1?0xF0F0F0F0u:0x0F0F0F0Fu;
+        const uint shr_h=k>2?2:0,shl_h=k>1?0:(k>0?2:4),shr_l=k>1?4:0;
+        float s=0;
+        for(int i=0;i<4;++i) {
+            const uint low=(uint(ql[2*i])|(uint(ql[2*i+1])<<16))&mask2,high=(uint(qh[2*i])|(uint(qh[2*i+1])<<16))&mask1;
+            const uchar4 c=as_type<uchar4>(((high<<shl_h)>>shr_h)|(low>>shr_l));
+            s+=float(c[0])*xv[4*i]+float(c[1])*xv[4*i+1]+float(c[2])*xv[4*i+2]+float(c[3])*xv[4*i+3];
+        }
+        return float(b->d)*sc*(s-32*xs);
+    }
+};
 // eight grid bytes (two words) times xv with the signs' bits flipping xv's
 static inline float signed_grid8(uint2 g,uint signs,thread const float* xv) {
     float s=0;
@@ -187,8 +205,7 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     M(q2_K,256) M(q3_K,256) M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xxs,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq1_s,256) \
     M(iq4_nl,32) M(iq3_s,256) M(iq2_s,256) M(iq4_xs,256) M(iq1_m,256)
 #define MV_TYPES_DEQ(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(mxfp4,32) M(nvfp4,64) M(q2_K,256) M(q3_K,256) \
-    M(q4_K,256) M(q5_K,256) M(q6_K,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) \
-    M(iq1_m,256)
+    M(q4_K,256) M(q5_K,256) M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
