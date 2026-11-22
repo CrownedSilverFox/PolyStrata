@@ -70,7 +70,7 @@ void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t
 
 bool gemm_iq_i8_grouped(int ty, const void* W, size_t mat_bytes, int n_out, int K, const void* xq, int64_t total_rows,
                         const int32_t* bounds, int n_mats, int max_rows, const int32_t* ids, float* Y, int64_t ldy, void* stream,
-                        const int32_t* from) {
+                        const int32_t* from, const int64_t* at) {
     if (!gemm_iq_i8_takes(ty, K) || n_out <= 0 || n_mats <= 0 || max_rows <= 0 || total_rows <= 0) return false;
     const I8mCard card = i8m_card();
     int dev = 0;
@@ -84,7 +84,7 @@ bool gemm_iq_i8_grouped(int ty, const void* W, size_t mat_bytes, int n_out, int 
 #define STRATA_I8M_CASE(T) \
         case T: \
             return i8m_launch_type<T>(card, dev, s, (const uint8_t*) W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, n_mats, max_rows, \
-                                      ids, from, Y, (long long) ldy);
+                                      ids, from, (const long long*) at, Y, (long long) ldy);
         STRATA_I8M_TYPES(STRATA_I8M_CASE)
 #undef STRATA_I8M_CASE
         default: return false;

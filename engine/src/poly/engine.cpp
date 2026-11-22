@@ -3755,6 +3755,10 @@ void Engine::alloc() {
 #endif
         tab_ = (int32_t*) dmalloc(tab, "scratch");
         h_tab_ = (int32_t*) hmalloc(tab, "pinned memory");
+        if (expert_tiles_) {
+            d_slot_at_ = (int64_t*) dmalloc((size_t) n_expert_ * sizeof(int64_t), "scratch");
+            h_slot_at_ = (int64_t*) hmalloc((size_t) n_expert_ * sizeof(int64_t), "pinned memory");
+        }
         if (mmq_) mmq_->mirror(tab_, h_tab_, tab);   // the bounds moe_rows() hands mul() are in tab_, written from h_tab_
         // the ids of the gate and up products, with Mmq::kIdsTail behind the call's last row (d_place, the down
         // products' ids, has the rest of tab_ behind it)
@@ -6277,6 +6281,43 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             mmq_->mul(w + L.gu_bytes, ut, ff, n_embd_, stride, m, mqu_, bounds, iota_, q_rows, most, gu_ + ff, ff2, st_,
                       tok_of);
     };
+    // expert_tiles_: the cached experts' slots as offsets from the lowest one, for a launch a class (Mmq::mul_at())
+    const uint8_t* slot0 = nullptr;
+    bool by_at = d_slot_at_ && n_cached > 0 && !L.mixed() && Mmq::int8(gt, n_embd_) && Mmq::int8(dt, ff);
+    if (by_at) {
+        for (int g = 0; g < n_cached; ++g) {
+            const uint8_t* p = L.slot[(size_t) group_[(size_t) g]];
+            if (!slot0 || p < slot0) slot0 = p;
+        }
+        for (int g = 0; g < n_cached; ++g) {
+            h_slot_at_[g] = L.slot[(size_t) group_[(size_t) g]] - slot0;
+            by_at = by_at && h_slot_at_[g] % 16 == 0;
+        }
+        if (by_at)
+            ck(cudaMemcpyAsync(d_slot_at_, h_slot_at_, (size_t) n_cached * sizeof(int64_t), cudaMemcpyHostToDevice,
+                               cs(st_)),
+               "expert offsets");
+    }
+    // the cached experts lie class after class in group_: a launch for each class with rows, over all of its experts
+    // (Metal's Mmq has no mul_at(): by_at is never set there)
+    const auto mul_at = [&](const uint8_t* w, int g0, int t, int64_t w_rows, int64_t w_cols, int m, const void* xq,
+                            const int32_t* ids, int64_t total, int most, float* dst, int64_t ld, const int32_t* from) {
+#if !defined(STRATA_GPU_METAL)
+        mmq_->mul_at(w, d_slot_at_ + g0, t, w_rows, w_cols, m, xq, d_bounds + g0, ids, total, most, dst, ld, st_, from);
+#else
+        (void) w, (void) g0, (void) t, (void) w_rows, (void) w_cols, (void) m, (void) xq, (void) ids, (void) total,
+            (void) most, (void) dst, (void) ld, (void) from;
+#endif
+    };
+    const auto each_class_at = [&](auto&& launch) {
+        for (int g0 = 0; g0 < n_cached;) {
+            const int c = tile_class(rows_of(g0));
+            int g1 = g0, most = 0;
+            for (; g1 < n_cached && tile_class(rows_of(g1)) == c; ++g1) most = std::max(most, rows_of(g1));
+            launch(g0, g1 - g0, most);
+            g0 = g1;
+        }
+    };
     int holds = -1;   // the round in the buffer when this call is done
     // The card's part.  With the CPU's beside it, the rows of its experts' places are left at nothing.
     const auto card = [&] {
@@ -6315,10 +6356,16 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             }
             j += m;
         }
-        for (const Run& r : runs_) {
-            mmq_->mul(slot_of(r.j), gt, gu_rows, n_embd_, L.slot_bytes, r.m, mq_, d_cb + (size_t) r.c * cb_row + r.j,
-                      iota_, q_rows, r.most, gu_, ff2, st_, tok_of);
-            up_mul(slot_of(r.j), L.slot_bytes, r.m, d_cb + (size_t) r.c * cb_row + r.j, r.most);
+        if (by_at) {
+            each_class_at([&](int g0, int m, int most) {
+                mul_at(slot0, g0, gt, gu_rows, n_embd_, m, mq_, iota_, q_rows, most, gu_, ff2, tok_of);
+            });
+        } else {
+            for (const Run& r : runs_) {
+                mmq_->mul(slot_of(r.j), gt, gu_rows, n_embd_, L.slot_bytes, r.m, mq_, d_cb + (size_t) r.c * cb_row + r.j,
+                          iota_, q_rows, r.most, gu_, ff2, st_, tok_of);
+                up_mul(slot_of(r.j), L.slot_bytes, r.m, d_cb + (size_t) r.c * cb_row + r.j, r.most);
+            }
         }
         if (rc > 0) {
             if (fused) {
@@ -6331,9 +6378,15 @@ void Engine::moe_rows(Layer& L, int il, int n) {
                 Mmq::quantize(hx_, nullptr, mq2_, dt, ff, ff, rc, st_);
             }
         }
-        for (const Run& r : runs_)
-            mmq_->mul(slot_of(r.j) + gu2, dt, n_embd_, ff, L.slot_bytes, r.m, mq2_, d_cb + (size_t) r.c * cb_row + r.j,
-                      d_place, rc, r.most, dx_, n_embd_, st_);
+        if (by_at) {
+            each_class_at([&](int g0, int m, int most) {
+                mul_at(slot0 + gu2, g0, dt, n_embd_, ff, m, mq2_, d_place, rc, most, dx_, n_embd_, nullptr);
+            });
+        } else {
+            for (const Run& r : runs_)
+                mmq_->mul(slot_of(r.j) + gu2, dt, n_embd_, ff, L.slot_bytes, r.m, mq2_,
+                          d_cb + (size_t) r.c * cb_row + r.j, d_place, rc, r.most, dx_, n_embd_, st_);
+        }
         if (guard && rc > 0) scale_rows(dx_, n_embd_, n_embd_, rc, d_place, hf_, false, st_);
 
         // The round the buffer holds goes first and is not copied.  If it holds none of this call's, the experts

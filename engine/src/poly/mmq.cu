@@ -144,6 +144,11 @@ bool Mmq::int8(int, int64_t) { return false; }
 // context's pool
 Mmq::Work Mmq::work(int, int64_t, int64_t, int64_t, bool, int64_t) { return {}; }
 
+void Mmq::mul_at(const void*, const int64_t*, int, int64_t, int64_t, int, const void*, const int32_t*, const int32_t*,
+                 int64_t, int64_t, float*, int64_t, void*, const int32_t*) {
+    throw std::logic_error("strata-poly prompt product: matrices at offsets need int8() (mmq_own.cu)");
+}
+
 void Mmq::give(float*, size_t, void*, size_t, void*) {}
 
 void Mmq::mul(const void* w, int type, int64_t w_rows, int64_t w_cols, size_t stride, int n, const void* xq,

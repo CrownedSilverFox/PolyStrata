@@ -278,6 +278,18 @@ Mmq::~Mmq() {
     delete c;
 }
 
+void Mmq::mul_at(const void* w, const int64_t* at, int ggml_type, int64_t w_rows, int64_t w_cols, int n, const void* xq,
+                 const int32_t* bounds, const int32_t* ids, int64_t total_rows, int64_t max_rows, float* dst,
+                 int64_t ld_dst, void* stream, const int32_t* from) {
+    if (n <= 0 || total_rows <= 0) return;
+    if (!int8_rows(ggml_type, w_cols) ||
+        !kernels::gemm_iq_i8_grouped(ggml_type, w, 0, (int) w_rows, (int) w_cols, xq, total_rows, bounds, n, (int) max_rows,
+                                     ids, dst, ld_dst, stream, from, at))
+        throw std::runtime_error("strata-poly prompt product: the int8 kernel did not start for tensor type " +
+                                 std::to_string(ggml_type) + " with [" + std::to_string(w_rows) + ", " +
+                                 std::to_string(w_cols) + "] at offsets");
+}
+
 Mmq::Work Mmq::work(int ggml_type, int64_t w_rows, int64_t w_cols, int64_t rows, bool by_ids, int64_t ld_dst) {
     Work w;
     // int8 and FP4: straight to dst's rows
