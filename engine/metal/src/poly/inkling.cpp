@@ -1,0 +1,483 @@
+// metal/src/poly/inkling.cpp - Inkling 2's kernels on Metal (inkling2_kernels.hpp, inkling.metal), and the shared
+// entry points only its layers call here: rms_norm_many(), gemv_set() and situ_rows().  Where
+// inkling2.cu fuses a quantization into a norm's launch, the Metal form is the norm and then native_quantize_q8_1(),
+// the bytes Metal's other quantized rows have (native_add_rms_norm_q8_1() is made the same way).
+#include "inkling2_kernels.hpp"
+
+#include "launch.hpp"
+#include "strata/kernels/native_mmvq.hpp"
+#include "strata/poly/kernels.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+
+namespace strata::poly {
+namespace {
+
+struct Args {
+    const void* p[72]{};
+    int64_t pos = 0;
+    uint64_t stride = 0;
+    int n[24]{};
+    float f[16]{};
+};
+static_assert(sizeof(Args) == 752);
+
+const std::string& source() {
+    static const std::string s = metal_detail::read_source(STRATA_POLY_INKLING_SOURCE);
+    return s;
+}
+
+template <class A>
+void run(const char* name, const A& a, void* stream, gpu::metal::Grid groups, uint32_t threads, size_t shared = 0) {
+    if (!groups.x || !groups.y || !groups.z) return;
+    metal_detail::dispatch("poly_inkling", source(), name, a, stream, groups, threads, {}, shared);
+}
+
+uint32_t blocks(size_t n, uint32_t per) { return uint32_t((n + per - 1) / per); }
+
+[[noreturn]] void unported(const char* what) { throw std::invalid_argument(std::string("Metal has no ") + what); }
+
+void elem(Args& a, int kind, size_t n, void* stream) {
+    if (!n) return;
+    a.n[0] = kind;
+    a.stride = n;
+    run("ink_elem", a, stream, {blocks(n, 256), 1, 1}, 256);
+}
+
+void quantize_rows(const float* y, void* q8, int n, void* stream) {
+    if (q8) kernels::native_quantize_q8_1(y, q8, n, 1, stream);
+}
+
+}  // namespace
+
+// ---- shared entry points ----
+
+void rms_norm_many(const float* const* x, const float* const* w, float* const* y, int count, int n, int rows, float eps,
+                   void* stream) {
+    for (int j = 0; j < count; ++j) rms_norm(x[j], w[j], y[j], n, rows, eps, stream);
+}
+
+void gemv_set(const float* const* w, const float* const* x, float* const* y, const int* n_out, int count, int n_in,
+              int rows, void* stream) {
+    for (int j = 0; j < count; ++j) gemv_f32(w[j], x[j], y[j], n_in, n_out[j], n_out[j], rows, stream);
+}
+
+void situ_rows(const float* gate_up, float* out, int n, int rows, float beta, float lb, void* stream, void* q8,
+               const ExpertScales* scales) {
+    if (rows <= 0) return;
+    if (q8 && n % 32 != 0) throw std::invalid_argument("situ_rows: quantized rows of a multiple of 32");
+    struct SituArgs {
+        const void* p[5]{};
+        int n = 0, rows = 0;
+        float beta = 0, lb = 0;
+        int e[32]{};
+    } a;
+    static_assert(sizeof(SituArgs) == 184);
+    a.p[0] = gate_up;
+    a.p[1] = out;
+    if (scales) {
+        a.p[2] = scales->gate;
+        a.p[3] = scales->up;
+        a.p[4] = scales->ids;
+        if ((scales->gate || scales->up) && !scales->ids && rows > 32)
+            throw std::invalid_argument("situ_rows: more than 32 rows of experts named on the host");
+        std::copy(scales->e, scales->e + 32, a.e);
+    }
+    a.n = n;
+    a.rows = rows;
+    a.beta = beta;
+    a.lb = lb;
+    run("ink_situ", a, stream, {blocks(n, 256), uint32_t(rows), 1}, 256);
+    if (q8) kernels::native_quantize_q8_1(out, q8, n * rows, 1, stream);   // the rows back to back, as one vector
+}
+
+// ---- the mixes ----
+
+namespace {
+void mix(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs, int n_embd,
+         int rows, const float* norm_w, float* norm_out, float eps, void* stream) {
+    if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > 4 || jobs < 1 || jobs > 12)
+        throw std::invalid_argument("ink_mix: 1 to 6 states, 1 to 4 queries, 1 to 12 jobs");
+    if (rows <= 0) return;
+    Args a;
+    for (int s = 0; s < states.n; ++s) a.p[s] = states.p[s];
+    for (int k = 0; k < jobs; ++k) {
+        a.p[6 + k] = query[k];
+        for (int j = 0; j < n_query; ++j) a.p[18 + 4 * k + j] = out[k * n_query + j];
+    }
+    a.p[66] = norm_w;
+    a.p[67] = norm_out;
+    a.n[0] = states.n;
+    a.n[1] = n_query;
+    a.n[2] = n_embd;
+    a.f[0] = eps;
+    run("ink_mix", a, stream, {uint32_t(rows), uint32_t(jobs), 1}, 1024);
+}
+}  // namespace
+
+void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
+             void* stream) {
+    mix(states, &query, n_query, out, 1, n_embd, rows, nullptr, nullptr, 0.f, stream);
+}
+
+void ink_mix_many(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs,
+                  int n_embd, void* stream) {
+    mix(states, query, n_query, out, jobs, n_embd, 1, nullptr, nullptr, 0.f, stream);
+}
+
+void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
+                  const float* norm_w, float* norm_out, float eps, void* stream, void* q8, bool ffn) {
+    if ((q8 || ffn) && (rows != 1 || !norm_out || (ffn && (!q8 || !norm_w))))
+        throw std::invalid_argument("ink_mix_norm: a quantized norm is one row's");
+    mix(states, &query, n_query, out, 1, n_embd, rows, norm_w, norm_out, eps, stream);
+    quantize_rows(norm_out, q8, n_embd, stream);
+}
+
+void ink_norm_many_q8(const float* const* x, const float* const* w, float* const* y, void* const* q8, int count, int n,
+                      float eps, void* stream) {
+    if (count < 1 || count > 3 || n % 32 != 0) throw std::invalid_argument("ink_norm_many_q8: 1 to 3 rows of 32k");
+    for (int j = 0; j < count; ++j) {
+        rms_norm(x[j], w[j], y[j], n, 1, eps, stream);
+        kernels::native_quantize_q8_1(y[j], q8[j], n, 1, stream);
+    }
+}
+
+// ---- the loop controllers ----
+
+void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* const* out, int count, int n_embd,
+                      int rows, void* stream) {
+    if (count < 1 || count > 3) throw std::invalid_argument("ink_cat_norm_set: 1 to 3 pairs");
+    if (rows <= 0) return;
+    Args a;
+    for (int j = 0; j < count; ++j) {
+        a.p[j] = cur[j];
+        a.p[3 + j] = msg[j];
+        a.p[6 + j] = out[j];
+    }
+    a.n[0] = n_embd;
+    run("ink_cat_norm", a, stream, {uint32_t(rows), uint32_t(count), 1}, 256);
+}
+
+void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, int rows, void* stream) {
+    ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
+}
+
+// the norms and the down products in one launch: not here (ink_cat_norm_set() and gemv_set() do it)
+bool ink_ctrl_down(const float* const*, const float* const*, const void* const*, float* const*, int count, int, int,
+                   int, void*, bool) {
+    if (count < 1 || count > 3) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
+    return false;
+}
+
+void ink_gate_set(const float* const* cur, const float* const* msg, const float* const* gain,
+                  const float* const* forget, float* const* out, int count, size_t n, void* stream) {
+    if (count < 1 || count > 3) throw std::invalid_argument("ink_gate_set: 1 to 3 controllers");
+    if (!n) return;
+    Args a;
+    for (int j = 0; j < count; ++j) {
+        a.p[j] = cur[j];
+        a.p[3 + j] = msg[j];
+        a.p[6 + j] = gain[j];
+        a.p[9 + j] = forget[j];
+        a.p[12 + j] = out[j];
+    }
+    a.n[0] = count;
+    a.stride = n;
+    run("ink_gate", a, stream, {blocks(n, 256), 1, 1}, 256);
+}
+
+void ink_gate(const float* cur, const float* msg, const float* gain, const float* forget, float* out, size_t n,
+              void* stream) {
+    ink_gate_set(&cur, &msg, &gain, &forget, &out, 1, n, stream);
+}
+
+void ink_gate_norm_q8(const float* cur, const float* msg, const float* gain, const float* forget, float* out,
+                      const float* w, float* y, void* q8, int n, float eps, void* stream) {
+    ink_gate(cur, msg, gain, forget, out, (size_t) n, stream);
+    kernels::native_add_rms_norm_q8_1(out, nullptr, w, y, q8, n, 1, eps, sum_threads(n), stream);
+}
+
+void ink_control3_gate(const float* const* cur, const float* const* msg, const float* const* ch,
+                       const void* const* gain_w, const void* const* forget_w, float* const* out, int n, int rank,
+                       void* stream, int count, bool bf16) {
+    if (rank >= 128) throw std::invalid_argument("ink_control3_gate: gemv_set() takes products this wide otherwise");
+    if (count < 1 || count > 3) throw std::invalid_argument("ink_control3_gate: 1 to 3 controllers");
+    Args a;
+    for (int j = 0; j < count; ++j) {
+        a.p[j] = cur[j];
+        a.p[3 + j] = msg[j];
+        a.p[6 + j] = ch[j];
+        a.p[9 + j] = gain_w[j];
+        a.p[12 + j] = forget_w[j];
+        a.p[15 + j] = out[j];
+    }
+    a.n[0] = n;
+    a.n[1] = rank;
+    a.n[2] = count;
+    a.n[3] = bf16;
+    run("ink_control3_gate", a, stream, {blocks((size_t) n, 8), 1, 1}, 256);
+}
+
+// ---- the convolutions ----
+
+namespace {
+float conv_norm(const float* dyn, int taps) { return 1.0f / std::sqrt((float) ((dyn ? 2 : 1) * taps + 1)); }
+}  // namespace
+
+void ink_conv_few(const InkConv& a, const InkConv& b, int channels, int heads, int taps, int rows, void* stream,
+                  size_t snap_stride, unsigned snap_bits) {
+    if (taps < 2 || taps > 8 || rows < 1 || rows > kConvFew)
+        throw std::invalid_argument("ink_conv_few: 2 to 8 taps, 1 to 8 rows");
+    Args g;
+    const InkConv* jobs[2] = {&a, &b};
+    for (int j = 0; j < 2; ++j) {
+        const InkConv& c = *jobs[j];
+        const void* p[8] = {c.x, c.state, c.w, c.dyn, c.out, snap_bits ? c.snap : nullptr, c.acc, c.keep};
+        std::copy(p, p + 8, g.p + 8 * j);
+        g.n[4 + j] = c.mode;
+        g.f[j] = c.a;
+        g.f[2 + j] = conv_norm(c.dyn, taps);
+    }
+    g.n[0] = channels;
+    g.n[1] = heads;
+    g.n[2] = taps;
+    g.n[3] = rows;
+    g.n[6] = (int) snap_bits;
+    g.stride = snap_stride;
+    run("ink_conv_few", g, stream, {blocks((size_t) channels, 256), b.x ? 2u : 1u, 1}, 256);
+}
+
+void ink_conv(const float* x, float* state, const float* w, const float* dyn, float* out, int channels, int heads,
+              int taps, int rows, void* stream, float* snap, size_t snap_stride, unsigned snap_bits) {
+    if (taps < 2 || taps > 8) throw std::invalid_argument("ink_conv: 2 to 8 taps");
+    if (rows <= 0) return;
+    if (rows <= kConvFew) {
+        InkConv j;
+        j.x = x, j.state = state, j.w = w, j.dyn = dyn, j.out = out, j.snap = snap_bits ? snap : nullptr;
+        ink_conv_few(j, InkConv{}, channels, heads, taps, rows, stream, snap_stride, snap_bits);
+        return;
+    }
+    Args a;
+    a.p[0] = x, a.p[1] = state, a.p[2] = w, a.p[3] = dyn, a.p[4] = out;
+    a.n[0] = channels, a.n[1] = heads, a.n[2] = taps, a.n[3] = rows;
+    a.f[0] = conv_norm(dyn, taps);
+    run("ink_conv_rows", a, stream, {blocks((size_t) rows * channels, 256), 1, 1}, 256);
+    Args t;
+    t.p[0] = x, t.p[1] = state, t.p[2] = snap_bits ? snap : nullptr;
+    t.n[0] = channels, t.n[1] = taps, t.n[2] = rows, t.n[3] = (int) snap_bits;
+    t.stride = snap_stride;
+    run("ink_conv_tail", t, stream, {blocks((size_t) channels, 256), 1, 1}, 256);
+}
+
+void ink_conv_add(const float* x, float* state, const float* w, float* out, float* acc, float* keep, float a, int mode,
+                  int channels, int taps, void* stream) {
+    InkConv j;
+    j.x = x, j.state = state, j.w = w, j.out = out, j.acc = acc, j.keep = keep, j.a = a, j.mode = mode;
+    ink_conv_few(j, InkConv{}, channels, 1, taps, 1, stream, 0, 0);
+}
+
+void ink_moe_conv_add(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
+                      float* state, const float* cw, float* out, float* acc, float a, int channels, int taps,
+                      void* stream) {
+    if (taps < 2 || taps > 8) throw std::invalid_argument("ink_moe_conv_add: 2 to 8 taps");
+    Args g;
+    const void* p[9] = {x, w, scale, ids, fo, state, cw, out, acc};
+    std::copy(p, p + 9, g.p);
+    g.n[0] = n_used, g.n[1] = channels, g.n[2] = taps;
+    g.f[0] = a, g.f[1] = conv_norm(nullptr, taps);
+    run("ink_moe_conv_add", g, stream, {blocks((size_t) channels, 256), 1, 1}, 256);
+}
+
+// ---- the clips ----
+
+void ink_clips(const InkClips& c, void* stream) {
+    if (c.rows <= 0) return;
+    if (c.kv8) unported("FP8 attention caches (--kv fp8)");
+    Args a;
+    int heads = 0;
+    for (int j = 0; j < 4; ++j) {
+        a.p[3 * j] = c.x[j];
+        a.p[3 * j + 1] = c.scale[j];
+        a.p[3 * j + 2] = c.cache[j];
+        a.n[j] = c.dim[j];
+        a.n[4 + j] = c.heads[j];
+        a.n[8 + j] = c.rms[j];
+        a.f[j] = c.thr[j];
+        a.f[4 + j] = c.alpha[j];
+        a.f[8 + j] = c.floor[j];
+        heads += c.heads[j];
+    }
+    a.p[12] = c.at;
+    a.n[12] = c.rows;
+    a.n[13] = c.ring;
+    a.f[12] = c.eps;
+    a.pos = c.pos;
+    run("ink_clips", a, stream, {uint32_t(c.rows * heads), 1, 1}, 128);
+}
+
+void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int rows, int64_t pos, float alpha,
+              float floor, void* stream, const long long* at) {
+    InkClips c;
+    c.x[0] = x, c.scale[0] = scale, c.thr[0] = thr, c.alpha[0] = alpha, c.floor[0] = floor, c.dim[0] = dim;
+    c.heads[0] = heads;
+    c.pos = pos, c.at = at, c.rows = rows;
+    ink_clips(c, stream);
+}
+
+void ink_head_rms(float* x, int dim, int heads, int rows, float eps, void* stream) {
+    InkClips c;
+    c.x[0] = x, c.dim[0] = dim, c.heads[0] = heads, c.rms[0] = true, c.eps = eps, c.rows = rows;
+    ink_clips(c, stream);
+}
+
+void ink_qkv(const InkQkv& q, void* stream) {
+    if (q.dim > 128 || q.n_rel > 128 || q.taps < 2 || q.taps > 8 || q.n_kv < 1)
+        throw std::invalid_argument("ink_qkv: heads of up to 128 values, 2 to 8 taps");
+    if (q.kv8) unported("FP8 attention caches (--kv fp8)");
+    Args a;
+    const void* p[17] = {q.q,     q.q_scale, q.r,  q.r_scale, q.kraw, q.vraw, q.kstate, q.vstate, q.kw,
+                         q.vw,    q.kdyn,    q.vdyn, q.k,     q.v,    q.keys, q.vals,   q.at};
+    std::copy(p, p + 17, a.p);
+    a.n[0] = q.n_head, a.n[1] = q.n_kv, a.n[2] = q.dim, a.n[3] = q.n_rel, a.n[4] = q.taps, a.n[5] = q.ring;
+    a.f[0] = q.qk_thr, a.f[1] = q.rel_thr, a.f[2] = q.alpha, a.f[3] = q.floor, a.f[4] = q.eps;
+    a.f[5] = conv_norm(q.kdyn, q.taps), a.f[6] = conv_norm(q.vdyn, q.taps);
+    a.pos = q.pos;
+    run("ink_qkv", a, stream, {uint32_t(2 * q.n_head + 2 * q.n_kv), 1, 1}, 128);
+}
+
+// ---- elementwise ----
+
+void ink_mul_sigmoid(float* x, const float* gate, size_t n, void* stream) {
+    Args a;
+    a.p[0] = x, a.p[1] = gate;
+    elem(a, 0, n, stream);
+}
+
+void ink_store_ring(const float* x, uint16_t* cache, int n, int64_t pos, int rows, int ring, void* stream) {
+    if (rows <= 0) return;
+    Args a;
+    a.p[0] = x, a.p[1] = cache;
+    a.n[1] = n, a.n[2] = ring;
+    a.pos = pos;
+    elem(a, 1, (size_t) rows * n, stream);
+}
+
+void ink_softcap(float* logits, int n_keep, int n_all, int rows, float cap, void* stream) {
+    if (rows <= 0) return;
+    Args a;
+    a.p[0] = logits;
+    a.n[1] = n_keep, a.n[2] = n_all;
+    a.f[0] = cap;
+    elem(a, 2, (size_t) rows * n_all, stream);
+}
+
+// ---- the attention ----
+
+// online softmax: no scores are written out
+size_t ink_attend_floats(int, int, int, int64_t) { return 1; }
+
+void ink_attend(const InkAttn& c, void* stream) {
+    if (c.rows <= 0) return;
+    if (c.n_kv < 1 || c.n_head % c.n_kv != 0 || c.n_head / c.n_kv > 4 || (c.dim != 64 && c.dim != 128) || c.n_rel < 1 ||
+        c.n_rel > 32)
+        throw std::invalid_argument("ink_attend: heads of 64 or 128 values, up to 4 on a key head, up to 32 relative "
+                                    "values");
+    if (c.kv8) unported("FP8 attention caches (--kv fp8)");
+    if (c.at && c.room < 1) throw std::invalid_argument("ink_attend: positions on the card need the rows to size for");
+    Args a;
+    const void* p[9] = {c.q, c.r, c.sink, c.keys, c.vals, c.rel_bias, c.gate, c.out, c.at};
+    std::copy(p, p + 9, a.p);
+    a.n[0] = c.rows, a.n[1] = c.n_head, a.n[2] = c.n_kv, a.n[3] = c.dim, a.n[4] = c.n_rel, a.n[5] = c.extent;
+    a.n[6] = c.window, a.n[7] = c.ring;
+    a.f[0] = c.scale;
+    a.pos = c.pos;
+    // The keys a token of the call reads: up to its own, within the window; a recorded launch reads its position on
+    // the card and is sized for the middle of the rows it serves.  A few tokens' keys go to runs of about 64 a
+    // threadgroup (up to 32 runs), which meet in a scratch of its own (never freed: recorded launches keep its address).
+    int64_t keys = c.at ? std::max<int64_t>(c.room / 2, c.rows) : c.pos + c.rows;
+    if (c.window > 0) keys = std::min<int64_t>(keys, c.window);
+    static void* scratch = nullptr;
+    static bool tried = false;
+    constexpr size_t kRunFloats = size_t(4) << 20;
+    const size_t per_run = (size_t) c.rows * c.n_head * (c.dim + 2);
+    int splits = 1;
+    if (c.rows < 32 && keys >= 128) {
+        if (!tried) {
+            tried = true;
+            if (gpu::malloc_device_raw(&scratch, kRunFloats * 4) != gpu::kSuccess) scratch = nullptr;
+        }
+        if (scratch) splits = (int) std::min<size_t>({(size_t) (keys + 63) / 64, 32, kRunFloats / per_run});
+    }
+    a.n[8] = splits;
+    a.p[9] = splits > 1 ? scratch : nullptr;
+    const int per = c.n_head / c.n_kv;
+    const int groups = splits > 1 ? 4 : std::max(per, keys >= 1024 ? 8 : 4);
+    const size_t shared = ((size_t) groups * per * (c.dim + 2) * 4 + 15) / 16 * 16;
+    run(c.dim == 128 ? "ink_attn_128" : "ink_attn_64", a, stream, {uint32_t(c.n_kv), uint32_t(c.rows), uint32_t(splits)},
+        uint32_t(32 * groups), shared);
+    if (splits > 1) run("ink_attn_join", a, stream, {uint32_t(c.n_head), uint32_t(c.rows), 1}, 32);
+    if (c.q8) kernels::native_quantize_q8_1(c.out, c.q8, c.n_head * c.dim, 1, stream);
+}
+
+// a prompt batch: ink_attend()'s kernel, which writes no score out either
+bool ink_attend_batch(const InkAttn& a, void* stream) {
+    ink_attend(a, stream);
+    return true;
+}
+
+bool ink_kv8_ok() { return false; }
+
+// ---- the DSpark drafter: no Metal kernels yet ----
+
+void ds_mix(const DsMix&, int, int, float, void*) { unported("DSpark drafter (--draft-model)"); }
+void ds_rope(float*, int, int, const float*, float, float, const DsPos&, uint16_t*, int64_t, const float*, uint16_t*,
+             void*, long long*) {
+    unported("DSpark drafter (--draft-model)");
+}
+void ds_attend(const float*, const uint16_t*, const uint16_t*, const long long*, int64_t, const DsPos&, int, int, int,
+               int, float, float*, float*, void*) {
+    unported("DSpark drafter (--draft-model)");
+}
+size_t ds_attend_floats(int) { return 1; }
+void ds_swiglu(float*, const float*, size_t, void*) { unported("DSpark drafter (--draft-model)"); }
+void ds_block_in(float*, const float*, int, int, const DsPos&, const long long*, float*, int, int32_t*, const float*,
+                 int, float*, void*) {
+    unported("DSpark drafter (--draft-model)");
+}
+void ds_markov_in(const float*, const uint16_t*, const int32_t*, float*, int, void*) {
+    unported("DSpark drafter (--draft-model)");
+}
+void ds_markov_step(const float*, const float*, const float*, const float*, float*, float*, int, void*) {
+    unported("DSpark drafter (--draft-model)");
+}
+void ds_pick(const float*, const float*, const float*, int, float, float*, Likeliest*, int32_t*, void*) {
+    unported("DSpark drafter (--draft-model)");
+}
+size_t ds_pick_floats() { return 1; }
+void ds_fold_q8(const float*, int, int, int, void*, void*) { unported("DSpark drafter (--draft-model)"); }
+bool ds_screens(int, int) { return false; }
+size_t ds_screen_bytes(int, int64_t) { return 0; }
+void ds_screen_pack(const void*, int, int64_t, void*, void*) { unported("DSpark drafter (--draft-model)"); }
+int64_t ds_screen_rows(int64_t n) { return n; }
+void ds_screen_order(const float*, int64_t, float*, void*) { unported("DSpark drafter (--draft-model)"); }
+size_t ds_screen_scratch_bytes(int64_t) { return 0; }
+void ds_head_base(const DsScreen&, const void*, int, float*, void*) { unported("DSpark drafter (--draft-model)"); }
+void ds_head_pick(const DsScreen&, const void*, const void*, const float*, int, void*, int32_t*, Likeliest*, void*) {
+    unported("DSpark drafter (--draft-model)");
+}
+
+}  // namespace strata::poly
+
+// The window's products of up to five matrices on a token in one launch: not on Metal, where lin() does each
+namespace strata::kernels {
+bool native_mmvq_many_fits(int, const NativeMmvqMany&, int) { return false; }
+void native_mmvq_many(int, const NativeMmvqMany&, int, void*) {
+    throw std::invalid_argument("Metal has no native_mmvq_many()");
+}
+void native_quantize_q8_1_many(const float* const* x, void* const* x_q8_1, int count, int n_in, void* stream) {
+    for (int j = 0; j < count; ++j) native_quantize_q8_1(x[j], x_q8_1[j], n_in, 1, stream);
+}
+}  // namespace strata::kernels

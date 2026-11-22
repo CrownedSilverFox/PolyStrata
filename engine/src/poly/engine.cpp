@@ -9,9 +9,9 @@
 #include "kolibri1.hpp"
 #include "lfm2moe.hpp"
 #include "flint.hpp"
+#include "inkling2.hpp" // its kernels: inkling2.cu, and metal/src/poly/inkling.cpp on Metal
 #if !defined(STRATA_GPU_METAL)
 #include "laguna.hpp"   // CUDA and HIP: its YaRN turn and softplus gate have no Metal kernels yet
-#include "inkling2.hpp" // CUDA and HIP: its kernels (inkling2.cu) have no Metal form yet
 #include "expert_card.hpp"
 #endif
 #include "mmq.hpp"
@@ -1893,9 +1893,9 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
         if (name == "lfm2moe") return std::make_unique<Lfm2Moe>();
         if (name == "flint") return std::make_unique<Flint>();
         if (name == "kolibri1") return std::make_unique<Kolibri1>();
+        if (name == "inkling2_loop") return std::make_unique<Inkling2>();
 #if !defined(STRATA_GPU_METAL)
         if (name == "laguna") return std::make_unique<Laguna>();
-        if (name == "inkling2_loop") return std::make_unique<Inkling2>();
 #endif
         // Unsloth's own layout of the model (loop_kv_res_query and the like): no public description of it to follow
         if (name == "inkling2")
