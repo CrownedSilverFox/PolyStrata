@@ -333,11 +333,11 @@ class SyntheticSets(unittest.TestCase):
             for f in files:
                 for t in f["tensors"]:
                     if t[0] == "blk.5.attn_qkv.weight":
-                        t[2] = 19                     # IQ1_S as a dense projection: not in any native_mmvq_supported list (PolyStrata's has Q2_K)
+                        t[2] = 34                     # TQ1_0 as a dense projection: in no native_mmvq_supported list (PolyStrata's has IQ1_S)
         r = analyse(files_for("fn_unsloth_ud_q4_k_xl", "q2k", retype))
         v = r["verdict"]
         self.assertEqual(v["case"], "C")
-        self.assertTrue(any("IQ1_S" in b for b in v["blockers"]), v["blockers"])
+        self.assertTrue(any("TQ1_0" in b for b in v["blockers"]), v["blockers"])
 
     def test_an_unknown_pre_tokenizer_is_case_c(self):
         r = analyse(files_for("fn_unsloth_ud_q4_k_xl", "pre", lambda fs: fs[0]["metadata"].__setitem__("tokenizer.ggml.pre", "qwen4")),
