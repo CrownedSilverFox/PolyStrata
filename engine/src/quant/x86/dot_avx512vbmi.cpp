@@ -26,14 +26,12 @@ namespace avx512vbmi {
 // blends.  The indices go in a fixed order so that unpacking the four byte planes gives the words in their order.
 struct alignas(64) Iq3sPlanes {   // [byte b][quarter q][i]: byte b of iq3s_grid[128 q + i]
     uint8_t t[4][4][128];
-    constexpr Iq3sPlanes() : t{} {
+    Iq3sPlanes() : t{} {
         for (int b = 0; b < 4; ++b)
             for (int q = 0; q < 4; ++q)
                 for (int i = 0; i < 128; ++i) t[b][q][i] = (uint8_t) (iq3s_grid[128 * q + i] >> (8 * b));
     }
 };
-// Built at compile time: code of this file must not run at start-up (it is compiled for AVX-512, and the compiler vectorizes loops).
-constexpr Iq3sPlanes kIq3sPlanes{};
 
 // The lookup order: unpacklo/hi_epi8 then unpacklo/hi_epi16 of the planes give, in 128-bit lane L, the words looked up at
 // 16 L + 4 c + m (c the output vector, m < 4); output c is to hold words 16 c .. 16 c + 15, so position 16 L + 4 c + m looks up
@@ -54,6 +52,9 @@ constexpr Iq3sOrder kIq3sOrder{};
 // A Ryzen 7 7800X3D (Zen 4), one thread, an expert's gate|up rows: 446-465 us with the AVX2 kernel, 233-280 us with this one.
 void dot_iq3_s_q8_K(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT vx, const void* STRATA_RESTRICT vy) {
     assert(n % QK_K == 0);
+    // Built on the first call, not at start-up: code of this file must only run on a CPU that has VBMI (it is compiled for AVX-512,
+    // and the compiler vectorizes loops), and iq3s_grid is not a constant expression for Clang, icpx or MSVC.
+    static const Iq3sPlanes kIq3sPlanes{};
 
     const block_iq3_s* STRATA_RESTRICT x = (const block_iq3_s*) vx;
     const block_q8_K*  STRATA_RESTRICT y = (const block_q8_K*) vy;
