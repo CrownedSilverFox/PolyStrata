@@ -867,6 +867,11 @@ class Strata:
         """A family's sizes, each with what the tables say of it: its own ("models"), else the ones that name it."""
         models, families, _ctx, _src = self.tables()
         own = families[family].get("models")
+        if own is None:   # an own-path family (Hy4-Flash's .strata builds): its sizes are setup's table's, not MODELS
+            s = self.setup_module()
+            fam = (getattr(s, "OWN_PATH_FAMILIES", None) or {}).get(family) or (getattr(s, "HY4_FAMILIES", None) or {}).get(family)
+            if fam and any(m not in models for m in fam["models"]):
+                return dict(fam["models"])
         return own if own is not None else {m: models[m] for m in self.sizes_of(models, family)}
 
     # ---- paths

@@ -3501,7 +3501,10 @@ class Hy4OutputParser(OutputParser):
     OutputParser's.  A call is in the declared-tool form once translated, so the recovery that reads a drifted opener is on, as for the JSON form."""
 
     def __init__(self, thinking: bool = True, tools: list[dict] | None = None, stream_tools: bool = False,
-                 recover: bool = False, declared_only: bool = False, deferred: bool = False):
+                 recover: bool = False, declared_only: bool = False, deferred: bool = False,
+                 call_format: str = "function", opened: bool = False):
+        # (PolyStrata's server names every parser's call form and an opened reasoning block; the dialect turns Hy4's
+        # tags into the function form, so this one always reads that form, as the Strata project's does)
         super().__init__(thinking=thinking, tools=tools, stream_tools=stream_tools, recover=recover,
                          declared_only=declared_only, deferred=deferred)
         from serve import hy4_dialect

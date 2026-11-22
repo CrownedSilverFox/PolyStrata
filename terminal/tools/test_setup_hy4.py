@@ -524,7 +524,7 @@ class MacHy4Flash(unittest.TestCase):
 
     def test_mac_install_plan_defaults_to_128k_and_unified_fit(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"STRATA_HY4_SHOW": "1"}):
-            data_dir = str(Path(d) / "Strata-data")
+            data_dir = str(Path(d) / "PolyStrata-data")   # PolyStrata: a new data folder is named PolyStrata...
             s = M.Strata(HERE.parent)
             tools = M.Tools(s)
             hw128 = self._mac_hw(128.0)
