@@ -452,6 +452,17 @@ WARM_MIN_TOKENS = 2048           # a shorter prompt start is quick to read again
 BEFORE_LOAD_TIMEOUT_S = 120.0  # #1997: how long the before_load command may run (the config's before_load_timeout_s)
 
 
+def inkling_template_kwargs(kwargs: dict) -> dict:
+    """Inkling 2's template has one switch, reasoning_effort (a name or a number from 0 to 0.99), written in a system
+    message ahead of the conversation; an effort it does not know would stop the render.  Thinking off is "none"."""
+    effort = kwargs.get("reasoning_effort")
+    known = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+    level = "none" if kwargs.get("enable_thinking") is False else \
+        effort if effort in known or isinstance(effort, (int, float)) else "high"
+    rest = {k: v for k, v in kwargs.items() if k not in ("reasoning_effort", "enable_thinking")}
+    return {**rest, "reasoning_effort": level}
+
+
 def closed_with(text: str, think_end: str) -> str:
     """REASONING_CLOSE or REASONING_WRAP_UP for a model whose thinking ends with think_end (OutputParser).  Gemma 4
     ends it with <channel|>, its answer right after: a </think> there is text inside the thought, and the model
@@ -5663,12 +5674,7 @@ class Service:
         if self.openai_tools and tools:   # their templates read a tool as OpenAI sends it (_read_tokenizer())
             tools = [{"type": "function", "function": t} for t in tools]
         if self.call_format == "inkling":
-            # Inkling 2's template has one switch, reasoning_effort (a name or a number from 0 to 0.99), written in
-            # a system message ahead of the conversation; an effort it does not know would stop the render
-            known = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-            level = "none" if off else effort if effort in known or isinstance(effort, (int, float)) else "high"
-            rest = {k: v for k, v in kwargs.items() if k not in ("reasoning_effort", "enable_thinking")}
-            prompt = self.template.render(messages, tools=tools, reasoning_effort=level, **rest)
+            prompt = self.template.render(messages, tools=tools, **inkling_template_kwargs(kwargs))
             # at effort 0 the model still opens a thinking block now and then: a reply that must not think starts
             # in its text block (the parser is told: _read_tokenizer()'s text_open_ids)
             return prompt + INK_TEXT_OPEN if off else prompt
@@ -6010,6 +6016,8 @@ class Service:
             off = kwargs.get("enable_thinking") is False        # render_prompt's rule for #458's effort_end
             kw = ({k: v for k, v in kwargs.items() if k not in ("reasoning_effort", "enable_thinking")}
                   if self.effort_end and (off or effort not in (None, "", "xhigh", "high")) else dict(kwargs))
+            if self.call_format == "inkling":               # the effort as render_prompt writes it
+                kw = inkling_template_kwargs(kwargs)
             kw["add_generation_prompt"] = False
             text = self.template.render(marked, tools=marked_tools, **kw)
             cut = text.find(self.PREFIX_END)

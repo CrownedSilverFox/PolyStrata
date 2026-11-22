@@ -148,6 +148,17 @@ class ServiceForInkling(unittest.TestCase):
                 self.assertTrue(text.startswith(f"<|message_system|>effort={effort}<|end_message|>"), text)
                 self.assertEqual(text.endswith(INK_TEXT_OPEN), kwargs.get("enable_thinking") is False)
 
+    def test_a_shared_prefix_is_the_first_messages_whatever_the_effort(self):
+        # strata_prefix renders the first messages with the effort render_prompt writes: the common start is the
+        # whole first message, not the few tokens before the effort line differs
+        msgs = [{"role": "user", "content": "DOC " * 40}, {"role": "user", "content": "Which word repeats?"}]
+        for kwargs in ({}, {"reasoning_effort": "low"}, {"enable_thinking": False}, {"reasoning_effort": "ludicrous"}):
+            with self.subTest(**kwargs):
+                req = {"strata_prefix": {"messages": 1}}
+                ids, _, _ = self.svc.prepare(msgs, None, dict(kwargs), 16, req=req)
+                head = self.tok.decode(ids[:req["strata_prefix"].get("tokens", 0)])
+                self.assertTrue(head.endswith("DOC <|end_message|>"), head[-60:])
+
     def test_a_reply_goes_on_in_the_text_block_a_prompt_opened(self):
         for kwargs, reply, reasoning in (({}, THINK + TEXT + STOP, "the capital of Italy"),
                                          ({"enable_thinking": False}, "Rome" + END + STOP, "")):
