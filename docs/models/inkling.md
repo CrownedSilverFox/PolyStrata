@@ -72,12 +72,13 @@ the bus once for the group instead of once for every call and every pass of the 
 a 32K context.
 
 On a Mac it runs on strata-poly's Metal engine, as a beta. Measured on an Apple M5 Ultra with 256 GB of unified memory,
-UD-Q3_K_XL, the README's two prompts given to the engine: 256 tokens written, the most likely one each time, the
-fastest of two runs. Other programs were using the GPU at the same time.
+UD-Q3_K_XL, the README's benchmark on setup's settings with a 40,960-token context: 256 tokens written, the most likely
+one each time. Other programs were using the GPU at the same time. Two runs of the same prompts given to the engine
+alone wrote 73-74 and 60-61 tokens/s and read 2,411 tokens/s.
 
-| UD-Q3_K_XL | Writes in a short chat | Reads a 32,788-token prompt | Writes after it |
+| UD-Q3_K_XL | Writes in a short chat | Reads a 32,787-token prompt | Writes after it |
 | --- | ---: | ---: | ---: |
-| M5 Ultra | 74 tokens/s | 2,411 tokens/s | 61 tokens/s |
+| M5 Ultra | 74 tokens/s | 2,440 tokens/s | 61 tokens/s |
 
 Given the 128 tokens the CUDA engine wrote after a 4,526-token prompt (UD-Q3_K_XL), it picks the same most likely token
 at 126 of the 128 steps. UD-Q2_K_XL has run there too (73 tokens/s in the short chat). UD-Q4_K_XL has not been measured
