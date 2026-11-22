@@ -11,6 +11,8 @@
 #include "engine.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -44,8 +46,11 @@ std::vector<int32_t> ids(const std::string& s) {
     std::vector<int32_t> out;
     for (const char* p = s.c_str(); *p;) {
         char* end = nullptr;
-        out.push_back((int32_t) std::strtol(p, &end, 10));
-        if (end == p) throw std::runtime_error("not a list of token ids: " + s.substr(0, 80));
+        errno = 0;
+        const long id = std::strtol(p, &end, 10);
+        if (end == p || errno == ERANGE || id < 0 || id > INT32_MAX || (*end && *end != ','))
+            throw std::runtime_error("not a list of token ids: " + s.substr(0, 80));
+        out.push_back((int32_t) id);
         p = *end == ',' ? end + 1 : end;
     }
     return out;
@@ -91,6 +96,26 @@ FILE* create(const std::string& path) {
     return f;
 }
 
+// a row of n floats, all of it, or an error
+void put(FILE* f, const float* row, size_t n, const std::string& path) {
+    if (std::fwrite(row, sizeof(float), n, f) != n) throw std::runtime_error("cannot write " + path);
+}
+
+void finish(FILE* f, const std::string& path) {
+    if (std::fclose(f) != 0) throw std::runtime_error("cannot write " + path);
+}
+
+// an option's whole value as a number, at least lo
+int number(const std::string& opt, const char* v, long lo) {
+    char* end = nullptr;
+    errno = 0;
+    const long n = std::strtol(v, &end, 10);
+    if (end == v || *end || errno == ERANGE || n < lo || n > INT32_MAX)
+        throw std::runtime_error(opt + " needs a whole number of at least " + std::to_string(lo) + ", not \"" + v +
+                                 "\"");
+    return (int) n;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -121,20 +146,20 @@ int main(int argc, char** argv) {
             if (a == "--tokens") prompt = ids_arg(val());
             else if (a == "--tokens-file") prompt = ids_in_file(val());
             else if (a == "--decode") decode = ids_arg(val());
-            else if (a == "--greedy") greedy = std::atoi(val());
+            else if (a == "--greedy") greedy = number(a, val(), 0);
             else if (a == "--out") out = val();
-            else if (a == "--vocab") vocab = std::atoi(val());
-            else if (a == "--max-context") o.max_context = std::atoi(val());
-            else if (a == "--prompt-batch") o.prompt_batch = std::atoi(val());
+            else if (a == "--vocab") vocab = number(a, val(), 0);
+            else if (a == "--max-context") o.max_context = number(a, val(), 1);
+            else if (a == "--prompt-batch") o.prompt_batch = number(a, val(), 1);
             else if (a == "--kv") {
                 const std::string f = val();
                 if (f == "fp16") o.kv_format = strata::poly::KvFmt::kFp16;
                 else if (f == "fp8") o.kv_format = strata::poly::KvFmt::kFp8;
                 else throw std::runtime_error("--kv is fp16 or fp8");
-            } else if (a == "--threads") o.threads = std::atoi(val());
+            } else if (a == "--threads") o.threads = number(a, val(), 0);
             else if (a == "--no-graphs") o.graphs = false;
             else if (a == "--no-gpu-experts") o.gpu_experts = false;
-            else if (a == "--vram-reserve-mib") o.vram_reserve_mib = std::atoi(val());
+            else if (a == "--vram-reserve-mib") o.vram_reserve_mib = number(a, val(), 0);
             else if (a == "--expert-profile") o.profile = val();
             else throw std::runtime_error("unknown option " + a + "\n" + kUsage);
         }
@@ -153,22 +178,23 @@ int main(int argc, char** argv) {
         }
         e->end_read();
         e->eval(&prompt.back(), 1, true);
-        FILE* f = create(out + "/prompt_logits.f32");
-        std::fwrite(e->logits(), sizeof(float), (size_t) nw, f);
-        std::fclose(f);
+        const std::string prompt_path = out + "/prompt_logits.f32", decode_path = out + "/decode_logits.f32";
+        FILE* f = create(prompt_path);
+        put(f, e->logits(), (size_t) nw, prompt_path);
+        finish(f, prompt_path);
         top("prompt", e->logits(), nw);
-        f = create(out + "/decode_logits.f32");
+        f = create(decode_path);
         std::vector<int32_t> fed;
         int32_t next = likeliest(e->logits(), nw);
         for (size_t k = 0; k < decode.size() + (size_t) greedy; ++k) {
             const int32_t t = k < decode.size() ? decode[k] : next;
             fed.push_back(t);
             e->eval(&t, 1, true);
-            std::fwrite(e->logits(), sizeof(float), (size_t) nw, f);
+            put(f, e->logits(), (size_t) nw, decode_path);
             top("decode " + std::to_string(k), e->logits(), nw);
             next = likeliest(e->logits(), nw);
         }
-        std::fclose(f);
+        finish(f, decode_path);
         std::printf("fed:");
         for (const int32_t t : fed) std::printf(" %d", t);
         std::printf("\n");
