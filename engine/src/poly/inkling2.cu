@@ -1510,7 +1510,7 @@ __global__ void ds_mix_kernel(DsMix m, int n, int rows, float eps) {
 // position (NeoX halves, base theta); into the fp16 cache's cell of the position, or back into x.  With v, v's head
 // goes to its cache too.
 __global__ void ds_rope_kernel(float* x, int heads, const float* __restrict__ w, float eps, float theta, DsPos p,
-                               __half* cache, long long cap, const float* v, __half* vcache) {
+                               __half* cache, long long cap, const float* v, __half* vcache, long long* tags) {
     __shared__ float part[kDsHead / 32];
     __shared__ float y[kDsHead];
     const int t = blockIdx.x, h = blockIdx.y, i = threadIdx.x;
@@ -1531,6 +1531,7 @@ __global__ void ds_rope_kernel(float* x, int heads, const float* __restrict__ w,
     const size_t cell = (size_t) (pos % cap) * heads * kDsHead + (size_t) h * kDsHead + i;
     cache[cell] = __float2half(out);
     if (v) vcache[cell] = __float2half(v[((size_t) t * heads + h) * kDsHead + i]);
+    if (tags && h == 0 && i == 0) tags[pos % cap] = pos;
 }
 
 // The block's attention, the keys split among blocks so that a long context is read at once: block (g, s) takes kv
@@ -1552,13 +1553,14 @@ __device__ __forceinline__ void ds_span(const DsPos& p, int nb, int window, long
 }
 
 __global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __half* keys, const __half* vals,
-                                                      long long cap, DsPos p, int nb, int window, int heads,
-                                                      int kv_heads, float scale, float* part) {
+                                                      const long long* tags, long long cap, DsPos p, int nb,
+                                                      int window, int heads, int kv_heads, float scale, float* part) {
     __shared__ __align__(16) float qs[kDsRows][kDsHead];
     __shared__ half2 ks[kDsTile][kDsHead / 2 + 1];   // a key a row, a word longer: a warp's lanes read 32 rows
     __shared__ __align__(16) __half vs[kDsTile][kDsHead];
     __shared__ float sc[kDsRows][kDsTile];
     __shared__ float mrun[kDsRows], lrun[kDsRows], corr[kDsRows];
+    __shared__ bool held[kDsTile];   // the key's cell holds its position (a ring after going back holds later ones)
     const int g = blockIdx.x, s = blockIdx.y, tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
     const int grp = heads / kv_heads, R = nb * grp;
     long long lo, nk;
@@ -1588,6 +1590,7 @@ __global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __ha
             ks[j][c / 2 + 2] = *(const half2*) &kw.z, ks[j][c / 2 + 3] = *(const half2*) &kw.w;
             *(uint4*) &vs[j][c] = *(const uint4*) (vals + at);
         }
+        if (tid < nt) held[tid] = !tags || tags[(lo + t0 + tid) % cap] == lo + t0 + tid;
         __syncthreads();
         for (int r = warp; r < R && lane < nt; r += 8) {   // a warp a query row, a lane a key
             float x = 0.0f;
@@ -1596,19 +1599,19 @@ __global__ void __launch_bounds__(256) ds_part_kernel(const float* q, const __ha
                 const float2 k = __half22float2(ks[lane][c]), qv = *(const float2*) &qs[r][2 * c];
                 x += qv.x * k.x + qv.y * k.y;
             }
-            sc[r][lane] = x;
+            sc[r][lane] = held[lane] ? x : -INFINITY;
         }
         __syncthreads();
         if (tid < R) {
             float m = mrun[tid];
             for (int j = 0; j < nt; ++j) m = fmaxf(m, sc[tid][j]);
-            corr[tid] = expf(mrun[tid] - m);
+            corr[tid] = m == -INFINITY ? 1.0f : expf(mrun[tid] - m);
             mrun[tid] = m;
         }
         __syncthreads();
         for (int i = tid; i < R * kDsTile; i += blockDim.x) {
             const int r = i / kDsTile, j = i % kDsTile;
-            if (j < nt) sc[r][j] = expf(sc[r][j] - mrun[r]);
+            if (j < nt) sc[r][j] = sc[r][j] == -INFINITY ? 0.0f : expf(sc[r][j] - mrun[r]);
         }
         __syncthreads();
         if (tid < R) {
@@ -1647,7 +1650,8 @@ __global__ void ds_join_kernel(const float* part, DsPos p, int nb, int window, i
     for (int s = 0; s < ns; ++s) m = fmaxf(m, in[s * step + kDsHead]);
     float l = 0.0f, a = 0.0f;
     for (int s = 0; s < ns; ++s) {
-        const float w = expf(in[s * step + kDsHead] - m);
+        const float ms = in[s * step + kDsHead];
+        const float w = ms == -INFINITY ? 0.0f : expf(ms - m);   // a split of cells that hold other positions
         l += w * in[s * step + kDsHead + 1];
         a += w * in[s * step + d];
     }
@@ -2193,21 +2197,23 @@ void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream) {
 }
 
 void ds_rope(float* x, int heads, int rows, const float* w, float eps, float theta, const DsPos& p, uint16_t* cache,
-             int64_t cap, const float* v, uint16_t* vcache, void* stream) {
+             int64_t cap, const float* v, uint16_t* vcache, void* stream, long long* tags) {
     if (rows <= 0) return;
     ds_rope_kernel<<<dim3(rows, heads), kDsHead, 0, cs(stream)>>>(x, heads, w, eps, theta, p, (__half*) cache,
-                                                                  (long long) cap, v, (__half*) vcache);
+                                                                  (long long) cap, v, (__half*) vcache, tags);
     launched("ds_rope");
 }
 
 size_t ds_attend_floats(int kv_heads) { return (size_t) kv_heads * kDsSplits * kDsRows * kDsPart; }
 
-void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, const DsPos& p, int window,
-               int rows, int heads, int kv_heads, float scale, float* part, float* out, void* stream) {
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, const long long* tags, int64_t cap,
+               const DsPos& p, int window, int rows, int heads, int kv_heads, float scale, float* part, float* out,
+               void* stream) {
     if (heads % kv_heads || rows * (heads / kv_heads) > kDsRows)
         throw std::logic_error("ds_attend: more query rows a kv head than it holds");
     ds_part_kernel<<<dim3(kv_heads, kDsSplits), 256, 0, cs(stream)>>>(
-        q, (const __half*) keys, (const __half*) vals, (long long) cap, p, rows, window, heads, kv_heads, scale, part);
+        q, (const __half*) keys, (const __half*) vals, tags, (long long) cap, p, rows, window, heads, kv_heads, scale,
+        part);
     launched("ds_part");
     ds_join_kernel<<<dim3(rows, heads), kDsHead, 0, cs(stream)>>>(part, p, rows, window, heads, kv_heads, out);
     launched("ds_join");

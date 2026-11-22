@@ -193,6 +193,10 @@ void Inkling2::ds_load() {
         L.cap = L.swa ? (int64_t) ds_window_ + 64 : (int64_t) opt_.max_context + 64;
         L.keys = (uint16_t*) dmalloc((size_t) L.cap * cell, "the drafter's caches");
         L.vals = (uint16_t*) dmalloc((size_t) L.cap * cell, "the drafter's caches");
+        if (L.swa) {   // a conversation taken up again from an earlier place finds later positions in the ring
+            L.tags = (long long*) dmalloc((size_t) L.cap * sizeof(long long), "the drafter's caches");
+            ck(cudaMemset(L.tags, 0xff, (size_t) L.cap * sizeof(long long)), "the drafter's caches");
+        }
     }
     {   // each mix's weights over the four features, a softmax (in double) of the file's
         const TensorInfo* t = find("dspark_fuse.weight", kTypeF32, 4, 4);
@@ -331,7 +335,7 @@ void Inkling2::ds_commit(int n) {
         DsLayer& L = ds_[l];
         lin(L.k_ctx, ds_mix_ + l * (size_t) n * E, ds_k_, n);
         lin(L.v_ctx, ds_mix_ + l * (size_t) n * E, ds_v_, n);
-        ds_rope(ds_k_, n_kv_, n, L.k_ctx_norm, ds_eps_, ds_theta_, p, L.keys, L.cap, ds_v_, L.vals, st_);
+        ds_rope(ds_k_, n_kv_, n, L.k_ctx_norm, ds_eps_, ds_theta_, p, L.keys, L.cap, ds_v_, L.vals, st_, L.tags);
     }
 }
 
@@ -395,10 +399,10 @@ void Inkling2::ds_block(int nb) {
         lin(L.wq, ds_y_, ds_q_, nb, ds_yq_);
         lin_pair(L.wk, L.wv, ds_y_, ds_k_, ds_v_, nb, ds_yq_);
         ds_rope(ds_q_, n_head_, nb, L.q_norm, ds_eps_, ds_theta_, p, nullptr, 0, nullptr, nullptr, st_);
-        ds_rope(ds_k_, n_kv_, nb, L.k_norm, ds_eps_, ds_theta_, p, L.keys, L.cap, ds_v_, L.vals, st_);
+        ds_rope(ds_k_, n_kv_, nb, L.k_norm, ds_eps_, ds_theta_, p, L.keys, L.cap, ds_v_, L.vals, st_, L.tags);
         // a window layer's context is the window before the block, a full one's every position; and the block
-        ds_attend(ds_q_, L.keys, L.vals, L.cap, p, L.swa ? ds_window_ : 0, nb, n_head_, n_kv_, scale, ds_part_,
-                  ds_att_, st_);
+        ds_attend(ds_q_, L.keys, L.vals, L.tags, L.cap, p, L.swa ? ds_window_ : 0, nb, n_head_, n_kv_, scale,
+                  ds_part_, ds_att_, st_);
         lin(L.wo, ds_att_, ds_y_, nb);
         axpy(ds_y_, 1.f, ds_x_, nb * n_embd_, true, st_);
         rms_norm(ds_x_, L.ffn_norm, ds_y_, n_embd_, nb, ds_eps_, st_);

@@ -152,6 +152,7 @@ private:
                     *k_norm = nullptr, *k_ctx_norm = nullptr;
         bool swa = false;
         uint16_t *keys = nullptr, *vals = nullptr;   ///< fp16, n_kv * head_dim a cell, position p at cell p % cap
+        long long* tags = nullptr;   ///< a window layer's: the position each cell holds (-1: none)
         int64_t cap = 0;
     };
     static constexpr int kDsRing = 16;   ///< positions whose Markov-head context ds_ring_ keeps

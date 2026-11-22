@@ -224,13 +224,16 @@ void ds_mix(const DsMix& m, int n, int rows, float eps, void* stream);
 /// Each head of 128 values of `rows` rows of x RMS-normed with w and rotated at its row's position (NeoX halves,
 /// base theta): back into x, or with cache into its fp16 cell pos % cap (heads * 128 halves a cell), v's heads to
 /// vcache's beside it.
+/// With tags, tags[pos % cap] = pos for each row written to the caches.
 void ds_rope(float* x, int heads, int rows, const float* w, float eps, float theta, const DsPos& p, uint16_t* cache,
-             int64_t cap, const float* v, uint16_t* vcache, void* stream);
+             int64_t cap, const float* v, uint16_t* vcache, void* stream, long long* tags = nullptr);
 /// Each of `rows` query rows' heads (rows * heads / kv_heads at most 24) over the cache's positions [lo, p0 + rows),
 /// all of them (no causal mask), p0 the position of row 0 (p): lo = p0 - window (0 at least), or 0 with window 0.
-/// part: ds_attend_floats() floats of scratch.
-void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, int64_t cap, const DsPos& p, int window,
-               int rows, int heads, int kv_heads, float scale, float* part, float* out, void* stream);
+/// part: ds_attend_floats() floats of scratch.  With tags (ds_rope()'s), a cell that holds another position than the
+/// one read is left out.
+void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, const long long* tags, int64_t cap,
+               const DsPos& p, int window, int rows, int heads, int kv_heads, float scale, float* part, float* out,
+               void* stream);
 size_t ds_attend_floats(int kv_heads);
 /// g = silu(g) * u
 void ds_swiglu(float* g, const float* u, size_t n, void* stream);
