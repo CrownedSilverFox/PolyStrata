@@ -29,7 +29,7 @@ Medido como [Flint 40B-A2.5B](flint.es.md), con un prompt de 31,676 tokens.
 </table>
 
 La tarjeta de la estación de trabajo guarda los 19,200 expertos de Q2_K (25,6 GiB). Empezó a responder el prompt de
-31,676 tokens a los 6,3 a 6,4 segundos y después escribió a 129-131 tokens/s. En el portátil el prompt tuvo 31,640 tokens; después Q2_K escribió a 25-34 tokens/s y poly.10 a 32-34. Q4_K_M y
+31,676 tokens a los 6,3 a 6,4 segundos y después escribió a 129-131 tokens/s. En el portátil el prompt tuvo 31,640 tokens; después Q2_K escribió a 25-34 tokens/s. Q4_K_M y
 Q3_K_M no se ejecutaron en ninguno de los dos PC.
 
 El pull request que añadió el modelo lo midió en otros PC. En una RTX 3060 (12 GB) con 24 GB de RAM en Windows, Q2_K

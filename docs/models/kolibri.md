@@ -29,7 +29,7 @@ Measured the same way as [Flint 40B-A2.5B](flint.md), with a prompt of 31,676 to
 </table>
 
 The workstation's card holds all 19,200 experts of Q2_K (25.6 GiB). It started answering the 31,676-token prompt after
-6.3 to 6.4 seconds and wrote after it at 129-131 tokens/s. On the laptop the prompt was 31,640 tokens; Q2_K wrote after it at 25-34 tokens/s, poly.10 at 32-34. Q4_K_M and
+6.3 to 6.4 seconds and wrote after it at 129-131 tokens/s. On the laptop the prompt was 31,640 tokens; Q2_K wrote after it at 25-34 tokens/s. Q4_K_M and
 Q3_K_M were not run on either PC.
 
 The pull request that added the model measured it on other PCs. On an RTX 3060 (12 GB) with 24 GB of RAM under

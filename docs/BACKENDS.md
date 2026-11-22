@@ -2147,7 +2147,6 @@ the second to fourth reads and of the answers:
 | | no swaps | 1,985 (1,946-2,006) | 87 (75-101) |
 | | 64 swaps | 1,824 (1,710-1,918) | 98 (84-116) |
 | Gemma 4 UD-Q6_K_XL, 6.9 GB, 5,120 MiB, 11 GiB | 0.1.45-poly.10 | 1,038 (878-1,214) | 129 (56-166) |
-| | no swaps | 989 (918-1,007) | 100 (66-126) |
 | | 64 swaps | 1,144 (1,100-1,196) | 137 (122-159) |
 
 "VRAM" is what `--vram-pool` held the card to, not a card of that size. The swaps cost Qwen3.6 at 4.8 GB 8% of its

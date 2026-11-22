@@ -30,7 +30,7 @@ Mesuré comme [Flint 40B-A2.5B](flint.fr.md), avec un prompt de 31,676 tokens.
 </table>
 
 La carte de la station de travail contient les 19,200 experts de Q2_K (25,6 Gio). Il a commencé à répondre au prompt de
-31,676 tokens après 6,3 à 6,4 secondes, puis a écrit à 129-131 tokens/s. Sur le portable, le prompt faisait 31,640 tokens ; Q2_K a ensuite écrit à 25-34 tokens/s, poly.10 à 32-34. Q4_K_M et
+31,676 tokens après 6,3 à 6,4 secondes, puis a écrit à 129-131 tokens/s. Sur le portable, le prompt faisait 31,640 tokens ; Q2_K a ensuite écrit à 25-34 tokens/s. Q4_K_M et
 Q3_K_M n'ont tourné sur aucun des deux PC.
 
 La pull request qui a ajouté le modèle l'a mesuré sur d'autres PC. Sur une RTX 3060 (12 Go) avec 24 Go de RAM sous
