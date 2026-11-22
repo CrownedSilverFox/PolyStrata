@@ -161,6 +161,17 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
     target_link_libraries(strata_poly_mmq PUBLIC strata_kernels ${_strata_gpu_runtime_target})
     if(STRATA_ENABLE_HIP)
       target_compile_definitions(strata_poly_mmq PRIVATE GGML_USE_HIP=1)   # fattn.cu: no kernel of either kind on HIP
+    else()
+      # STRATA_PREFILL_NVFP4=w4a4x2's products (mmq_nvfp4_x2.cu): the block-scaled FP4 MMA exists only in the
+      # arch-specific target, so this unit alone is built with 12x -> 12xa.  For another target, or a CUDA before 12.8,
+      # its kernels are empty and Mmq never takes them.
+      set(_strata_poly_fp4_archs ${CMAKE_CUDA_ARCHITECTURES})
+      list(TRANSFORM _strata_poly_fp4_archs REPLACE "^(12[0-9])$" "\\1a")
+      list(TRANSFORM _strata_poly_fp4_archs REPLACE "^(12[0-9])-(real|virtual)$" "\\1a-\\2")
+      add_library(strata_poly_nvfp4_x2 OBJECT src/poly/mmq_nvfp4_x2.cu)
+      set_target_properties(strata_poly_nvfp4_x2 PROPERTIES CUDA_ARCHITECTURES "${_strata_poly_fp4_archs}")
+      target_sources(strata_poly_mmq PRIVATE $<TARGET_OBJECTS:strata_poly_nvfp4_x2>)
+      target_compile_definitions(strata_poly_mmq PRIVATE STRATA_POLY_X2=1)
     endif()
   endif()
 
@@ -310,8 +321,10 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
     target_link_libraries(poly_mmq_paths_test PRIVATE strata_poly_mmq ggml-base ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
     add_test(NAME poly_mmq_paths_test COMMAND poly_mmq_paths_test)
     add_test(NAME poly_mmq_paths_test_blas COMMAND poly_mmq_paths_test)
-    set_tests_properties(poly_mmq_paths_test poly_mmq_paths_test_blas PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME poly_mmq_paths_test_x2 COMMAND poly_mmq_paths_test)
+    set_tests_properties(poly_mmq_paths_test poly_mmq_paths_test_blas poly_mmq_paths_test_x2 PROPERTIES SKIP_RETURN_CODE 77)
     set_tests_properties(poly_mmq_paths_test_blas PROPERTIES ENVIRONMENT "STRATA_POLY_PROMPT_BLAS=1")
+    set_tests_properties(poly_mmq_paths_test_x2 PROPERTIES ENVIRONMENT "STRATA_PREFILL_NVFP4=w4a4x2")
   endif()
   # LFM2's short convolution against the same arithmetic on the host; needs a card, so it is run by hand
   add_executable(poly_shortconv_test src/poly/shortconv_test.cu src/poly/kernels.cu)

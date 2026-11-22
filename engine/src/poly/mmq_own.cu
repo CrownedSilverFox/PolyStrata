@@ -22,7 +22,14 @@
 // hip_compat), FP32 sums: the rows of a matrix take its bounds as the host keeps them (mirror()).  A row's product
 // there depends on how many rows the library multiplies at once (split_exact() is false).  F32 matrices are not
 // taken: their halves would be less exact than the products the engine makes of them otherwise.
+//
+// STRATA_PREFILL_NVFP4=w4a4x2 on an RTX 50 card: an NVFP4 matrix with rows of a multiple of 128 values goes to the
+// block-scaled FP4 tensor cores instead, the activations two FP4 terms under a float a row (nvfp4_x2.hpp, about 8
+// bits against a half's 11), its products straight to dst's rows and its rows read by index as the int8 ones are.
 #include "mmq.hpp"
+#if STRATA_POLY_X2
+#include "nvfp4_x2.hpp"
+#endif
 
 #include "strata/kernels/iq_kernels.hpp"
 
@@ -132,6 +139,21 @@ bool grouped(int t, int64_t rows, int64_t cols) {
 // the matrix as one run of values, 256 at a time)
 bool by_blas(int t, int64_t rows, int64_t cols) {
     return dequantized(t) && cols % block_values(t) == 0 && (rows * cols) % 256 == 0;
+}
+
+// STRATA_PREFILL_NVFP4=w4a4x2 asks for the two-term FP4 products, and an NVFP4 matrix of rows this long takes them on
+// this card (asked last, and once: nothing of it runs without the variable)
+bool x2_rows(int t, int64_t cols) {
+#if STRATA_POLY_X2
+    static const bool asked = [] {
+        const char* v = std::getenv("STRATA_PREFILL_NVFP4");
+        return v && std::string(v) == "w4a4x2";
+    }();
+    return t == 40 && cols % x2::kK == 0 && asked && nvfp4_x2_built();
+#else
+    (void) t, (void) cols;
+    return false;
+#endif
 }
 
 // a block a row; the rows go over the grid's two sides, which hold 65,535 each
@@ -245,7 +267,8 @@ Mmq::~Mmq() {
 
 Mmq::Work Mmq::work(int ggml_type, int64_t w_rows, int64_t w_cols, int64_t rows, bool by_ids, int64_t ld_dst) {
     Work w;
-    if (!fits(ggml_type, w_rows, w_cols) || int8_rows(ggml_type, w_cols)) return w;   // int8: straight to dst's rows
+    // int8 and FP4: straight to dst's rows
+    if (!fits(ggml_type, w_rows, w_cols) || int8_rows(ggml_type, w_cols) || x2_rows(ggml_type, w_cols)) return w;
     if (by_ids || ld_dst % 4 != 0) w.floats = (size_t) rows * (size_t) ((w_rows + 3) / 4 * 4);
     if (!grouped(ggml_type, w_rows, w_cols)) w.halves = (size_t) w_rows * (size_t) w_cols;
     return w;
@@ -265,7 +288,8 @@ void Mmq::give(float* y, size_t floats, void* dq, size_t halves, void* blas) {
 }
 
 bool Mmq::fits(int ggml_type, int64_t w_rows, int64_t w_cols) {
-    return int8_rows(ggml_type, w_cols) || grouped(ggml_type, w_rows, w_cols) || by_blas(ggml_type, w_rows, w_cols);
+    return x2_rows(ggml_type, w_cols) || int8_rows(ggml_type, w_cols) || grouped(ggml_type, w_rows, w_cols) ||
+           by_blas(ggml_type, w_rows, w_cols);
 }
 
 size_t Mmq::q8_bytes(int64_t rows, int64_t cols) {
@@ -276,10 +300,13 @@ bool Mmq::half_sums(int) { return false; }
 
 bool Mmq::split_exact(int ggml_type, int64_t w_rows) {
     (void) w_rows;
-    return int8_rows(ggml_type, 256) || grouped(ggml_type, w_rows, 256);   // (by the type: a call's rows are long)
+    // (by the type: a call's rows are long)
+    return x2_rows(ggml_type, 256) || int8_rows(ggml_type, 256) || grouped(ggml_type, w_rows, 256);
 }
 
-bool Mmq::reads_by_index(int ggml_type, int64_t w_cols) { return int8_rows(ggml_type, w_cols); }
+bool Mmq::reads_by_index(int ggml_type, int64_t w_cols) {
+    return int8_rows(ggml_type, w_cols) || x2_rows(ggml_type, w_cols);
+}
 
 bool Mmq::int8(int ggml_type, int64_t w_cols) { return int8_rows(ggml_type, w_cols); }
 
@@ -287,6 +314,9 @@ void Mmq::quantize(const float* x, const int32_t* ids, void* xq, int ggml_type, 
                    void* stream) {
     if (rows <= 0) return;
     if (int8_rows(ggml_type, cols)) return kernels::gemm_iq_i8_quantize(x, ids, ld, rows, (int) cols, xq, stream);
+#if STRATA_POLY_X2
+    if (x2_rows(ggml_type, cols)) return nvfp4_x2_quantize(x, ids, xq, cols, ld, rows, stream);   // (fewer bytes)
+#endif
     float* back = (float*) ((char*) xq + halves_bytes(rows, cols));
     to_halves<<<rows_grid(rows), 256, 0, (cudaStream_t) stream>>>(x, ids, (__half*) xq, (int) cols, ld, rows, back);
     ck(cudaGetLastError(), "the rows as halves");
@@ -296,6 +326,11 @@ void Mmq::mul(const void* w, int ggml_type, int64_t w_rows, int64_t w_cols, size
               const int32_t* bounds, const int32_t* ids, int64_t total_rows, int64_t max_rows, float* dst,
               int64_t ld_dst, void* stream, const int32_t* from) {
     if (n <= 0 || total_rows <= 0) return;
+#if STRATA_POLY_X2
+    if (x2_rows(ggml_type, w_cols))
+        return nvfp4_x2_mul(w, w_rows, w_cols, stride, n, xq, bounds, ids, total_rows, max_rows, dst, ld_dst, stream,
+                            from);
+#endif
     Ctx& c = *(Ctx*) ctx_;
     const cudaStream_t s = (cudaStream_t) stream;
     const int32_t* host_bounds = c.bounds_host;   // the BLAS path's, on the host

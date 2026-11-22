@@ -6,7 +6,10 @@
 // normal values with a few channels 30 times larger, and rows of different sizes, as a transformer's are.  The int8
 // path is checked a second time against the same weights times the rows rounded as its quantizer rounds them, where
 // only the float rounding of its sums may differ.  Then the same products with the memory Mmq::work() asks for given
-// beforehand (Mmq::give(), as Engine::alloc() does): the same numbers, made in those buffers.
+// beforehand (Mmq::give(), as Engine::alloc() does): the same numbers, made in those buffers.  Where the path reads
+// rows by index (Mmq::reads_by_index()), the experts' product from rows quantized once and read by index is the one
+// from the same rows gathered by ids, bit for bit.  STRATA_PREFILL_NVFP4=w4a4x2 takes NVFP4 to the two-term FP4
+// products on an RTX 50 card (nvfp4_x2.hpp): run it that way too.
 //
 // usage: poly_mmq_paths_test   (exit 0: every product within 2% RMS of the reference, and an int8 product within
 // 1e-5 RMS of its own numbers; 77: no card)
@@ -21,6 +24,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <vector>
 
@@ -66,7 +70,8 @@ int main() {
     }
     const char* forced = std::getenv("STRATA_POLY_PROMPT_BLAS");
     std::printf("path: %s\n", forced && forced[0] == '1' ? "BLAS (STRATA_POLY_PROMPT_BLAS=1)" : "the card's");
-    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 20, 21, 22, 23, 29};   // the 32-value types, the K-quants, the i-quants
+    // the 32-value types, the K-quants, the i-quants, NVFP4
+    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 20, 21, 22, 23, 29, 40};
     constexpr int64_t kOut = 512, kIn = 2048, kTokens = 256, kExperts = 4;
     std::mt19937 rng(99);
     std::normal_distribution<float> normal(0.f, 1.f);
@@ -80,8 +85,9 @@ int main() {
     }
     // the experts' rows: 100, 0, 7 and the rest; row i's product goes to row perm[i]
     const int32_t bounds_h[kExperts + 1] = {0, 100, 100, 107, (int32_t) kTokens};
-    std::vector<int32_t> perm((size_t) kTokens);
+    std::vector<int32_t> perm((size_t) kTokens), src((size_t) kTokens);
     for (int64_t i = 0; i < kTokens; ++i) perm[(size_t) i] = (int32_t) ((i * 37 + 11) % kTokens);
+    for (int64_t i = 0; i < kTokens; ++i) src[(size_t) i] = (int32_t) ((i * 7 + 3) % 61);   // a token's row read by several
     // the activations as the int8 path quantizes them (gemm_iq_i8_quantize: a block of 32 values, d_inv = 127 / max|x|,
     // code = round(x d_inv), scale = 1 / d_inv), in double: its products are sums of these times the weights, so
     // against them it is exact but for the float rounding of its sums
@@ -94,8 +100,9 @@ int main() {
     }
     float* dx = upload(x);
     int32_t* dperm = upload(perm);
+    int32_t* dsrc = upload(src);
     int32_t* dbounds = upload(std::vector<int32_t>(bounds_h, bounds_h + kExperts + 1));
-    if (!dx || !dperm || !dbounds) return 1;
+    if (!dx || !dperm || !dsrc || !dbounds) return 1;
     Mmq mmq;
     mmq.mirror(dbounds, bounds_h, sizeof bounds_h);
     cublasHandle_t blas = nullptr;   // the caller's, as the engine's is (Mmq::give())
@@ -134,7 +141,7 @@ int main() {
                 out[o] = s;
             }
         };
-        const bool int8 = Mmq::reads_by_index(t, kIn);
+        const bool int8 = Mmq::int8(t, kIn);
         std::vector<double> ref((size_t) (kTokens * kOut)), ref8(int8 ? ref.size() : 0);
         std::vector<float> y((size_t) (kTokens * kOut));
         // one dense matrix: every row, in place
@@ -170,6 +177,23 @@ int main() {
             std::printf("   int8 numbers: RMS error %.2e / %.2e, largest %.2e / %.2e", dense8.rms, experts8.rms, dense8.top,
                         experts8.top);
         std::printf("  %s\n", fine ? "ok" : "WRONG");
+
+        if (Mmq::reads_by_index(t, kIn)) {
+            // routed row i is token src[i]: its rows gathered and quantized a row each, against the tokens' rows
+            // quantized once and read by index
+            std::vector<float> y1(y.size()), y2(y.size());
+            cudaMemset(dy, 0, y.size() * sizeof(float));
+            Mmq::quantize(dx, dsrc, xq, t, kIn, kIn, kTokens, nullptr);
+            mmq.mul(dw, t, kOut, kIn, mat, kExperts, xq, dbounds, dperm, kTokens, 149, dy, kOut, nullptr);
+            if (!ok(cudaMemcpy(y1.data(), dy, y1.size() * sizeof(float), cudaMemcpyDeviceToHost), "gathered rows")) return 1;
+            cudaMemset(dy, 0, y.size() * sizeof(float));
+            Mmq::quantize(dx, nullptr, xq, t, kIn, kIn, 61, nullptr);
+            mmq.mul(dw, t, kOut, kIn, mat, kExperts, xq, dbounds, dperm, 61, 149, dy, kOut, nullptr, dsrc);
+            if (!ok(cudaMemcpy(y2.data(), dy, y2.size() * sizeof(float), cudaMemcpyDeviceToHost), "rows by index")) return 1;
+            const bool same = std::memcmp(y1.data(), y2.data(), y1.size() * sizeof(float)) == 0;
+            std::printf("%-8s rows read by index: %s\n", ggml_type_name(ty), same ? "same products" : "OTHER PRODUCTS");
+            fine = fine && same;
+        }
 
         // Given the memory work() asks for, the products come out the same, and in it: buffers full of 0xff that a
         // product which made its own memory would leave as they were.  (None is asked where the int8 tiles take it.)
