@@ -35,6 +35,12 @@ The two start with the same tokens. For UD-Q4_K_XL the first 13 after the short 
 long one are the same, and they part at a step whose two leading candidates are nearly as likely (0.35 against 0.34,
 and 0.028 against 0.028). For UD-Q3_K_XL the first 13 and the first 40 are the same.
 
+On an RTX 30 card or newer, UD-Q2_K_XL's MXFP4 experts (the down of one layer) are multiplied on the int8 tensor
+cores while it reads a prompt, with the prompt's numbers rounded to 8 bits, as the file's other experts already are.
+On an RTX 3090 that reads a 2,048-token prompt 3.1% faster (2,068 against 2,005 tokens/s) and an 8,192-token one 1.0%
+faster. Against a run with every product in halves, it moved the answers no more than the other int8 products do on
+a 302- and an 8,192-token prompt (one prompt each). `STRATA_PREFILL_MXFP4=fp16` keeps them on halves, as before.
+
 On an RTX 50 card the engine multiplies the experts kept in NVFP4 (most of them, in both sizes) on the FP4 tensor
 cores while it reads a prompt, with the prompt's numbers rounded to about 8 bits instead of 11. That reads a prompt
 1.5 to 1.9 times as fast as multiplying them as halves (`STRATA_PREFILL_NVFP4=fp16`). It moves the answers a little:

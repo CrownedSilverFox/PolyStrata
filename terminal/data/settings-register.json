@@ -34521,7 +34521,9 @@
    "launch_files": [],
    "launch_sets": [],
    "launch_reads": [],
-   "doc_mentions": [],
+   "doc_mentions": [
+    "docs/models/inkling.md:42"
+   ],
    "first_commit": "930a9a83b4",
    "first_date": "2026-11-23",
    "since": null,
