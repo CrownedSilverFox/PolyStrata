@@ -1,11 +1,13 @@
-// src/poly/ink_flash_test.cu - ink_attend_batch() (the flash kernels: ink_flash_kernel from Ampere on,
-// ink_flash75_kernel on Turing) against a float64 reference of the same attention, beside the two paths it stands in
+// src/poly/ink_flash_test.cu - ink_attend_batch() (ink_flash_kernel, from Ampere on) against a float64 reference of the same attention, beside the two paths it stands in
 // for: ink_attend() (a token's scores in floats) and attend_batch() with an AttnBias (cuBLAS products, the path
 // Inkling2 takes when ink_attend_batch() does not).  Inkling 2 Mini's heads: 128 values, 16 relative values; groups
 // of 1 to 4 query heads, full and window layers, ring caches, a gate, calls that start past position 0.
 //
 // usage: poly_ink_flash_test            (exit 0: every case within the bounds below; 77: no flash kernel here)
-//        poly_ink_flash_test --bench    (ms of one call of 1,024 rows, Inkling 2 Mini's shape, at 2K/8K/32K keys)
+//                                       each case also prints a hash of the flash kernel's output bits, which two
+//                                       builds of the same arithmetic must share
+//        poly_ink_flash_test --bench [keys...]   (ms of one call of 1,024 rows, Inkling 2 Mini's shape, full and
+//                                       window layers, at 2K/8K/32K keys or the ones given)
 #include "inkling2_kernels.hpp"
 
 #include <cuda_fp16.h>
@@ -13,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <random>
@@ -180,6 +183,13 @@ double max_err(const std::vector<float>& got, const std::vector<double>& want) {
     return e;
 }
 
+uint64_t fnv(const std::vector<float>& v) {
+    uint64_t h = 1469598103934665603ull;
+    const unsigned char* b = reinterpret_cast<const unsigned char*>(v.data());
+    for (size_t i = 0; i < v.size() * sizeof(float); ++i) h = (h ^ b[i]) * 1099511628211ull;
+    return h;
+}
+
 double max_diff(const std::vector<float>& a, const std::vector<float>& b) {
     double e = 0.0;
     for (size_t i = 0; i < a.size(); ++i) e = std::max(e, std::fabs((double) a[i] - b[i]));
@@ -252,9 +262,10 @@ int run_tests() {
                      eb = max_err(got_batch, want);
         const bool ok = (!flash || ef <= kFlashErr) && et <= kTokenErr && eb <= kBatchErr;
         ran_flash = ran_flash || flash;
-        std::printf("%-22s flash %s err %.3e | ink_attend err %.3e | attend_batch err %.3e | flash-batch %.3e  %s\n",
+        std::printf("%-22s flash %s err %.3e | ink_attend err %.3e | attend_batch err %.3e | flash-batch %.3e | "
+                    "bits %016llx  %s\n",
                     cs.name, flash ? "ran" : "off", ef, et, eb, flash ? max_diff(got_flash, got_batch) : 0.0,
-                    ok ? "ok" : "FAIL");
+                    (unsigned long long) fnv(got_flash), ok ? "ok" : "FAIL");
         fails += !ok;
         for (void* p : {(void*) out, (void*) score, (void*) work, (void*) zero}) cudaFree(p);
     }
@@ -269,7 +280,7 @@ int run_tests() {
 }
 
 // ms of one call of `rows` rows whose last position is keys - 1, Inkling 2 Mini's 24 heads on 8, window layers' 1,024
-int run_bench() {
+int run_bench(std::vector<long long> all_keys) {
     cudaStream_t st;
     ck(cudaStreamCreate(&st), "stream");
     void* blas = blas_create(st);
@@ -277,7 +288,8 @@ int run_bench() {
     cudaEventCreate(&e0);
     cudaEventCreate(&e1);
     const int rows = 1024;
-    for (const long long keys : {2048LL, 8192LL, 32768LL})
+    if (all_keys.empty()) all_keys = {2048, 8192, 32768};
+    for (const long long keys : all_keys)
         for (const bool swa : {false, true}) {
             const Case cs{swa ? "window" : "full", 3, 8, keys - rows, rows, swa ? 1024 : 0, swa ? 1024 + rows : 0,
                           1024, true};
@@ -325,6 +337,10 @@ int main(int argc, char** argv) {
         return 77;
     }
     std::printf("%s (sm_%d%d)\n", p.name, p.major, p.minor);
-    if (argc > 1 && std::string(argv[1]) == "--bench") return run_bench();
+    if (argc > 1 && std::string(argv[1]) == "--bench") {
+        std::vector<long long> keys;
+        for (int i = 2; i < argc; ++i) keys.push_back(std::atoll(argv[i]));
+        return run_bench(keys);
+    }
     return run_tests();
 }

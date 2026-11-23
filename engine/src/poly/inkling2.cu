@@ -1228,7 +1228,7 @@ template <int ahead> __device__ __forceinline__ void ink_cp_wait() {
 #endif
 
 // ink_attend() of a prompt batch on the tensor cores (ink_attend_batch()), FlashAttention-2's way, as kernels.cu's
-// attn_flash128_kernel goes: a launch block takes kFlashTokens tokens of a key head, a warp 16 tokens of one of the
+// attn_flash128_kernel goes: a launch block takes 64 tokens of a key head (32 when LEAN), a warp 16 tokens of one of the
 // head's G query heads, and the keys go kFlashKeys at a time, two buffers of keys and values in turn, each row's
 // softmax kept as it goes, so no score leaves the registers.  A score is what attend_batch() with an AttnBias makes
 // of it: the query rounded to halves, its product with the key summed in floats and times the scale, plus the bias
@@ -1236,21 +1236,42 @@ template <int ahead> __device__ __forceinline__ void ink_cp_wait() {
 // for the values' product and summed as that half, and the softmax has one more term of score 0.  Fragment layouts
 // are PTX's for mma.m16n8k16: a thread holds rows gid and gid + 8 and columns 2 tig and 2 tig + 1 of each block of 8.
 // Heads of 128 values, 16 relative values; the block's r is in shared memory beside the keys and values.
-constexpr int kFlashTokens = 64, kFlashKeys = 64, kFlashRow = 128 + 8, kFlashRel = 16;
+// LEAN (A100-class cards, sm_80 only; ink_attend_batch() picks it): a block takes 32 tokens (6 warps on Inkling 2's
+// 3 query heads a key head; with 64 its 12 warps of 384 threads get at most 168 registers each and spill); with up to
+// 3 query heads on a key head the bias table's columns of the distances a tile spans are in shared memory too,
+// copied in with its keys and values; the blocks of the last tokens, which read the most keys, start first; a warp
+// skips the tiles none of its rows sees, tests each score only on the tiles a row's diagonal, window edge or end
+// crosses, and leaves its output as it is when no row's top moved.  None of that changes a bit: a tile no row sees
+// would add weights of 0 and scale by 1, every tile still starts at a multiple of kFlashKeys, and a row's tiles and
+// the order of its sums are the same.  On the other cards (sm_86, sm_89, sm_120) it was slower per layer, so they
+// keep the kernel without LEAN.
+constexpr int kFlashKeys = 64, kFlashRow = 128 + 8, kFlashRel = 16;
+constexpr int flash_tokens(bool lean) { return lean ? 32 : 64; }   // the kernel's TOKENS
 constexpr size_t kFlashKv = size_t(4) * kFlashKeys * kFlashRow * sizeof(__half);
+// the shared memory of ink_flash_kernel<G, LEAN>: keys and values, the table's columns (LEAN, G < 4), r
+constexpr size_t flash_smem(int g, bool lean) {
+    return kFlashKv +
+           (lean && g < 4 ? size_t(2) * (flash_tokens(lean) + kFlashKeys) * kFlashRel * sizeof(float) : 0) +
+           size_t(flash_tokens(lean)) * g * kFlashRel * sizeof(float);
+}
 
-template <int G>
-__global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kernel(InkAttn a) {
+template <int G, bool LEAN>
+__global__ void __launch_bounds__((LEAN ? 32 : 64) / 16 * G * 32, 1) ink_flash_kernel(InkAttn a) {
 #if INK_FLASH
-    constexpr int DIM = 128, KEYS = kFlashKeys, ROW = kFlashRow, NR = kFlashRel, THREADS = kFlashTokens / 16 * G * 32;
+    constexpr int TOKENS = LEAN ? 32 : 64, DIM = 128, KEYS = kFlashKeys, ROW = kFlashRow, NR = kFlashRel,
+                  THREADS = TOKENS / 16 * G * 32;
+    constexpr int SPAN = TOKENS + KEYS;   // a tile's distances (one more than it spans, for 16 bytes)
     extern __shared__ __align__(16) __half ink_flash_sm[];
     __half(*ks)[KEYS][ROW] = reinterpret_cast<__half(*)[KEYS][ROW]>(ink_flash_sm);
     __half(*vs)[KEYS][ROW] = reinterpret_cast<__half(*)[KEYS][ROW]>(ink_flash_sm + 2 * KEYS * ROW);
-    float* rs = reinterpret_cast<float*>(ink_flash_sm + 4 * KEYS * ROW);   // [token of the block][head of G][NR]
-    const int g = blockIdx.y, t0 = blockIdx.x * kFlashTokens, lane = threadIdx.x % 32, w = threadIdx.x / 32;
+    float(*tb)[SPAN][NR] = reinterpret_cast<float(*)[SPAN][NR]>(ink_flash_sm + 4 * KEYS * ROW);
+    constexpr bool TB = LEAN && G < 4;   // the table's columns in shared memory
+    float* rs = &tb[TB ? 2 : 0][0][0];   // [token of the block][head of G][NR]
+    const int g = blockIdx.y, t0 = (LEAN ? gridDim.x - 1 - blockIdx.x : blockIdx.x) * TOKENS,
+              lane = threadIdx.x % 32, w = threadIdx.x / 32;
     const int gid = lane / 4, tig = lane % 4, hg = w % G, sub = w / G, head = g * G + hg;
     const int tok[2] = {t0 + 16 * sub + gid, t0 + 16 * sub + gid + 8};
-    for (int i = threadIdx.x; i < kFlashTokens * G * NR; i += THREADS) {
+    for (int i = threadIdx.x; i < TOKENS * G * NR; i += THREADS) {
         const int t = t0 + i / (G * NR);
         rs[i] = t < a.rows ? a.r[(size_t(t) * a.n_head + g * G + i / NR % G) * NR + i % NR] : 0.0f;
     }
@@ -1272,11 +1293,20 @@ __global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kerne
     float o[16][4], m[2] = {-INFINITY, -INFINITY}, l[2] = {0.0f, 0.0f};
     for (int n = 0; n < 16; ++n) o[n][0] = o[n][1] = o[n][2] = o[n][3] = 0.0f;
     // the block's tokens attend positions [lo, hi): from the first one's window to the last one
-    const long long hi = a.pos + min(t0 + kFlashTokens, a.rows);
+    const long long hi = a.pos + min(t0 + TOKENS, a.rows);
     const long long lo = a.window > 0 ? max(0LL, (long long) (a.pos + t0 - a.window + 1)) : 0;
     const __half* kc = reinterpret_cast<const __half*>(a.keys);
     const __half* vc = reinterpret_cast<const __half*>(a.vals);
     const auto fetch = [&](int buf, long long k0) {
+        // the table's columns of distances d0 + e (as many as the tile spans), zeros past the extent and before 0
+        const long long d0 = a.pos + t0 - (k0 + KEYS - 1);
+        if (TB && d0 < a.extent)
+            for (int i = threadIdx.x; i < SPAN * NR / 4; i += THREADS) {
+                const long long d = d0 + i / (NR / 4);
+                const bool in = d >= 0 && d < a.extent;
+                ink_cp16(reinterpret_cast<__half*>(&tb[buf][i / (NR / 4)][4 * (i % (NR / 4))]),
+                         reinterpret_cast<const __half*>(a.rel_bias + (in ? d : 0) * NR + 4 * (i % (NR / 4))), in);
+            }
         for (int i = threadIdx.x; i < KEYS * DIM / 8; i += THREADS) {
             const int r = i / (DIM / 8), c = 8 * (i % (DIM / 8));
             const long long key = k0 + r;
@@ -1318,6 +1348,12 @@ __global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kerne
             ink_cp_wait<0>();
         }
         __syncthreads();
+        // the warp's rows' positions own0..own1: whether one sees a key of the tile, and whether some row does not
+        // see some key (a score test each)
+        const int w0 = t0 + 16 * sub, w1 = min(w0 + 15, a.rows - 1);
+        const long long own0 = a.pos + w0, own1 = a.pos + w1, d0 = a.pos + t0 - (k0 + KEYS - 1);
+        if (LEAN && (w0 >= a.rows || k0 > own1 || (a.window > 0 && k0 + KEYS - 1 <= own0 - a.window))) continue;
+        const bool edge = !LEAN || w0 + 15 >= a.rows || k0 + KEYS - 1 > own0 || (a.window > 0 && k0 <= own1 - a.window);
         float s[8][4];
 #pragma unroll
         for (int n = 0; n < 8; ++n) {
@@ -1344,14 +1380,15 @@ __global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kerne
                 for (int j = 2 * i; j < 2 * i + 2; ++j) {
                     const long long key = k0 + 8 * n + 2 * tig + j % 2;
                     float v = -INFINITY;
-                    if (tok[i] < a.rows && key <= own && (a.window <= 0 || key > own - a.window)) {
+                    if (!edge || (tok[i] < a.rows && key <= own && (a.window <= 0 || key > own - a.window))) {
                         const long long d = own - key;
                         float add = 0.0f;
                         if (d < a.extent) {
-                            const float4* col = reinterpret_cast<const float4*>(a.rel_bias + size_t(d) * NR);
+                            const float4* col = TB ? reinterpret_cast<const float4*>(&tb[buf][d - d0][0])
+                                                   : reinterpret_cast<const float4*>(a.rel_bias + size_t(d) * NR);
 #pragma unroll
                             for (int q = 0; q < NR / 4; ++q) {
-                                const float4 c = __ldg(col + q);
+                                const float4 c = TB ? col[q] : __ldg(col + q);
                                 add += c.x * rr[4 * q];
                                 add += c.y * rr[4 * q + 1];
                                 add += c.z * rr[4 * q + 2];
@@ -1370,11 +1407,12 @@ __global__ void __launch_bounds__(kFlashTokens / 16 * G * 32, 1) ink_flash_kerne
             const float f = expf(m[i] - base);
             m[i] = now;
             l[i] *= f;
+            if (!LEAN || __any_sync(0xffffffffu, f != 1.0f))   // times 1 changes no bit
 #pragma unroll
-            for (int n = 0; n < 16; ++n) {
-                o[n][2 * i] *= f;
-                o[n][2 * i + 1] *= f;
-            }
+                for (int n = 0; n < 16; ++n) {
+                    o[n][2 * i] *= f;
+                    o[n][2 * i + 1] *= f;
+                }
 #pragma unroll
             for (int n = 0; n < 8; ++n)
 #pragma unroll
@@ -2098,21 +2136,37 @@ bool ink_attend_batch(const InkAttn& a, void* stream) {
     if (a.dim != 128 || a.n_rel != kFlashRel || per < 1 || per > kMaxPer || a.at || a.q8) return false;
     static const int ptx = [] {
         cudaFuncAttributes f{};
-        return cudaFuncGetAttributes(&f, ink_flash_kernel<1>) == cudaSuccess ? f.ptxVersion : 0;
+        return cudaFuncGetAttributes(&f, ink_flash_kernel<1, false>) == cudaSuccess ? f.ptxVersion : 0;
     }();
     if (ptx < 80) return ptx >= 75 && !a.kv8 && flash75(a, per, stream);
-    const auto launch = [&](auto kernel, int g) {
-        const size_t smem = kFlashKv + (size_t) kFlashTokens * g * kFlashRel * sizeof(float);
+    static const bool lean = [] {   // ink_flash_kernel's LEAN on sm_80 (A100 class) only: the card it was faster on
+        int dev = 0, major = 0, minor = 0;
+        return cudaGetDevice(&dev) == cudaSuccess &&
+               cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess &&
+               cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev) == cudaSuccess && major == 8 &&
+               minor == 0;
+    }();
+    const auto launch = [&](auto kernel, int g, bool ln) {
+        const size_t smem = flash_smem(g, ln);
+        const int tokens = flash_tokens(ln);
         const cudaError_t e = cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) smem);
         if (e != cudaSuccess) throw std::runtime_error(std::string("ink_attend_batch: shared memory: ") + cudaGetErrorString(e));
-        kernel<<<dim3(grid((size_t) a.rows, kFlashTokens), a.n_kv), kFlashTokens / 16 * g * 32, smem, cs(stream)>>>(a);
+        kernel<<<dim3(grid((size_t) a.rows, tokens), a.n_kv), tokens / 16 * g * 32, smem, cs(stream)>>>(a);
     };
-    switch (per) {
-        case 1: launch(ink_flash_kernel<1>, 1); break;
-        case 2: launch(ink_flash_kernel<2>, 2); break;
-        case 3: launch(ink_flash_kernel<3>, 3); break;
-        default: launch(ink_flash_kernel<4>, 4); break;
-    }
+    if (lean)
+        switch (per) {
+            case 1: launch(ink_flash_kernel<1, true>, 1, true); break;
+            case 2: launch(ink_flash_kernel<2, true>, 2, true); break;
+            case 3: launch(ink_flash_kernel<3, true>, 3, true); break;
+            default: launch(ink_flash_kernel<4, true>, 4, true); break;
+        }
+    else
+        switch (per) {
+            case 1: launch(ink_flash_kernel<1, false>, 1, false); break;
+            case 2: launch(ink_flash_kernel<2, false>, 2, false); break;
+            case 3: launch(ink_flash_kernel<3, false>, 3, false); break;
+            default: launch(ink_flash_kernel<4, false>, 4, false); break;
+        }
     launched("ink_flash");
     return true;
 #endif
@@ -2125,7 +2179,7 @@ bool ink_kv8_ok() {
     static const bool ok = [] {
         const char* v = std::getenv("STRATA_INK_FLASH");
         cudaFuncAttributes f{};
-        return !(v && v[0] == '0') && cudaFuncGetAttributes(&f, ink_flash_kernel<1>) == cudaSuccess && f.ptxVersion >= 80;
+        return !(v && v[0] == '0') && cudaFuncGetAttributes(&f, ink_flash_kernel<1, false>) == cudaSuccess && f.ptxVersion >= 80;
     }();
     return ok;
 #endif
