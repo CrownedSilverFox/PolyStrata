@@ -158,3 +158,30 @@ them into the same reasoning, content and tool calls as for the other models, so
 as they do elsewhere. A request that asks for no thinking has its prompt end inside the text block, because the
 model otherwise opens a thinking block now and then. More in
 [BACKENDS.md](../BACKENDS.md#inkling-2-mini-one-card).
+
+## Checking a change to the engine
+
+Two tools, built with `strata-poly` (CUDA and HIP), check that a change to Inkling 2's code keeps its output:
+
+- `poly_inkling2_test` runs every kernel in `inkling2.cu` on random inputs with the model's shapes and compares them
+  with the same math in double precision on the host. Where a fused launch is meant to give the same bits as the
+  calls it replaces, it compares the two byte for byte. `--list` names the cases; name some to run only them. It exits
+  0 when every check passes, 1 when one fails or none ran, 2 for an unknown case name and 77 with no card (ctest
+  skips it).
+- `poly_logits_dump MODEL.gguf --tokens @ids.txt --decode @dec.txt --vocab 200058 --out DIR` writes the logits of the
+  prompt's last token to `DIR/prompt_logits.f32` and a row for each `--decode` token to `DIR/decode_logits.f32`
+  (raw floats, `--vocab` scores a row). Run it with no arguments for the other options (`--greedy N`, `--kv`,
+  `--no-graphs`, ...).
+
+Which experts sit on the card changes which code computes them, so pin them for a comparison:
+`STRATA_GPU_EXPERTS=N` (a test setting) caches exactly the first N experts of the cache's order and keeps that set
+for the whole run (no expert is moved in or out). It is refused with `--layer-split` and `--expert-gpu`, and when
+the card cannot hold the N experts. With it the load prints
+`strata-poly: cache set N experts fnv HASH`, a hash of the cached (layer, expert) pairs; `N = 0` puts every expert on
+the CPU and prints `cache set 0 experts fnv cbf29ce484222325`.
+
+```
+STRATA_GPU_EXPERTS=600 poly_logits_dump Inkling-2-Mini-IQ4_NL.gguf --tokens @ids.txt --decode @dec.txt \
+    --max-context 4096 --vocab 200058 --out before      # then the same with the other build, --out after
+cmp before/decode_logits.f32 after/decode_logits.f32    # and the two "cache set" lines
+```

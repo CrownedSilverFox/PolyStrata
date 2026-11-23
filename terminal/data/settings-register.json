@@ -12168,7 +12168,7 @@
    "reads": [
     {
      "file": "engine/src/poly/engine.cpp",
-     "line": 3145,
+     "line": 3148,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
@@ -12181,7 +12181,10 @@
    "launch_files": [],
    "launch_sets": [],
    "launch_reads": [],
-   "doc_mentions": [],
+   "doc_mentions": [
+    "docs/models/inkling.md:145",
+    "docs/models/inkling.md:152"
+   ],
    "first_commit": "71c26e94b5",
    "first_date": "2026-11-23",
    "since": null,
