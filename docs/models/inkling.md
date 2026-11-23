@@ -265,10 +265,10 @@ go through hipBLASLt, which rounds them differently: after one 2,048-token promp
 9070 XT's answers differed from CUDA's more than the RX 7900 XT's, and with `ROCBLAS_USE_HIPBLASLT=0` as much as the
 RX 7900 XT's; after 302 and 8,192 tokens they match CUDA's. Use an NVIDIA card or a Mac for now.
 
-Not run yet: an AMD card on native Linux or Windows, two cards (`--expert-gpu`, built but not run; `--layer-split`, below, run only as two
-parts on one card, where a split at layer 6 still hangs), UD-Q4_K_XL on the
-8 GB card and UD-Q4_K_XL on a Mac. Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or
-the card; on a Mac, on the CPU. The draft file is an option (`--draft-model`). The engine takes one request at a time
+Not run yet: an AMD card on native Linux or Windows, `--expert-gpu` on two cards (built but not run), `--layer-split`
+on two unequal cards (below; it has run on two RTX 2070 Super), UD-Q4_K_XL on the 8 GB card and UD-Q4_K_XL on a Mac.
+Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card; on a Mac, on the CPU. The
+draft file is an option (`--draft-model`). The engine takes one request at a time
 for this model, and the installer writes `"parallel": 1`. Its license is Apache 2.0.
 
 ## Install
@@ -308,8 +308,9 @@ log line `layer split auto: the loop ... on the faster card` says when it did. E
 `STRATA_POLY_CARD_GBS=a,b` gives the cards' bandwidths in GB/s where the driver's figure is wrong (on AMD cards it
 is not read, so they get the plain layout unless it is set). This has not been run on two unequal cards yet. The
 idea of keeping the loop on the faster card comes from cobra91 and kuraneko1 (Strata PR #6506).
-Known bug, not fixed yet: a card that starts at layer 6 (`--layer-split 6` or `6,18`, and `"auto"` when it takes
-6) hangs before the first token; use 18 until it is fixed.
+On two RTX 2070 Super 8 GB (IQ4_NL, a 302-token prompt, 256 tokens written, mean of 3 runs) one card wrote 37.0
+tok/s, `--layer-split 18` 51.0 and `6` 48.5. Every split (3, 6, 18, 20, `6,18`, `"auto"`) gave one card's tokens and
+top-20 probabilities with every expert on the CPU.
 Once a token, a card hands the next one the token's residual streams and the loop's inputs, 64.5 KB. The DSpark
 drafter (`--draft-model`) runs on one card only.
 
