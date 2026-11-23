@@ -12,9 +12,8 @@ Qwen3.8-Flash-Next、Hy4-Flash、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Fl
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="终端里的 Claude Code，旁边是 PolyStrata 的 API Monitor"><br>
 <sub>Claude Code 接 Qwen3.6-35B-A3B UD-Q3_K_M，在 8 GB 显卡的笔记本上，原速：给一个小程序加 <code>--json</code> 选项，写测试，跑测试。服务器启动时已经读过 Claude Code 的系统提示词（<code>"warm_start": true</code>）。</sub></p>
 
-<p align="center"><a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4"><img src="docs/media/pagoda-preview.webp" width="720" alt="模型写出的体素宝塔花园，在浏览器中运行"></a><br>
-<sub>体素宝塔花园，一次提示生成，在 RTX 5070 上用 <a href="https://github.com/Niko1221/Strata">Strata</a> 运行（Qwen3.8-Flash-Next IQ3_S，128K 上下文）·
-<a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4">完整视频（49 秒）</a></sub></p>
+<p align="center"><img src="docs/media/linger-inkling-3d.gif" width="820" alt="Linger 接 PolyStrata 写出一个 3D 村庄"><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a> 接 PolyStrata：Inkling 2 Mini UD-Q3_K_XL 在 8 GB 显卡的笔记本上，每秒约 33 个 token，用 three.js 写出一个低多边形村庄的单文件网页，Linger 直接打开。</sub></p>
 
 PolyStrata 能在普通电脑上运行通常要用服务器才能跑的大型 AI 模型。它们能聊天、写代码，还能配合你的应用和编程智能体一起工作。
 所有数据都留在你的电脑上。

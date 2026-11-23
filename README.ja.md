@@ -12,9 +12,8 @@ Qwen3.8-Flash-Next、Hy4-Flash、GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Fl
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="ターミナルの Claude Code と、その横の PolyStrata の API Monitor"><br>
 <sub>Claude Code と Qwen3.6-35B-A3B UD-Q3_K_M、8 GB のカードのノート PC で、実時間：小さなプログラムに <code>--json</code> オプションを足し、テストを書いて実行します。サーバーは起動時に Claude Code のシステムプロンプトを読んであります（<code>"warm_start": true</code>）。</sub></p>
 
-<p align="center"><a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4"><img src="docs/media/pagoda-preview.webp" width="720" alt="PolyStrata のモデルが書いたボクセルの五重塔の庭。ブラウザで動いている様子"></a><br>
-<sub>ボクセルの五重塔の庭。1 回のプロンプトで作成し、RTX 5070 上の <a href="https://github.com/Niko1221/Strata">Strata</a>（Qwen3.8-Flash-Next IQ3_S、128K コンテキスト）で実行 ·
-<a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4">動画全体（49 秒）</a></sub></p>
+<p align="center"><img src="docs/media/linger-inkling-3d.gif" width="820" alt="PolyStrata 上の Linger が 3D の村を書く"><br>
+<sub>PolyStrata 上の <a href="https://github.com/simplexai-labs/linger">Linger</a>：8 GB カードのノート PC で Inkling 2 Mini UD-Q3_K_XL が毎秒約 33 トークンで three.js のローポリ村を 1 つの HTML に書き、Linger がそのまま開きます。</sub></p>
 
 PolyStrata は、ふつうはサーバーが必要な大きな AI モデルを普通の PC で動かします。チャットをしたり、コードを書いたり、
 アプリやコーディングエージェントと連携したりできます。データが PC の外に出ることはありません。

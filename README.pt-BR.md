@@ -12,9 +12,8 @@ Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Claude Code em um terminal ao lado do API Monitor do PolyStrata"><br>
 <sub>Claude Code com Qwen3.6-35B-A3B UD-Q3_K_M no notebook com a placa de 8 GB, em tempo real: ele adiciona uma opção <code>--json</code> a um programa pequeno, escreve um teste e roda os testes. O servidor tinha lido o prompt de sistema do Claude Code ao iniciar (<code>"warm_start": true</code>).</sub></p>
 
-<p align="center"><a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4"><img src="docs/media/pagoda-preview.webp" width="720" alt="Um jardim com pagode em voxels que o modelo do PolyStrata escreveu, rodando no navegador"></a><br>
-<sub>Um jardim com pagode em voxels, feito com um único prompt numa RTX 5070 com o <a href="https://github.com/Niko1221/Strata">Strata</a> (Qwen3.8-Flash-Next IQ3_S, contexto de 128K) ·
-<a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4">vídeo completo (49 s)</a></sub></p>
+<p align="center"><img src="docs/media/linger-inkling-3d.gif" width="820" alt="Linger com o PolyStrata escrevendo uma vila em 3D"><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a> com o PolyStrata: o Inkling 2 Mini UD-Q3_K_XL, no notebook com placa de 8 GB e a cerca de 33 tokens por segundo, escreve uma vila low-poly em um único arquivo three.js, e o Linger o abre.</sub></p>
 
 O PolyStrata roda modelos de IA grandes num PC comum, modelos que normalmente precisam de um servidor.
 Eles conversam, escrevem código e funcionam com seus apps e agentes de programação. Nada sai do seu PC.

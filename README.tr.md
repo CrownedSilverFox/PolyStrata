@@ -12,9 +12,8 @@ Qwen3.8-Flash-Next, Hy4-Flash, GLM 5.3 Flash, DeepSeek V4 Flash, LFM2.5, Flint, 
 <p align="center"><img src="docs/media/claude-code-demo.gif" width="820" alt="Bir terminalde Claude Code ve yanında PolyStrata'nın API Monitor ekranı"><br>
 <sub>Claude Code, Qwen3.6-35B-A3B UD-Q3_K_M ile 8 GB kartlı dizüstünde, gerçek zamanlı: küçük bir programa <code>--json</code> seçeneği ekliyor, bunun için bir test yazıyor ve testleri çalıştırıyor. Sunucu, başlarken Claude Code'un sistem prompt'unu okumuştu (<code>"warm_start": true</code>).</sub></p>
 
-<p align="center"><a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4"><img src="docs/media/pagoda-preview.webp" width="720" alt="Modelin yazdığı, tarayıcıda çalışan voksel bir pagoda bahçesi"></a><br>
-<sub>Voksel bir pagoda bahçesi; tek bir prompt'la yazıldı, <a href="https://github.com/Niko1221/Strata">Strata</a> ile bir RTX 5070'te çalışıyor (Qwen3.8-Flash-Next IQ3_S, 128K bağlam) ·
-<a href="https://github.com/Niko1221/Strata/releases/download/v0.1.10/Pagoda.mp4">videonun tamamı (49 sn)</a></sub></p>
+<p align="center"><img src="docs/media/linger-inkling-3d.gif" width="820" alt="PolyStrata üzerinde Linger bir 3D köy yazıyor"><br>
+<sub>PolyStrata üzerinde <a href="https://github.com/simplexai-labs/linger">Linger</a>: 8 GB kartlı dizüstünde Inkling 2 Mini UD-Q3_K_XL, saniyede yaklaşık 33 token ile tek bir three.js dosyasında low-poly bir köy yazar ve Linger onu açar.</sub></p>
 
 PolyStrata, normalde bir sunucu gerektiren büyük yapay zekâ modellerini sıradan bir bilgisayarda çalıştırır. Bu
 modeller sohbet eder, kod yazar, uygulamaların ve kodlama ajanlarınla birlikte çalışır. Hiçbir veri bilgisayarından
