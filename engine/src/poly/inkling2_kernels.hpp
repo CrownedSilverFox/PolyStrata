@@ -49,6 +49,9 @@ void ink_cat_norm_set(const float* const* cur, const float* const* msg, float* c
 /// would run another block.  With bf16 the matrices are BF16 (--loop-bf16).
 bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
                    int count, int n_embd, int rank, int rows, void* stream, bool bf16 = false);
+/// ink_ctrl_down()'s one-pass kernel (opt-in, other bits: STRATA_INK_FAST_CTRL=1), set for the process by its kernel
+/// test; the variable is read at the first call otherwise.  CUDA only: under HIP it stays off.
+void ink_set_fast_ctrl(bool on);
 
 /// ink_gate() of 1 to 3 controllers in one launch.  Every cur is read before any out is written, so an out may be
 /// any of the cur.
