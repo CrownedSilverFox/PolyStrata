@@ -9,6 +9,8 @@
 #include "strata/kernels/iq_kernels.hpp"
 #endif
 
+#include <cuda.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -681,6 +683,37 @@ void Inkling2::load_layer(int il) {
 
 size_t Inkling2::recurrent_floats() const { return slots_.size() * past_floats(); }
 
+// ROCm on Linux gives VRAM back only with its addresses (Engine::vmm_unmap()), and a prompt's lent buffers crashed
+// strata-poly there (an RX 9070 XT, Inkling 2 Mini IQ4_NL with some experts in RAM): the prompt batch's scratch stays
+// out of them, in one layout as before.  With the experts frozen (STRATA_FREEZE_EXPERTS, --check-batch) lend_prompt()
+// lends nothing, and the small layout would only take VRAM from the expert cache for the whole run.
+bool Inkling2::scores_apart() const {
+#ifdef STRATA_VMM_RELEASE_WITH_ADDRESSES
+    return false;
+#else
+    return !ds_file_ && !freeze_experts_asked_ && mmq_ && vmm_ && !split_ && rows_ >= kStageRows;
+#endif
+}
+
+// A card that holds every expert lends nothing either (lend_prompt() with all_cached()).  The cache is not sized yet
+// when the engine asks, so this is from the free VRAM: every expert's bytes, the prompt batch's scratch (scratch_at_,
+// just counted) and 2 GiB for the reserve, the prompt's other buffers and the staging buffer.  Where it is wrong the
+// card either has the small layout it does not use (a few MiB) or no layouts, as main.
+bool Inkling2::every_expert_fits() const {
+    size_t all = 0;
+    for (const Layer& L : layers_) {
+        if (!L.moe) continue;
+        if (!kernels::native_mmvq_supported((int) L.gu_type) || !kernels::native_mmvq_supported((int) L.u_type) ||
+            !kernels::native_mmvq_supported((int) L.d_type))
+            return false;   // fill_expert_cache() keeps such a layer's experts in RAM
+        all += (size_t) n_expert_ * (L.gu2() + L.d_bytes);
+    }
+    const size_t need = all + scratch_at_ * sizeof(float) + (size_t(2) << 30);
+    return (size_t) vram_free_mib() << 20 >= need;
+}
+
+bool Inkling2::scratch_layouts() const { return scores_apart() && !every_expert_fits(); }
+
 int Inkling2::widest() const { return std::max(n_head_ * head_dim_, 2 * n_embd_); }
 
 // Every application of a layer has caches of its own: a full layer's keep a row a position, a window layer's a
@@ -704,9 +737,9 @@ void Inkling2::alloc_caches() {
     }
 }
 
-// Per-token buffers hold rows_ tokens, row after row.
+// Per-token buffers hold buf_rows_ tokens, row after row.
 void Inkling2::assign_scratch() {
-    const size_t n = (size_t) rows_, e = n * n_embd_, heads = n * n_head_ * head_dim_, kv = n * n_kv_ * head_dim_;
+    const size_t n = (size_t) buf_rows_, e = n * n_embd_, heads = n * n_head_ * head_dim_, kv = n * n_kv_ * head_dim_;
     for (float*& b : bl_) b = fbuf(e);
     bank_ = fbuf(e);
     bank_out_ = fbuf(e);
@@ -722,7 +755,7 @@ void Inkling2::assign_scratch() {
     ch_ = fbuf(n * rank_);
     gain_ = fbuf(e);
     forget_ = fbuf(e);
-    const size_t few = (size_t) std::min(rows_, kStageRows);
+    const size_t few = (size_t) std::min(buf_rows_, kStageRows);
     for (int j = 0; j < 3; ++j) {
         cat3_[j] = fbuf(2 * few * n_embd_);
         ch3_[j] = fbuf(few * rank_);
@@ -746,11 +779,18 @@ void Inkling2::assign_scratch() {
     fc_ = fbuf(e);
     // a token's scores of the whole context, and what ink_attend() keeps beside them
     score_n_ = std::max(kScoreFloats, ink_attend_floats(n_head_, n_kv_, head_dim_, opt_.max_context));
-    score_ = fbuf(score_n_);
+    if (scores_apart()) {   // sized for the context, not for a call's tokens: 64 MiB that both layouts share
+        if (!scores_) scores_ = (float*) dmalloc(score_n_ * sizeof(float), "the attention's scores");
+        score_ = scores_;
+    } else {
+        score_ = fbuf(score_n_);
+    }
     zeros_ = fbuf((size_t) n_head_);
     xqo_ = fbuf((kernels::native_q8_1_bytes(n_head_ * head_dim_) + sizeof(float) - 1) / sizeof(float));
-    if (rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
-    if (rows_ >= kStageRows && kvq8_) {
+    // a prompt batch's attention; none in the few tokens' layout, where the batch layout's may be lent
+    awork_ = buf_rows_ >= kStageRows ? fbuf(heads + heads / 2 + 1 + 3 * n * n_head_) : nullptr;
+    kvw_ = nullptr;
+    if (buf_rows_ >= kStageRows && kvq8_) {
         // attend_batch()'s fp16 rows of a Q8_0 cache, keys then values: a block of kKvq8WorkRows rows a product
         // (16 MiB for Inkling 2 Mini), where ink_attend_batch() does not take the batch
         kvw_halves_ = (size_t) std::min<int64_t>(opt_.max_context, kKvq8WorkRows) * n_kv_ * head_dim_;
