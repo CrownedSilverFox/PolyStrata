@@ -154,7 +154,7 @@ Off unless you set them. The last column says where each one is described.
 | `STRATA_KV_GROW` | on / off | NVIDIA and AMD, Intel Arc | [DETAILS.md](DETAILS.md) |
 | `STRATA_KV_GROW_HOLD` | number | NVIDIA and AMD | - |
 | `STRATA_KV_HOST_REGISTER` | on / off | NVIDIA and AMD | [DETAILS.md](DETAILS.md) |
-| `STRATA_KV_INT8` | number | NVIDIA and AMD | [Q8_KV.md](Q8_KV.md) |
+| `STRATA_KV_INT8` | number | NVIDIA and AMD | [Q8_KV.md](Q8_KV.md), [inkling.md](models/inkling.md) |
 | `STRATA_KV_PREFETCH` | number | NVIDIA and AMD, Intel Arc | [KV_PREFETCH.md](KV_PREFETCH.md), [README.md](bench-results/README.md), [README.md](bench-results/2026-10-06-community-rtx4090-opt-ins/README.md) |
 | `STRATA_KV_ROT` | on / off | NVIDIA and AMD, Intel Arc | [DETAILS.md](DETAILS.md), [SPLIT_SERVE.md](SPLIT_SERVE.md) |
 | `STRATA_L3_PF` | on / off | NVIDIA and AMD | [DETAILS.md](DETAILS.md) |
