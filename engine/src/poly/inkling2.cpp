@@ -894,21 +894,8 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
         if (extras) *extras = c > 5;
         return true;
     }
-    return false;   // lin() quantizes its own
-#else
-    kernels::NativeMmvqMany m{};
-    for (int i = 0; i < 5; ++i) {
-        m.w[i] = w[i]->p;
-        m.x_q8_1[i] = qs[slot[from[i]]];
-        m.y[i] = y[i];
-        m.n_out[i] = w[i]->n_out;
-    }
-    m.count = 5;
-    if (!kernels::native_mmvq_many_fits((int) w[0]->type, m, n_embd_)) return false;   // lin() quantizes its own
-    if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
-    kernels::native_mmvq_many((int) w[0]->type, m, n_embd_, st_);
-    return true;
 #endif
+    return false;   // lin() quantizes its own (on Metal not reached: a window's block above takes every call)
 }
 
 // The three controllers of a later pass's attention inputs for a few tokens, each step one launch for the three
