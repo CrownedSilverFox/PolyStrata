@@ -17466,7 +17466,7 @@
    "last_date": "2026-11-23",
    "status": "rollback",
    "owner": "kernels/cuda",
-   "note": "0: Inkling 2's IQ3_S/IQ3_XXS decode products go back to mmvq_slots_kernel instead of mmvq_slots_iq3_kernel (same bits)",
+   "note": "0: Inkling 2's cached IQ3_S/IQ3_XXS decode products go back to mmvq_slots_kernel instead of mmvq_slots_iq3_kernel; 1: the lanes kernel on every card.  Unset: the lanes kernel on sm_75 and sm_89, where it gives mmvq_slots_kernel's bits, and mmvq_slots_kernel on the other cards (on sm_120 the two differ by rounding)",
    "retire_after": "",
    "retired_in": ""
   },

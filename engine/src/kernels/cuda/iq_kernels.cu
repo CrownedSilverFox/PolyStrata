@@ -5837,11 +5837,23 @@ __global__ void __launch_bounds__(128) mmvq_slots_kernel(S slots, size_t row_byt
 // bit.  The grid is read from shared memory, and the sign bytes are made by a multiply (nibble bit k -> byte k) and
 // applied with xor + add: the same integers as __vcmpne4 / __vsub4 (every grid byte is at least 1, so no byte
 // carries).  Both ideas from merbanan's inkling2-turing decode kernels (his Strata branch); this is our own code.
-// STRATA_IQ3_LANES=0 keeps mmvq_slots_kernel.
-bool g_iq3_lanes = [] {
-    const char* v = std::getenv("STRATA_IQ3_LANES");
-    return v == nullptr || v[0] != '0';
-}();
+// The same bits hold where the compiler contracts both kernels' float steps alike: checked on sm_75 (Turing) and
+// sm_89 (Ada).  On sm_120 (CUDA 12.8) poly_iq3_lanes_test finds about half of the outputs one rounding apart, so
+// there, and on the cards not checked, mmvq_slots_kernel stays the default.  STRATA_IQ3_LANES=0 keeps
+// mmvq_slots_kernel on every card, =1 takes the lanes kernel on every card.
+// ponytail: decided once a process, by the card current at the first launch; a split over unlike cards follows it.
+bool iq3_lanes_on() {
+    static const bool on = [] {
+        if (const char* v = std::getenv("STRATA_IQ3_LANES"); v && *v) return v[0] != '0';
+        int dev = 0, major = 0, minor = 0;
+        if (cudaGetDevice(&dev) != cudaSuccess ||
+            cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) != cudaSuccess ||
+            cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev) != cudaSuccess)
+            return false;
+        return (major == 7 && minor == 5) || (major == 8 && minor == 9);
+    }();
+    return on;
+}
 // sign bits b0..b3 -> 0x01 in the bytes whose bit is set
 __device__ __forceinline__ uint32_t sign_ones(uint32_t nibble) { return (nibble * 0x00204081u) & 0x01010101u; }
 __device__ __forceinline__ int signed_grid(uint32_t g, uint32_t ones) { return (int) ((g ^ (ones * 0xFFu)) + ones); }
@@ -5929,7 +5941,7 @@ void slots_of(int t, const S& slots, int count, int n_in, int n_out, void* strea
     const size_t rb = iq_row_bytes(t, n_in);
     const dim3 grid((unsigned) ((n_out + 3) / 4), (unsigned) count), block(32, 4);
 #if !defined(__HIPCC__)
-    if ((t == 21 || t == 18) && slots.lanes && !g_old_kernels && g_iq3_lanes) {
+    if ((t == 21 || t == 18) && slots.lanes && !g_old_kernels && iq3_lanes_on()) {
         constexpr int R = 4;   // 72 calls a 2304 row: 4 rows are 9 full passes over the lanes
         const dim3 g4((unsigned) ((n_out + 4 * R - 1) / (4 * R)), (unsigned) count);
         if (t == 21) mmvq_slots_iq3_kernel<21, R, S><<<g4, block, 0, (cudaStream_t) stream>>>(slots, rb, n_in, n_out);
