@@ -179,7 +179,9 @@ ENGINE_REQUEST = re.compile(
     # "+ 12288 of 98179 read": a request cancelled while its prompt was read (#471)
     r"prompt (?P<prompt>\d+) tokens = (?P<reused>\d+) reused \+ \d+(?: of \d+)? read in (?P<read>[\d.]+) ms "
     r"\((?P<pp>[\d.]+) tok/s\), "
-    r"(?P<gen>\d+) generated in (?P<gen_ms>[\d.]+) ms \((?P<tg>[\d.]+) tok/s\)")
+    r"(?P<gen>\d+) generated in (?P<gen_ms>[\d.]+) ms \((?P<tg>[\d.]+) tok/s\)"
+    # echo_requests reads these two (#90); strata-poly writes them only when the request had drafts
+    r"(?:, drafts accepted (?P<drafts_accepted>\d+) of (?P<drafts_offered>\d+))?")
 
 
 _echoing: set[str] = set()      # the logs echo_requests already follows (restart() runs StrataEngine.__init__ again)

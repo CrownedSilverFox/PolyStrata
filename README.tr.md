@@ -240,7 +240,9 @@ On dördünün hepsi yükleyicinin model listesinde. `./setup.sh --family glm`, 
 
 **Bir dahaki sefere** `START-HERE.bat` dosyasını (ya da `./setup.sh` komutunu) yeniden çalıştır. Hemen başlar ve
 hiçbir şeyi iki kez indirmez. Modeli durdurmak için penceresini kapat. `UPDATE.bat` (`./setup.sh --update`)
-PolyStrata'yı başlatmadan günceller. Güncelleme, birden fazla kart, dosyaların nereye gittiği ve tüm seçenekler:
+PolyStrata'yı başlatmadan günceller.
+0.1.45-poly.10 veya daha eskisinden geliyorsan: setup'ın dosyaları artık `terminal/` içinde ([neyi değiştirmelisin](docs/INSTALL.md#coming-from-0145-poly10-or-older)).
+Güncelleme, birden fazla kart, dosyaların nereye gittiği ve tüm seçenekler:
 [docs/INSTALL.md](docs/INSTALL.md).
 
 **Senin bilgisayarında hızlı mı?** `tools/BENCH.bat` (`tools/bench.sh`) çalıştır: yaklaşık 5-10 dakika sürer; kendi ayarlarınla sohbeti, 4K/16K prompt'ları ve ajan tarzı bir oturumu ölçer ve paylaşabileceğin bir rapor yazar ([nasıl](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)).

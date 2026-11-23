@@ -210,6 +210,7 @@ PolyStrata のインストール、起動、停止もできます。
 
 **次回からは** `START-HERE.bat`（または `./setup.sh`）をもう一度実行します。すぐに起動し、同じものを 2 回ダウンロードすることはありません。
 モデルを止めるときはウィンドウを閉じます。`UPDATE.bat`（`./setup.sh --update`）を使うと、PolyStrata を起動せずに更新できます。
+0.1.45-poly.10 以前から更新した場合、setup のファイルは `terminal/` に移りました（[変更点](docs/INSTALL.md#coming-from-0145-poly10-or-older)）。
 更新、複数のカード、ファイルの保存場所、すべてのオプションについて：[docs/INSTALL.md](docs/INSTALL.md)。
 
 **自分の PC で速いか知りたいときは** `tools/BENCH.bat`（`tools/bench.sh`）を実行します。5〜10 分ほどで、チャット、4K/16K のプロンプト、エージェント風のセッションを自分の設定のまま測り、共有できるレポートを書き出します（[やり方](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)）。

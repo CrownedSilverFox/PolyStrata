@@ -76,6 +76,24 @@ class Main(unittest.TestCase):
         self.assertEqual(args.count("--tail-skip"), 1)
         self.assertIn("holds part of", out)
 
+    def test_two_cards_set_up_one_and_size_it_for_that_card(self):
+        # PR 208: the engine has no layer split for Inkling 2 yet; two 8 GB cards chosen together get the config one
+        # 8 GB card gets (the small-card flags), not a pair the engine refuses
+        code, out, cfg = self.main(("--gpus", "0,1"), family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024,
+                                   n_gpus=2)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(cfg["gpu"], 0)
+        self.assertNotIn("layer_split", cfg)
+        self.assertIn("runs on one card so far", out)
+        args = cfg["args"]
+        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_0")
+        self.assertEqual(args[args.index("--tail-skip") + 1], "4")
+        self.assertIn("holds part of", out)
+        code, out, cfg = self.main(family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=16303 / 1024, n_gpus=2)
+        self.assertEqual(code, 0, out)
+        self.assertIsInstance(cfg["gpu"], int)
+        self.assertNotIn("layer_split", cfg)
+
     def test_requests_at_once_are_not_taken(self):
         code, out, _ = self.main(("--parallel", "4"), family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=32607 / 1024)
         self.assertEqual(code, 0, out)

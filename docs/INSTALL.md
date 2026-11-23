@@ -148,8 +148,37 @@ finds them and sets itself up the same way - nothing big is downloaded again. On
 compiles the engine again when its source changed (a minute or two for the changed files); if that compile fails, it
 says so and starts the engine you had.
 
-A copy from before 0.2.16 kept setup's files in the PolyStrata folder itself. Its first start after the update moves
-them into `terminal/` once (the run configs, run scripts, logs and the engine), with the paths inside them.
+### Coming from 0.1.45-poly.10 or older
+
+Since 0.2.19-poly.1 PolyStrata has a folder for each part (`app/`, `engine/`, `terminal/`, `docs/`, `tools/`).
+`START-HERE.bat`, `UPDATE.bat` and `setup.sh` stay at the top and work as before. What was at the top besides them
+is now in `terminal/`:
+
+- setup (`setup.py`), the server (`serve/`), `strata.py` and the Python environment (`.venv`)
+- what setup wrote for each model: `strata-<model>.json`, `run-<model>.bat` / `run-<model>.sh` and the log
+- the engines setup installed (`engine/` is now `terminal/engine/`, `engine-poly/` is now `terminal/engine-poly/`), and
+  `models/`, `packs/` and `mtp/` if they were inside the PolyStrata folder
+
+The first start or `UPDATE.bat` after the update moves these files once and changes the paths inside the run configs
+and run scripts. Files outside the PolyStrata folder (a llama-swap config, a service unit, your own scripts) are not
+changed. If one of them calls these files, change the path:
+
+- setup: `python setup.py ...` becomes `terminal\.venv\Scripts\python terminal\setup.py ...` (Linux:
+  `terminal/.venv/bin/python terminal/setup.py ...`), or run `START-HERE.bat` / `./setup.sh` with the same options.
+- the server: `serve/server.py --config strata-<model>.json` becomes
+  `terminal/serve/server.py --config terminal/strata-<model>.json`, run with the Python in `terminal/.venv`. For
+  llama-swap: [LLAMA_SWAP.md](LLAMA_SWAP.md).
+- a run config, run script or engine: it is in `terminal/` now.
+
+To go back to 0.1.45-poly.10 or older:
+
+- In a second folder: put the older version next to this one and run its `START-HERE.bat --setup` (Linux:
+  `./setup.sh --setup`) for your model. Like any new copy, it uses the model files in `PolyStrata-data`.
+- In the same folder: after `git checkout v0.1.45-poly.10`, the older setup looks for its files at the top again.
+  Move `.venv`, `strata-*.json`, `run-*.bat` / `run-*.sh` and `engine-poly` from `terminal/` back to the top and the
+  files in `terminal/engine/` back to `engine/`, then remove `terminal\` (`terminal/`) from the paths inside the
+  `.json` and run files. Or run `START-HERE.bat --setup` (`./setup.sh --setup`) for your model, which writes those
+  files again with the old paths.
 
 ## Where things are stored
 

@@ -3399,6 +3399,36 @@ def _held_tail(text: str, tags) -> int:
     return 0
 
 
+def _in_json_string(text: str) -> bool:
+    """Whether JSON text that `text` starts ends inside a string."""
+    in_str = esc = False
+    for c in text:
+        if esc:
+            esc = False
+        elif in_str and c == "\\":
+            esc = True
+        elif c == '"':
+            in_str = not in_str
+    return in_str
+
+
+def _ink_call_end(s: str, final: bool) -> tuple[int, int] | None:
+    """Where a call block's body `s` ends, as (index, length of the tag there): the first <|end_message|> or next
+    message start outside the JSON's strings; None if there is none yet."""
+    ends = sorted([(i, len(INK_END)) for i in _find_all(s, INK_END)] + [(i, 0) for i in _find_all(s, INK_MSG)])
+    for i, n in ends:
+        if not _in_json_string(s[:i]):
+            return i, n
+    return ends[0] if ends and final else None
+
+
+def _find_all(s: str, tag: str):
+    i = s.find(tag)
+    while i >= 0:
+        yield i
+        i = s.find(tag, i + 1)
+
+
 class InklingOutputParser(OutputParser):
     """The parser for Inkling 2's replies (Thinking Machines; the tokenizer's pre-tokenizer `inkling2`).  A reply is a
     list of blocks, each a message of the model's that ends with <|end_message|>:
@@ -3407,8 +3437,8 @@ class InklingOutputParser(OutputParser):
         <|message_model|><|content_text|>...<|end_message|>
         <|message_model|>NAME<|content_invoke_tool_json|>{"name":"NAME","args":{...}}<|end_message|>
 
-    The tags are control tokens, so a block's text cannot hold one: nothing here has to tell a quoted tag from a real
-    one.  A call is a call for a tool the request declared (OutputParser's rule); any other is returned as the text
+    The tags are control tokens, but the model can write their text with ordinary tokens, and the parser reads text: a
+    call's JSON may hold one in a string (_ink_call_end).  A call is a call for a tool the request declared (OutputParser's rule); any other is returned as the text
     it was written as.  Text outside every block is content."""
 
     def __init__(self, thinking: bool = True, tools: list[dict] | None = None, stream_tools: bool = False,
@@ -3421,6 +3451,19 @@ class InklingOutputParser(OutputParser):
         # must not think), so the reply starts inside its text block
         self.mode = "content" if opened else "between"
         self.header = ""         # the block's header: a call's tool name
+
+    # The state the server reads (Service._run) for each mode: "reasoning" in a thinking block, "content" between
+    # blocks (a forced call's opening goes there once the thinking is closed), "text" inside a text block
+    STATES = {"between": "content", "header": "header", "reasoning": "reasoning", "content": "text", "call": "call"}
+
+    @property
+    def state(self) -> str:
+        mode = getattr(self, "mode", None)
+        return self.STATES[mode] if mode is not None else self._state
+
+    @state.setter
+    def state(self, value: str):
+        self._state = value          # OutputParser.__init__'s; this parser's state is its mode
 
     @property
     def clean(self) -> bool:
@@ -3495,6 +3538,10 @@ class InklingOutputParser(OutputParser):
             ends = [(i, len(t)) for i, t in ((s.find(INK_END), INK_END), (s.find(INK_MSG), "")) if i >= 0]
             end = min(ends) if ends else None
             if self.mode == "call":
+                # a call's JSON can hold the tags' text in a string ("print('<|end_message|>')"): its end is the
+                # first tag outside the JSON's strings.  Where every tag is inside one, the JSON has not closed:
+                # wait for the rest, and at the end of the reply take the first tag (the call is the text it is)
+                end = _ink_call_end(s, final)
                 if end is None and not final:
                     return out
                 body = s if end is None else s[:end[0]]

@@ -302,9 +302,12 @@ LLAMA_CPP_COMMIT = "3cf03257f219afbe7334045ff7c6a06ac68c627d"
 # by tools/make_release.py.  Set this to the GitHub release download folder when publishing, e.g.
 # "https://github.com/<you>/PolyStrata/releases/latest/download/" (or pass --prebuilt / set STRATA_PREBUILT_URL).
 # With the default, the release of this checkout's own version (PREBUILT_TAG_URL, CMakeLists.txt's version) is
-# tried first and the latest release is the fallback (#214): an older checkout keeps the engine it shipped with.
-# The Qwen engine is the Strata project's, unchanged, so its ready-made build comes from that project's releases.
-PREBUILT_URL = "https://github.com/Niko1221/Strata/releases/latest/download/"
+# tried first and PREBUILT_URL is the fallback (#214): an older checkout keeps the engine it shipped with.
+# The Qwen engine is the Strata project's, unchanged, so its ready-made build comes from that project's releases:
+# (PolyStrata) the release this tree was merged from (update_cmd.STRATA_RELEASE), not the latest one (#244), and the
+# signed feed that has the 0.2 engines is that release's too (update_cmd.DEFAULT_FEED).
+from strata_cli import update_cmd  # noqa: E402
+PREBUILT_URL = f"{update_cmd.STRATA_RELEASES}download/{update_cmd.STRATA_RELEASE}/"
 # The repository the release assets and their SHA-256 come from; `engine_digest` reads the API here even
 # when --prebuilt points the download somewhere else, because the hash is only worth having if it comes
 # from somewhere the download does not.
@@ -938,6 +941,9 @@ FAMILIES = {
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": True, "experimental": True,
                 "windows": True, "ran_on_gb": 8, "row_bytes": 32768, "one_request": True,
+                # the engine's layer split is not built for Inkling 2 yet: it exits with "Inkling 2 runs on one
+                # card (--layer-split is not supported for it yet)", so setup never offers a pair to this family
+                "one_card": True,
                 # the picture reader: Unsloth's mmproj (strata-vision's inkling2v tower), beside the GGUFs' folder.  On
                 # a Mac the tower has no Metal kernels: setup_mac.py runs it on the CPU ("mac_vision_cpu")
                 "mmproj_hf": hf("unsloth/Inkling-2-Mini-GGUF"), "mmproj": "mmproj-F16.gguf", "mac_vision_cpu": True,
@@ -10527,6 +10533,10 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         confirm_risk(f"{title} has been run on Linux only: its engine compiles on Windows, the model was not tried "
                      "there", bool(a.family), a.yes, f"{title} has not been tried on Windows",
                      f"use Linux, or --family {family} --yes to try it here")
+    if multi and fam.get("one_card"):                  # the engine has no layer split for this family yet: it would
+        multi = []                                     # exit with "Inkling 2 runs on one card"; one card from here on,
+        # so the size, the images and the small-card flags below are this card's
+        warn(f"{title} runs on one card so far (--layer-split is not supported for it yet): using {gpu_name(gpu)}")
     sees = fam.get("vision") is True
     if sees and hip:   # the image encoder is a CUDA program: no HIP build of it yet (as for the main engine)
         say("  Images: the image encoder is a CUDA program: on the AMD card images are off (text answers).")
