@@ -2056,6 +2056,11 @@ int main(int argc, char** argv) {
             rc = serve(ss);
         } else if ((long long) ids.size() + max_new > engine.max_context()) {
             throw std::runtime_error("the prompt and --max-new together exceed --max-context");
+        } else if (check > 0 && check >= engine.sequences()) {
+            // the engine dropped --batch (a model that runs one sequence with these options says why)
+            std::fprintf(stderr, "strata-poly: --check-batch %d: the engine runs %d sequences beside the first\n", check,
+                         engine.sequences() - 1);
+            rc = 2;
         } else if (check > 0) {
             rc = check_batch(engine, ids, check, max_new, stagger);
         } else {

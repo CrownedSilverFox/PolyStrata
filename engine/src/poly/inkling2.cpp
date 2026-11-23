@@ -115,25 +115,33 @@ void Inkling2::load_geometry() {
     // At most 16 rows a step: under kStageRows, so a step's products are the few-token kernels that give each row the
     // bits it gets alone (32 rows would take the prompt batch's), and as many as were checked (--check-batch).
     need(opt_.batch <= 15, "Inkling 2 takes up to 15 sequences beside the first (--batch 1 to 15)");
+    // A --batch this build or these options cannot run is said and dropped, and the engine answers one request at a
+    // time: the server passes on a "parallel" the engine cannot use and expects it to adjust (parallel_args() in
+    // serve/server_parts/engines.py).  Refused, it left a config with "parallel" 4 and --kv q8_0 with no server.
+    const auto one_sequence = [this](bool ok, const char* where) {
+        if (ok || opt_.batch == 0) return;
+        std::fprintf(stderr, "strata-poly: Inkling 2 runs one sequence %s: --batch %d is not used\n", where, opt_.batch);
+        opt_.batch = 0;
+    };
     static_assert(16 <= kInkRows && 16 < kStageRows, "a step's rows fit the _rows kernels and the few-token paths");
 #if defined(STRATA_GPU_METAL)
-    need(opt_.batch == 0, "Inkling 2 runs one sequence on Metal (--batch is not supported there yet)");
+    one_sequence(false, "on Metal");
 #endif
 #if defined(STRATA_USE_HIP)
     // the _rows kernels are the fused q/k/v and clips kernels HIP does not run (inkling2.cu: clips_apart())
-    need(opt_.batch == 0, "Inkling 2 runs one sequence on AMD (--batch is not supported there yet)");
+    one_sequence(false, "on AMD");
 #endif
-    need(opt_.batch == 0 || opt_.draft_model.empty(), "Inkling 2 runs one sequence with --draft-model (no --batch)");
+    one_sequence(opt_.draft_model.empty(), "with --draft-model");
     // On several cards (--layer-split) a card runs a run of the layers, and the loop's (core_start_ to core_end_ - 1)
     // are on one card: next_layer() runs them again for a later pass.  Engine::open() starts no card inside them.
     // The drafter stays on one card: its features are three layer runs' inputs, which may be another card's.
     need(!split_ || opt_.draft_model.empty(), "Inkling 2's --draft-model runs on one card (no --layer-split)");
     // --batch with --layer-split has not been run
-    need(opt_.batch == 0 || !split_, "Inkling 2's --batch runs on one card (no --layer-split)");
+    one_sequence(!split_, "on several cards (--layer-split)");
     need(opt_.kv_format == KvFmt::kFp16 || opt_.kv_format == KvFmt::kFp8 || opt_.kv_format == KvFmt::kQ8_0,
          "Inkling 2's attention caches are fp16, fp8 or q8_0");
     // --batch's _rows kernels read fp16 and FP8 caches only
-    need(opt_.batch == 0 || opt_.kv_format != KvFmt::kQ8_0, "Inkling 2 runs one sequence with --kv q8_0 (no --batch)");
+    one_sequence(opt_.kv_format != KvFmt::kQ8_0, "with --kv q8_0");
     unsloth_ = gg_->get("general.architecture")->s == "inkling2";
     load_shape();
     if (unsloth_) {
