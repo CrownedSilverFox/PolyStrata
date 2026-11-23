@@ -197,6 +197,13 @@ class ServiceForInkling(unittest.TestCase):
         p.feed("<|message_model|><|content_text|>y")
         self.assertEqual(p.state, "text")                            # not inside a text block
 
+    def test_reasoning_tokens_are_the_thinking_block_s(self):
+        # PR 212: the text block's tokens are not thinking tokens (usage's reasoning_tokens)
+        ids = self.svc.encode_prompt(self.chat, None, {})
+        self.svc.engine = MockEngine(self.tok, THINK + TEXT + STOP)
+        done = [e for kind, e in self.svc.run(ids, True, None, 64, {}, threading.Event()) if kind == "done"][0]
+        self.assertEqual(done["reasoning_tokens"], len(self.tok.encode("the capital of Italy" + END, parse_special=True)))
+
 
 if __name__ == "__main__":
     unittest.main()
