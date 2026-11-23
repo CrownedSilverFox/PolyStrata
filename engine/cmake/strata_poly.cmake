@@ -349,6 +349,10 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   add_executable(poly_workers_test src/poly/workers_test.cpp src/poly/cpu_experts.cpp)
   target_link_libraries(poly_workers_test PRIVATE strata_quant Threads::Threads)
   add_test(NAME poly_workers_test COMMAND poly_workers_test)
+  # the four-row dot products the CPU experts take, bit for bit against the one-row ones, without a model
+  add_executable(poly_cpu_x4_test src/poly/cpu_x4_test.cpp src/poly/cpu_experts.cpp)
+  target_link_libraries(poly_cpu_x4_test PRIVATE strata_quant Threads::Threads)
+  add_test(NAME poly_cpu_x4_test COMMAND poly_cpu_x4_test)
   # the card's MXFP4 product against ggml's dequantizer on random blocks, without a model; needs a card, run by hand
   if(TARGET ggml-base)
     add_executable(poly_mxfp4_test src/poly/mxfp4_test.cu)
