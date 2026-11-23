@@ -125,6 +125,12 @@ private:
     bool bells() const override { return true; }
     // routed on the card in that recording: the host reads neither
     bool router_rows_to_host(int n) const override { return !(n == 1 && whole_rec_); }
+#if !defined(STRATA_GPU_METAL)
+    // Both GGUFs' routers are F32 of BF16 values: as BF16 a token reads half of their bytes, the same scores
+    // (gemv_bf16() is gemv_f32()'s sums, a prompt batch's gemm_f32() takes them widened).  Idea: merbanan's Strata
+    // branch inkling2-turing.
+    bool router_bf16() const override { return true; }
+#endif
     void copy_rows(const float* from, float* to, int n);
     void tail_rows(int il, int n);
     /// The application of layer il in pass `pass`, in the order a token runs them.

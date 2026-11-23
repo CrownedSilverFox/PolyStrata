@@ -1762,7 +1762,8 @@ void Engine::load_moe(int il, bool shared) {
     Layer& L = layers_[(size_t) il];
     auto mat = [&](const char* n, int64_t a, int64_t b) { return upload(tensor(il, n), blk(il, n), a, b, kAnyMat); };
     L.moe = true;
-    L.gate_inp = mat("ffn_gate_inp.weight", n_embd_, n_expert_);
+    L.gate_inp = upload(tensor(il, "ffn_gate_inp.weight"), blk(il, "ffn_gate_inp.weight"), n_embd_, n_expert_,
+                        router_bf16() ? kExactBF16 : kAnyMat);
     if (shared) {
         L.sh_gate = mat("ffn_gate_shexp.weight", n_embd_, n_ff_shexp_);
         L.sh_up = mat("ffn_up_shexp.weight", n_embd_, n_ff_shexp_);
@@ -1994,9 +1995,18 @@ float Engine::global_scale(const TensorInfo& t) const {
     return v;
 }
 
+bool Engine::exact_bf16(const TensorInfo* t) const {
+    if (!t || t->type != kTypeF32) return false;
+    const uint32_t* v = (const uint32_t*) home(*t).data(*t);
+    for (size_t i = 0, n = (size_t) t->elements(); i < n; ++i)
+        if (v[i] & 0xffffu) return false;
+    return true;
+}
+
 Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in, int64_t n_out, Want want,
                       float (*fix)(float)) {
     if (!t) throw std::runtime_error("the GGUF has no tensor " + name);
+    if (want == kExactBF16 && (fix || !exact_bf16(t))) want = kAnyMat;
     const uint64_t rest = t->elements() / std::max<uint64_t>(t->shape[0], 1);
     if ((int64_t) t->shape[0] != n_in || (int64_t) rest != n_out)
         throw std::runtime_error(t->name + " is " + shape_of(*t) + ", expected [" + std::to_string(n_in) + ", " +
@@ -2042,7 +2052,8 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
 #endif
         return d;
     }
-    const bool as_is = !fix && (t->type == kTypeF32 || (want != kF32 && t->type == kTypeBF16) ||
+    const bool as_is = !fix && ((t->type == kTypeF32 && want != kExactBF16) ||
+                                (want != kF32 && t->type == kTypeBF16) ||
                                 (want == kAnyMat && kernels::native_mmvq_supported((int) t->type)));
     const uint32_t type = as_is ? t->type : want == kF32 ? kTypeF32 : kTypeBF16;
     const size_t out = as_is ? bytes : count * (type == kTypeF32 ? sizeof(float) : sizeof(uint16_t));
