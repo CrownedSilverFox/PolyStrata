@@ -931,7 +931,7 @@ FAMILIES = {
     # context token is the rows of the eight full-attention applications ("row_bytes"); the forty window ones keep
     # rings.  The files are the repository's Mainline_Support ones, the layout llama.cpp runs: the repository names them
     # .gguf_file ("remote_suffix").  Its top-level files are Unsloth's layout (architecture inkling2), which the
-    # engine also reads: a --gguf-dir file of either is taken.  The engine keeps one sequence's state for it, so it answers one
+    # engine also reads: a --gguf-dir or --custom-gguf file of either is taken.  The engine keeps one sequence's state for it, so it answers one
     # request at a time ("one_request": setup writes "parallel": 1).  "vram_beside_gb" is the peak VRAM measured on an RTX 5090 with no expert on the card, a 10,081-token
     # prompt read 1,024 tokens at a time at a 32K context (2,916 MiB), plus the rows of the context's other tokens.
     "inkling": {"title": "Inkling 2 Mini", "by": "Thinking Machines; quantized by Unsloth",
@@ -940,6 +940,8 @@ FAMILIES = {
                 "hf": hf("unsloth/Inkling-2-Mini-GGUF") + "Mainline_Support/", "file": "Inkling-2-Mini-{q}.gguf",
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": True, "experimental": True,
+                # --custom-gguf takes a file of another quantization (IQ4_NL, Q4_K_M, ...) as a size of its own
+                "custom_sizes": True,
                 "windows": True, "ran_on_gb": 8, "row_bytes": 32768, "one_request": True,
                 # the engine's layer split is not built for Inkling 2 yet: it exits with "Inkling 2 runs on one
                 # card (--layer-split is not supported for it yet)", so setup never offers a pair to this family
@@ -12145,9 +12147,9 @@ def preview_family(a) -> int:
     return 0
 
 
-def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
+def resolve_custom_gguf(path_str: str, check: bool = False) -> tuple[str, str, list[Path]]:
     """--custom-gguf PATH: inspect the GGUF header, match it to a family/model,
-    and return (family, model, [shard paths])."""
+    and return (family, model, [shard paths]).  `check`: --check (nothing is installed)."""
     _tools = str(ROOT / "tools")
     if _tools not in sys.path:
         sys.path.insert(0, _tools)
@@ -12222,10 +12224,29 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
             fail("cannot install this GGUF with --custom-gguf",
                  "use --inspect to read the full explanation, or give it to --gguf-dir")
         # derive the size from the filename's quant token (e.g. "Q4_K_M" in "...-Q4_K_M.gguf")
-        m_q = GGUF_QUANT.search(files[0].name)
-        quant = m_q.group(1) if m_q else Path(SHARD_NAME.sub("", files[0].name)).stem.rsplit("-", 1)[-1]
-        model = next((m for m in models_dict if quant.lower().replace("_", "") in m.replace("_", "").lower()
-                      or m.lower().endswith(quant.lower())), None)
+        own_sizes = FAMILIES.get(fam, {}).get("custom_sizes")
+        name = files[0].name
+        if own_sizes:                                  # a rewritten file's ".loop" before ".gguf": the quant is before it
+            name = re.sub(r"\.loop(?=(-\d{5}-of-\d{5})?\.gguf$)", "", name, flags=re.I)
+        m_q = GGUF_QUANT.search(name)
+        quant = m_q.group(1) if m_q else Path(SHARD_NAME.sub("", name)).stem.rsplit("-", 1)[-1]
+        if own_sizes:                                  # the whole name: Q2_K is not UD-Q2_K_XL
+            model = next((m for m in models_dict if m.lower() == quant.lower()), None)
+        else:
+            model = next((m for m in models_dict if quant.lower().replace("_", "") in m.replace("_", "").lower()
+                          or m.lower().endswith(quant.lower())), None)
+        if not model and own_sizes:
+            # a quantization setup does not offer (Inkling 2 Mini's IQ4_NL, Q4_K_M, ...): a size of its own, its
+            # estimates read from the file's header
+            model = quant if m_q else "custom"
+            offered = ", ".join(sorted(models_dict))
+            d, near = custom_size(models_dict, fp, sum(f.stat().st_size for f in files))
+            models_dict[model] = d
+            warn(f"{title} (architecture {fp['arch']!r}): "
+                 + (f"your file's quant '{quant}' is not one setup offers ({offered})" if m_q else
+                    f"the file name has no quant setup offers ({offered})")
+                 + f": {'would be installed' if check else 'installed'} as its own size, {model}; its experts' "
+                 f"size and the RAM estimate are read from its header, the VRAM before any expert is {near}'s")
         if not model:
             model = sorted(models_dict)[0]
             warn(f"PolyStrata: {sentence}\n  your file's quant '{quant}' is not one setup offers "
@@ -12236,6 +12257,21 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
     say(f"PolyStrata: {sentence}")
     fail("cannot install this GGUF with --custom-gguf",
          "use --inspect to read the full explanation, or give it to --gguf-dir")
+
+
+def custom_size(sizes: dict, fp: dict, file_bytes: int) -> tuple[dict, str]:
+    """--custom-gguf's entry for a quantization a strata-poly family does not offer, and the offered size it borrows
+    from: its experts' bytes (the arena) and its file size from the header, and the VRAM beside the experts of the
+    offered size whose experts are closest in bytes (what is not an expert is stored about alike in every size)."""
+    arena = sum(fp["expert_bytes"].values()) / 1e9
+    if arena <= 0:
+        fail("cannot install this GGUF with --custom-gguf: its header lists no routed experts",
+             "the file may be damaged or of another model; use --inspect to read its tensors")
+    near = min(sizes, key=lambda m: abs(sizes[m]["arena_gb"] - arena))
+    d = {"about": "your own file, a quantization setup does not offer", "download_gb": file_bytes / 1e9,
+         "arena_gb": arena, "vram_beside_gb": poly_beside_gb(sizes[near])}
+    d["ram_gb"] = round(poly_ram_need(d, 8.0))           # as the offered sizes' (an 8 GB card's estimate)
+    return d, near
 
 
 def mac_vision(asked, model: str, ram: float) -> str:
@@ -12853,7 +12889,7 @@ def main() -> int:
     if a.inspect:                                      # headers only: nothing is installed
         sys.exit(subprocess.run([sys.executable, str(ROOT / "tools" / "strata_inspect.py"), *a.inspect[:2]]).returncode)
     if a.custom_gguf:                                   # your own GGUF: inspect it, match it, skip download
-        _fam, _model, a._custom_gguf_shards = resolve_custom_gguf(a.custom_gguf)
+        _fam, _model, a._custom_gguf_shards = resolve_custom_gguf(a.custom_gguf, a.check)
         p = Path(a.custom_gguf)
         if (a.family and a.family != _fam) or (a.model and a.model != _model):
             fail(f"--custom-gguf resolves to --family {_fam} --model {_model}, "

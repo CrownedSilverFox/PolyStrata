@@ -264,7 +264,11 @@ Add `--model UD-Q3_K_XL` or `--model UD-Q2_K_XL` for a smaller size.
 
 The installer downloads the files under the repository's `Mainline_Support` folder, the layout llama.cpp runs
 (`inkling2_loop`). The files at the top of the repository (architecture `inkling2`, for example UD-IQ3_XXS) are
-Unsloth's layout of the same weights: the engine reads them too, with `--gguf-dir` or `--model` set to the file.
+Unsloth's layout of the same weights: the engine reads them too. Setup takes them with `--gguf-dir` or
+`--custom-gguf`; the engine run by hand takes the file as its `--model`.
+`setup --custom-gguf <file>` also takes a quantization the installer does not offer (for example IQ4_NL) as a
+size of its own: its experts' size and the RAM estimate are read from the file's header, and the VRAM before any
+expert is the closest offered size's. `--custom-gguf` is not used on a Mac yet.
 
 ## How does it work?
 
