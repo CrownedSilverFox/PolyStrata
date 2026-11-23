@@ -663,7 +663,8 @@ void Inkling2::assign_scratch() {
     }
     zeros_ = fbuf((size_t) n_head_);
     xqo_ = fbuf((kernels::native_q8_1_bytes(n_head_ * head_dim_) + sizeof(float) - 1) / sizeof(float));
-    if (buf_rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
+    // a prompt batch's attention; none in the few tokens' layout, where the batch layout's may be lent
+    awork_ = buf_rows_ >= kStageRows ? fbuf(heads + heads / 2 + 1 + 3 * n * n_head_) : nullptr;
     if (ds_file_) {   // the drafter's: a call's features and mixes, and a block's rows
         const size_t E = (size_t) n_embd_, hq = (size_t) n_head_ * head_dim_, kv = (size_t) n_kv_ * head_dim_,
                      B = (size_t) ds_block_, V = (size_t) n_vocab_, R = (size_t) ds_rank_;
