@@ -103,12 +103,13 @@ void Inkling2::load_geometry() {
     if (attn_type_) guess_type_ = attn_type_;
     ctrl_bf16_ = opt_.loop_bf16;
 #if !defined(STRATA_GPU_METAL)
-    // IQ1_S (UD-Q2_K_XL's gate|up in 6 layers) on the int8 prompt kernel, as the file's other types already are on
-    // Ampere and newer (i8_mma.cuh: activations int8 a 32 values); STRATA_PREFILL_IQ1S=fp16 keeps them on the FP16
-    // kernel.  Other models never ask, so their IQ1_S products stay on the FP16 kernel.
+    // STRATA_PREFILL_IQ1S=int8: IQ1_S (UD-Q2_K_XL's gate|up in 6 layers) on the int8 prompt kernel, as the file's
+    // other types are on Ampere and newer (i8_mma.cuh: activations int8 a 32 values).  Opt-in: on a 302-token prompt
+    // it cost more KL a matrix than those types do.  Unset or =fp16: the FP16 kernel, as before.  Other models never
+    // ask, so their IQ1_S products stay on the FP16 kernel.
     {
         const char* v = std::getenv("STRATA_PREFILL_IQ1S");
-        kernels::gemm_iq_i8_allow(19, !(v && std::string(v) == "fp16"));
+        kernels::gemm_iq_i8_allow(19, v && std::string(v) == "int8");
     }
 #endif
     // --kv fp8: the attention caches in FP8 E4M3 with a scale a row's head, about half the bytes of fp16, as Strata

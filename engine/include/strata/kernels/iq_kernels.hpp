@@ -211,8 +211,8 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
 /// of Y (row i without ids).  With `from`, row i is row from[i] of xq.  false: not launched.
 bool gemm_iq_i8_takes(int ty, int K);
 /// The int8 kernel also takes type ty, from now on in this process (on false: no longer), for a type it takes only when
-/// asked: IQ1_S (19).  A model's engine asks for it at load (Inkling 2), so that another model's products stay on the
-/// FP16 kernel as before.  Any other type: nothing changes.
+/// asked: IQ1_S (19).  A model's engine asks for it at load (Inkling 2, with STRATA_PREFILL_IQ1S=int8), so that other
+/// products stay on the FP16 kernel as before.  Any other type: nothing changes.
 void gemm_iq_i8_allow(int ty, bool on);
 void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream);
 bool gemm_iq_i8_grouped(int ty, const void* W, size_t mat_bytes, int n_out, int K, const void* xq, int64_t total_rows,

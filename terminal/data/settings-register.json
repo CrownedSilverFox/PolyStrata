@@ -22512,6 +22512,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_MMQ_TEST_BLOCKS",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/mmq_paths_test.cu",
+     "line": 84,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "string",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "40a5a37556",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "40a5a37556",
+   "last_date": "2026-11-23",
+   "status": "research",
+   "owner": "poly",
+   "note": "[reviewed] test only: poly_mmq_paths_test takes a type's weights from DIR/<type name>.bin (whole blocks cut from a model tensor) in place of ggml's quantization of random weights (engine/src/poly/mmq_paths_test.cu)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_MMQ_TIER_SORT",
    "backends": [
     "cuda-hip"
@@ -34016,6 +34049,41 @@
    "status": "opt-in",
    "owner": "program",
    "note": "[auto] documented for users (docs/DETAILS.md:308), 2 more",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_PREFILL_IQ1S",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/inkling2.cpp",
+     "line": 111,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/models/inkling.md:56"
+   ],
+   "first_commit": "40a5a37556",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "40a5a37556",
+   "last_date": "2026-11-23",
+   "status": "opt-in",
+   "owner": "poly",
+   "note": "[reviewed] Inkling 2 on CUDA sm_80+: =int8 runs the IQ1_S experts' prompt products (UD-Q2_K_XL's gate|up in 6 layers) on the int8 tensor-core kernel (i8_mma.cuh, activations int8 with a scale per 32 values), about 7% faster prompt reading on an RTX 3090; unset or =fp16 keeps the FP16 kernel. Opt-in: on a 302-token prompt it added 3.4x the KL per matrix of the int8 formats main runs by default (one prompt, 64 steps); could become the default after a wider KL run (engine/src/poly/inkling2.cpp)",
    "retire_after": "",
    "retired_in": ""
   },
