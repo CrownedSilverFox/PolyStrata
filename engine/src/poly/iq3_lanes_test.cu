@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,8 +46,15 @@ void same_bits(const std::string& what, const float* a, const float* b, size_t n
     ck(cudaMemcpy(x.data(), a, n * 4, cudaMemcpyDeviceToHost), "download");
     ck(cudaMemcpy(y.data(), b, n * 4, cudaMemcpyDeviceToHost), "download");
     size_t diff = 0;
-    for (size_t i = 0; i < n; ++i) diff += std::memcmp(&x[i], &y[i], 4) != 0;
+    double most = 0, most_rel = 0, top = 0;   // the largest |x - y|, |x - y| / |x|, and |x|
+    for (size_t i = 0; i < n; ++i) {
+        diff += std::memcmp(&x[i], &y[i], 4) != 0;
+        const double d = std::fabs((double) x[i] - (double) y[i]), m = std::fabs((double) x[i]);
+        most = std::max(most, d), top = std::max(top, m);
+        if (m > 0) most_rel = std::max(most_rel, d / m);
+    }
     std::printf("%-58s %zu of %zu values differ  %s\n", what.c_str(), diff, n, diff ? "FAIL" : "ok");
+    if (diff) std::printf("    max |a - b| %.3g (largest |a| %.3g), max |a - b| / |a| %.3g\n", most, top, most_rel);
     if (diff) ++failures;
 }
 
@@ -192,7 +200,7 @@ int main(int argc, char** argv) {
     }
     // unset, the lane kernel runs on sm_75 and sm_89 only (iq_kernels.cu: iq3_lanes_on()); STRATA_IQ3_LANES=1 checks it
     // on another card
-    if (!std::getenv("STRATA_IQ3_LANES")) {
+    if (const char* v = std::getenv("STRATA_IQ3_LANES"); !(v && *v)) {
         int major = 0, minor = 0;
         cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0);
         cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, 0);
