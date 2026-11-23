@@ -119,10 +119,16 @@ void Inkling2::load_geometry() {
 #if defined(STRATA_GPU_METAL)
     need(opt_.batch == 0, "Inkling 2 runs one sequence on Metal (--batch is not supported there yet)");
 #endif
+#if defined(STRATA_USE_HIP)
+    // the _rows kernels are the fused q/k/v and clips kernels HIP does not run (inkling2.cu: clips_apart())
+    need(opt_.batch == 0, "Inkling 2 runs one sequence on AMD (--batch is not supported there yet)");
+#endif
     need(opt_.batch == 0 || opt_.draft_model.empty(), "Inkling 2 runs one sequence with --draft-model (no --batch)");
     need(opt_.layer_split.empty(), "Inkling 2 runs on one card (--layer-split is not supported for it yet)");
     need(opt_.kv_format == KvFmt::kFp16 || opt_.kv_format == KvFmt::kFp8 || opt_.kv_format == KvFmt::kQ8_0,
          "Inkling 2's attention caches are fp16, fp8 or q8_0");
+    // --batch's _rows kernels read fp16 and FP8 caches only
+    need(opt_.batch == 0 || opt_.kv_format != KvFmt::kQ8_0, "Inkling 2 runs one sequence with --kv q8_0 (no --batch)");
     unsloth_ = gg_->get("general.architecture")->s == "inkling2";
     load_shape();
     if (unsloth_) {
