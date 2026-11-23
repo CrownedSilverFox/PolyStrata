@@ -16575,6 +16575,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_INK_PROJECT_MIXED",
+   "backends": [
+    "cuda"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/inkling2.cpp",
+     "line": 765,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "4682893110",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "4682893110",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "poly",
+   "note": "Inkling 2 on CUDA: a decoded token's attention products of mixed types (Q8_0, Q4_K, Q5_K, Q6_K) plus the sink and a full layer's two taps in one launch, the same bits; 0 keeps one launch a matrix",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_INK_RUN_KEYS",
    "backends": [
     "metal"

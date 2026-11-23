@@ -770,7 +770,13 @@ bool Inkling2::control_ffn(const float* msg, const Ctrl& c, const Block& B) {
 // launch, and the five Q8_0 matrices in one launch, every output the bits lin() gives it.  A window layer's three
 // inputs are one buffer until a later pass's controllers make them differ.  False, with nothing launched, where
 // lin() does them: more tokens, or matrices native_mmvq_many() does not take.
-bool Inkling2::project(const Block& B, const float* const* x, int n, bool quantized) {
+//
+// A token's on CUDA: the five of several types (Unsloth's files mix Q8_0 with K-quants in a layer) in one launch too,
+// native_mmvq_mixed()'s, each output its own launch's bits.  extras (where the caller has no other launch for them):
+// the sink's and a full layer's two convolution taps' products join the launch, quantized matrices of n_embd_ inputs
+// (the ggml-org files' Q8_0); *extras says whether they did, else the caller launches them.
+bool Inkling2::project(const Block& B, const float* const* x, int n, bool quantized, bool* extras) {
+    if (extras) *extras = false;
     if (n >= kStageRows) return false;
     const Dev* w[5] = {&B.wq, &B.wk, &B.wv, &B.rel, &B.gate};
     float* y[5] = {q_, kraw_, vraw_, rr_, gate_};
@@ -781,8 +787,18 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
 #else
     constexpr bool kOneType = true;
 #endif
+#if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+    // one launch of several types: a token's, on CUDA (native_mmvq_mixed() takes no other; HIP keeps its launches)
+    static const bool mixed_on = [] {
+        const char* v = std::getenv("STRATA_INK_PROJECT_MIXED");
+        return v == nullptr || v[0] != '0';
+    }();
+    const bool mixed = n == 1 && mixed_on;
+#else
+    constexpr bool mixed = false;
+#endif
     for (const Dev* d : w)
-        if ((kOneType && d->type != w[0]->type) || d->n_in != n_embd_ || d->scale != 1.0f) return false;
+        if ((kOneType && !mixed && d->type != w[0]->type) || d->n_in != n_embd_ || d->scale != 1.0f) return false;
     const float* xs[3];
     void* qs[3];
     int nx = 0, slot[3];
@@ -840,18 +856,48 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
         }
         return true;
     }
-    kernels::NativeMmvqMany m{};
-    for (int i = 0; i < 5; ++i) {
-        m.w[i] = w[i]->p;
-        m.x_q8_1[i] = qs[slot[from[i]]];
-        m.y[i] = y[i];
-        m.n_out[i] = w[i]->n_out;
+#if !defined(STRATA_GPU_METAL)
+    // the five, then the sink's (input 0) and a full layer's taps (inputs 1 and 2) where they are to join
+    const Dev* all[8] = {w[0], w[1], w[2], w[3], w[4]};
+    float* ys[8] = {y[0], y[1], y[2], y[3], y[4]};
+    int src[8] = {from[0], from[1], from[2], from[3], from[4]};
+    int count = 5;
+    const auto plain = [&](const Dev& d) {
+        return d.p && d.type != kTypeF32 && d.type != kTypeBF16 && d.n_in == n_embd_ && d.scale == 1.0f;
+    };
+    if (extras && mixed && plain(B.sink) && (B.swa || (plain(B.k_dyn) && plain(B.v_dyn)))) {
+        all[count] = &B.sink, ys[count] = sink_, src[count++] = 0;
+        if (!B.swa) {
+            all[count] = &B.k_dyn, ys[count] = kdyn_, src[count++] = 1;
+            all[count] = &B.v_dyn, ys[count] = vdyn_, src[count++] = 2;
+        }
     }
-    m.count = 5;
-    if (!kernels::native_mmvq_many_fits((int) w[0]->type, m, n_embd_)) return false;   // lin() quantizes its own
-    if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
-    kernels::native_mmvq_many((int) w[0]->type, m, n_embd_, st_);
-    return true;
+    // the most that one launch takes: all of them, else the five alone
+    const int tries[2] = {count, 5};
+    for (int t = 0; t < (count > 5 ? 2 : 1); ++t) {
+        const int c = tries[t];
+        kernels::NativeMmvqMany m{};
+        int types[8];
+        bool one = true;
+        for (int i = 0; i < c; ++i) {
+            m.w[i] = all[i]->p;
+            m.x_q8_1[i] = qs[slot[src[i]]];
+            m.y[i] = ys[i];
+            m.n_out[i] = all[i]->n_out;
+            types[i] = (int) all[i]->type;
+            one = one && types[i] == types[0];
+        }
+        m.count = c;
+        const bool many = one && kernels::native_mmvq_many_fits(types[0], m, n_embd_);
+        if (!many && !(mixed && kernels::native_mmvq_mixed_fits(types, m, n_embd_))) continue;
+        if (!quantized) kernels::native_quantize_q8_1_many(xs, qs, nx, n_embd_, st_);
+        if (many) kernels::native_mmvq_many(types[0], m, n_embd_, st_);
+        else kernels::native_mmvq_mixed(types, m, n_embd_, st_);
+        if (extras) *extras = c > 5;
+        return true;
+    }
+#endif
+    return false;   // lin() quantizes its own (on Metal not reached: a window's block above takes every call)
 }
 
 // The three controllers of a later pass's attention inputs for a few tokens, each step one launch for the three
@@ -1015,7 +1061,8 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
             gemv_bf16((const uint16_t*) B.v_dyn.p, x[2], vdyn_, B.v_dyn.n_in, B.v_dyn.n_out, B.v_dyn.n_out, 1, side_);
         }
     }
-    if (!project(B, x, n, quantized)) {
+    bool extras = false;   // the sink's and the taps' products in project()'s launch
+    if (!project(B, x, n, quantized, branch ? nullptr : &extras)) {
         lin(B.wq, x[0], q_, n);
         lin(B.wk, x[1], kraw_, n);
         lin(B.wv, x[2], vraw_, n);
@@ -1023,10 +1070,10 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
         lin(B.gate, x[0], gate_, n);
     }
     if (branch) join();
-    else lin(B.sink, x[0], sink_, n);
+    else if (!extras) lin(B.sink, x[0], sink_, n);
     const float *kd = nullptr, *vd = nullptr;
     if (!B.swa) {
-        if (!branch) {
+        if (!branch && !extras) {
             lin(B.k_dyn, x[1], kdyn_, n);
             lin(B.v_dyn, x[2], vdyn_, n);
         }
