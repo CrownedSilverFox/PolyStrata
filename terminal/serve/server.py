@@ -5075,7 +5075,7 @@ class Service:
     )
 
     def check_model(self, req) -> dict | None:
-        """#6621: reject mismatched Strata catalog model IDs (e.g. requesting `inkling-2-mini-sq-10` while Qwen is
+        """#6621: reject mismatched PolyStrata catalog model IDs (e.g. requesting `inkling-2-mini-sq-10` while Qwen is
         loaded) and, when strict_model is enabled (--strict-model / strict_model: true / STRATA_STRICT_MODEL=1), any
         unrecognized model ID.  Generic client placeholders ('gpt-4', 'x', etc.) stay accepted by default (#297)."""
         asked = req.get("model") if isinstance(req, dict) else None
