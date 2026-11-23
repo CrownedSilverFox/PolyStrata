@@ -67,6 +67,9 @@ protected:
     void output_rows(int first, int rows, float* h) override;
     void finish_logits(float* logits, int rows) override;
     void route(int il, const float* logits, int32_t token, int* ids, float* w, float* tmp) const override;
+    void route_cached(const Layer& L, int il, const float* logits, int32_t token, int* ids, float* w,
+                      float* tmp) override;
+    void slots_moved() override;
     bool route_card(int il, int n, int32_t* ids, float* w) override;
     void moe_shared(const Layer& L, int il, int n) override;
 
@@ -172,6 +175,9 @@ private:
     int n_unpadded_ = 0;
     float qk_clip_ = 0, rel_clip_ = 0, log_alpha_ = 0, log_floor_ = 1, softcap_ = 0;
     float w_scale_ = 0;
+    float* cache_b_ = nullptr;   ///< --cache-bias: each layer's pick bias for the card (slots_moved())
+    void route_by(const float* logits, const float* bias, int* ids, float* w, float* probs) const;
+    void cached_bias(const Layer& L, int il, float* b) const;
     uint32_t attn_type_ = 0;   ///< --attn-requant's type for the attention's matrices; 0: the file's
     bool unsloth_ = false;     ///< an "inkling2" file: block_count counts applications, the loop's names are Unsloth's
     bool ctrl_bf16_ = false;   ///< --loop-bf16: the loop controllers' matrices in BF16

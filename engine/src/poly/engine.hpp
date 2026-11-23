@@ -135,8 +135,9 @@ struct Options {
                                   ///< (gemm_iq_i8_turing()); -1: the default, off; 1: --prompt-int8; 0: --no-prompt-int8,
                                   ///< Turing's halves and cuBLAS
     float cache_bias = 0;         ///< a token's few-at-a-time routing adds this to the score of each expert in VRAM
-                                  ///< before it picks its experts; their weights stay the softmax of the scores the
-                                  ///< router gave (--cache-bias, qwen35moe only); 0: the router's own picks
+                                  ///< before it picks its experts; their weights stay the router's own
+                                  ///< (--cache-bias, qwen35moe and inkling2_loop, route_cached()); 0: the router's own
+                                  ///< picks
     int expert_gpu = -1;          ///< Inkling 2: a second CUDA device (this process's number) for the routed experts
                                   ///< the first card has no room for (--expert-gpu, expert_card.hpp); -1: none
     int expert_gpu_reserve_mib = -1;   ///< VRAM that card keeps free beside them (--expert-gpu-reserve-mib); -1: 512
@@ -542,8 +543,16 @@ protected:
     /// for, or -1 where it has none (a picture's row, the draft block).  tmp: 2 * n_expert_ floats of scratch.  A
     /// prompt batch's tokens are routed by several threads at once: it changes nothing of the engine's.
     virtual void route(int il, const float* logits, int32_t token, int* ids, float* w, float* tmp) const = 0;
+    /// route() with Options::cache_bias, for a token that comes a few at a time (moe()): the experts in VRAM (L.slot)
+    /// are favored by F, and the weights stay the router's own.  The engine's is qwen35moe's: F on the scores, and the
+    /// picks weighed as a softmax of their own scores.
+    virtual void route_cached(const Layer& L, int il, const float* scores, int32_t token, int* ids, float* w,
+                              float* tmp);
+    /// card_moe() has put a new set of experts in VRAM on the card (d_slots_), before the call's launches.
+    virtual void slots_moved() {}
     /// A prompt batch's routing on the card: n tokens' experts and weights from their scores in rl_, n_used_ a token
     /// into ids and w (on the card), what route() gives them up to the last bits of a weight.  False: the host routes.
+    /// moe_card() routes a few tokens with it too (n < kStageRows), where --cache-bias applies as in route_cached().
     virtual bool route_card(int il, int n, int32_t* ids, float* w) {
         (void) il, (void) n, (void) ids, (void) w;
         return false;
@@ -705,7 +714,6 @@ protected:
     bool moe(Layer& L, int il, int n, const std::function<void()>* first = nullptr);
     bool card_moe(int n);
     bool moe_card(Layer& L, int il, int n);
-    const float* biased(const Layer& L, const float* scores);
     /// Whether n tokens take layer L's routed experts as a prompt batch, through MMQ (moe_rows()), and not a few at
     /// a time (moe()).
     bool batched(const Layer& L, int n) const;
@@ -1173,7 +1181,7 @@ protected:
     std::vector<int32_t> ids_, count_, first_, group_, round_, round_row_;
     std::vector<int> staged_tiles_;   ///< STRATA_POLY_STAGED_TILES: the rows that end a size class of staged experts
     std::vector<float> route_tmp_;   ///< route()'s scratch, a share for each host thread
-    std::vector<float> bias_rl_;     ///< one token's scores with Options::cache_bias added (moe())
+    std::vector<float> bias_rl_;     ///< one token's scores or pick bias with Options::cache_bias (route_cached())
     struct Run {
         int c, j, m, most;   ///< the rows' class, its first cached expert and how many, the most rows one has
     };

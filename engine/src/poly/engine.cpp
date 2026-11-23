@@ -1957,9 +1957,10 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     if (name != "gemma4" && (o.kv_format == KvFmt::kInt8 || o.kv_format == KvFmt::kInt8K))
         throw std::runtime_error("--kv int8 and --kv int8k are Gemma 4's; for a qwen35moe or kolibri1 model use "
                                  "--kv q8_0 (this is a '" + name + "' model)");
-    // moe() weighs the picks as a softmax of their scores, which is how only this architecture's router does
-    if (o.cache_bias > 0.f && !qwen35)
-        throw std::runtime_error("--cache-bias is supported for qwen35moe models; this is a '" + name + "' model");
+    // route_cached(): the engine's is qwen35moe's router (softmax weights); Inkling 2 has its own
+    if (o.cache_bias > 0.f && !qwen35 && !inkling)
+        throw std::runtime_error("--cache-bias is supported for qwen35moe and Inkling 2 models; this is a '" + name +
+                                 "' model");
     if ((!o.attn_requant.empty() || o.loop_bf16 || o.prompt_int8 >= 0) && !inkling)
         throw std::runtime_error("--attn-requant, --loop-bf16 and --prompt-int8 / --no-prompt-int8 are Inkling 2's; this is a '" + name + "' model");
     if (o.expert_gpu >= 0 && (!inkling || !o.layer_split.empty()))
@@ -5005,10 +5006,15 @@ void Engine::pool_queue(const Layer& L, size_t e, int32_t s, bool first) {
     pool_cv_.notify_all();
 }
 
-// One token's router scores with Options::cache_bias added to the ones of the experts in VRAM.
-const float* Engine::biased(const Layer& L, const float* scores) {
+// qwen35moe's: the router's scores with Options::cache_bias added to the ones of the experts in VRAM choose the
+// experts; the weights are the router's own, a softmax of the scores it gave the chosen ones.
+void Engine::route_cached(const Layer& L, int il, const float* scores, int32_t token, int* ids, float* w, float* tmp) {
     for (int e = 0; e < n_expert_; ++e) bias_rl_[(size_t) e] = scores[e] + (L.slot[(size_t) e] ? opt_.cache_bias : 0.f);
-    return bias_rl_.data();
+    route(il, bias_rl_.data(), token, ids, w, tmp);
+    float mx = scores[ids[0]], sum = 0.f;
+    for (int k = 1; k < n_used_; ++k) mx = std::max(mx, scores[ids[k]]);
+    for (int k = 0; k < n_used_; ++k) sum += w[k] = std::exp(scores[ids[k]] - mx);
+    for (int k = 0; k < n_used_; ++k) w[k] /= sum;
 }
 
 // The call's experts from pool_'s slots.  One not there takes the slot pool_victim() gives and goes on
@@ -5115,16 +5121,9 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
             int* ids = ids_of[t];
             float* w = w_of[t];
             const float* scores = h_rl_ + (size_t) (at + t) * n_expert_;
-            route(il, opt_.cache_bias > 0.f ? biased(L, scores) : scores, tok_ ? tok_[at + t] : -1, ids, w,
-                  route_tmp_.data() + (size_t) (spread ? t : 0) * 2 * n_expert_);
-            if (opt_.cache_bias > 0.f) {
-                // --cache-bias: the biased scores chose the experts; the weights are the router's own, a softmax of
-                // the scores it gave the chosen ones
-                float mx = scores[ids[0]], sum = 0.f;
-                for (int k = 1; k < n_used_; ++k) mx = std::max(mx, scores[ids[k]]);
-                for (int k = 0; k < n_used_; ++k) sum += w[k] = std::exp(scores[ids[k]] - mx);
-                for (int k = 0; k < n_used_; ++k) w[k] /= sum;
-            }
+            float* tmp = route_tmp_.data() + (size_t) (spread ? t : 0) * 2 * n_expert_;
+            if (opt_.cache_bias > 0.f) route_cached(L, il, scores, tok_ ? tok_[at + t] : -1, ids, w, tmp);
+            else route(il, scores, tok_ ? tok_[at + t] : -1, ids, w, tmp);
         };
         if (spread)
             workers_->run(m, route_row);
@@ -5458,6 +5457,7 @@ bool Engine::card_moe(int n) {
         if (mirrored)
             ck(cudaMemcpy(d_far_, h_far_.data(), h_far_.size() * sizeof(void*), cudaMemcpyHostToDevice),
                "expert slots");
+        slots_moved();
 #if defined(STRATA_GPU_METAL)
         ck(gpu::metal::register_indirect(d_slots_, h_slots_.data(), h_slots_.size()), "expert dependencies");
 #endif

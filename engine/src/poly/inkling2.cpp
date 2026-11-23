@@ -1492,11 +1492,38 @@ void Inkling2::finish_logits(float* logits, int rows) {
 // What llama.cpp's MoE graph does for this model: sigmoid gates, the n_used largest of gate + bias, and weights
 // from the bare gates, divided by their sum and scaled.
 void Inkling2::route(int il, const float* logits, int32_t, int* ids, float* w, float* probs) const {
-    const std::vector<float>& bias = blocks_[(size_t) il].probs_b;
+    route_by(logits, blocks_[(size_t) il].probs_b.data(), ids, w, probs);
+}
+
+// --cache-bias: F onto the pick of each expert in VRAM.  The pick is the gate plus the layer's bias, so the experts in
+// VRAM keep their order among themselves, as do the others, and only a close call between the two goes the other way;
+// a looped layer's passes pick among the same experts in VRAM.  The weights stay the bare gates'.
+void Inkling2::cached_bias(const Layer& L, int il, float* b) const {
+    const std::vector<float>& pb = blocks_[(size_t) il].probs_b;
+    for (int e = 0; e < n_expert_; ++e) b[e] = pb[(size_t) e] + (L.slot[(size_t) e] ? opt_.cache_bias : 0.f);
+}
+
+void Inkling2::route_cached(const Layer& L, int il, const float* logits, int32_t, int* ids, float* w, float* probs) {
+    cached_bias(L, il, bias_rl_.data());
+    route_by(logits, bias_rl_.data(), ids, w, probs);
+}
+
+// route_card()'s bias for a few tokens, every layer's, from the experts card_moe() has just put on the card
+void Inkling2::slots_moved() {
+    if (!(opt_.cache_bias > 0.f)) return;
+    const size_t ne = (size_t) n_expert_;
+    std::vector<float> b((size_t) n_layer_ * ne, 0.f);
+    for (int il = 0; il < n_layer_; ++il)
+        if (layers_[(size_t) il].moe) cached_bias(layers_[(size_t) il], il, b.data() + (size_t) il * ne);
+    if (!cache_b_) cache_b_ = (float*) dmalloc(b.size() * sizeof(float), "scratch");
+    ck(cudaMemcpy(cache_b_, b.data(), b.size() * sizeof(float), cudaMemcpyHostToDevice), "cache bias");
+}
+
+void Inkling2::route_by(const float* logits, const float* bias, int* ids, float* w, float* probs) const {
     float* pick = probs + n_expert_;
     for (int e = 0; e < n_expert_; ++e) {
         probs[e] = 1.f / (1.f + std::exp(-logits[e]));
-        pick[e] = probs[e] + bias[(size_t) e];
+        pick[e] = probs[e] + bias[e];
     }
     float sum = 0.f;
     for (int k = 0; k < n_used_; ++k) {
@@ -1517,8 +1544,10 @@ void Inkling2::route(int il, const float* logits, int32_t, int* ids, float* w, f
 
 bool Inkling2::route_card(int il, int n, int32_t* ids, float* w) {
     const Block& B = blocks_[(size_t) il];
-    route_rows(rl_, n_expert_, n_used_, n, 1, 1.f, B.probs_b_dev.p ? fp(B.probs_b_dev) : nullptr, nullptr, true,
-               w_scale_, ids, w, st_);
+    const float* bias = B.probs_b_dev.p ? fp(B.probs_b_dev) : nullptr;
+    // a few tokens (moe_card()) with --cache-bias pick by slots_moved()'s bias; a prompt batch as before
+    if (cache_b_ && n < kStageRows) bias = cache_b_ + (size_t) il * n_expert_;
+    route_rows(rl_, n_expert_, n_used_, n, 1, 1.f, bias, nullptr, true, w_scale_, ids, w, st_);
     return true;
 }
 
