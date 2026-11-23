@@ -40,8 +40,10 @@ protected:
     void assign_scratch() override;
     // A call of a few tokens keeps a scratch of its own, and a prompt batch's is lent to the expert cache between
     // prompts (Engine::use_scratch()).  Not with the drafter, whose features are a whole call's rows, nor on ROCm on
-    // Linux (inkling2.cpp).
+    // Linux, nor where nothing would be lent: the experts frozen, or every one of them in VRAM (inkling2.cpp).
     bool scratch_layouts() const override;
+    bool scores_apart() const;   ///< the attention's scores outside the scratch, for its two layouts to share
+    bool every_expert_fits() const;
     int widest() const override;
     int streams() const override { return 1; }
     void layer_head(Layer& L, int il, int n) override;
@@ -219,6 +221,7 @@ private:
           *sink_ = nullptr, *gate_ = nullptr, *kdyn_ = nullptr, *vdyn_ = nullptr, *att_ = nullptr, *aoraw_ = nullptr,
           *fc_ = nullptr, *score_ = nullptr, *zeros_ = nullptr, *awork_ = nullptr;
     size_t score_n_ = 0;
+    float* scores_ = nullptr;   ///< score_ where it is apart from the scratch (scores_apart())
 };
 
 }  // namespace strata::poly

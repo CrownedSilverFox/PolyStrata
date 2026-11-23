@@ -561,14 +561,34 @@ size_t Inkling2::recurrent_floats() const { return slots_.size() * past_floats()
 
 // ROCm on Linux gives VRAM back only with its addresses (Engine::vmm_unmap()), and a prompt's lent buffers crashed
 // strata-poly there (an RX 9070 XT, Inkling 2 Mini IQ4_NL with some experts in RAM): the prompt batch's scratch stays
-// out of them, in one layout as before.
-bool Inkling2::scratch_layouts() const {
+// out of them, in one layout as before.  With the experts frozen (STRATA_FREEZE_EXPERTS, --check-batch) lend_prompt()
+// lends nothing, and the small layout would only take VRAM from the expert cache for the whole run.
+bool Inkling2::scores_apart() const {
 #ifdef STRATA_VMM_RELEASE_WITH_ADDRESSES
     return false;
 #else
-    return !ds_file_;
+    return !ds_file_ && !freeze_experts_asked_ && mmq_ && vmm_ && !split_ && rows_ >= kStageRows;
 #endif
 }
+
+// A card that holds every expert lends nothing either (lend_prompt() with all_cached()).  The cache is not sized yet
+// when the engine asks, so this is from the free VRAM: every expert's bytes, the prompt batch's scratch (scratch_at_,
+// just counted) and 2 GiB for the reserve, the prompt's other buffers and the staging buffer.  Where it is wrong the
+// card either has the small layout it does not use (a few MiB) or no layouts, as main.
+bool Inkling2::every_expert_fits() const {
+    size_t all = 0;
+    for (const Layer& L : layers_) {
+        if (!L.moe) continue;
+        if (!kernels::native_mmvq_supported((int) L.gu_type) || !kernels::native_mmvq_supported((int) L.u_type) ||
+            !kernels::native_mmvq_supported((int) L.d_type))
+            return false;   // fill_expert_cache() keeps such a layer's experts in RAM
+        all += (size_t) n_expert_ * (L.gu2() + L.d_bytes);
+    }
+    const size_t need = all + scratch_at_ * sizeof(float) + (size_t(2) << 30);
+    return (size_t) vram_free_mib() << 20 >= need;
+}
+
+bool Inkling2::scratch_layouts() const { return scores_apart() && !every_expert_fits(); }
 
 int Inkling2::widest() const { return std::max(n_head_ * head_dim_, 2 * n_embd_); }
 
@@ -635,7 +655,12 @@ void Inkling2::assign_scratch() {
     fc_ = fbuf(e);
     // a token's scores of the whole context, and what ink_attend() keeps beside them
     score_n_ = std::max(kScoreFloats, ink_attend_floats(n_head_, n_kv_, head_dim_, opt_.max_context));
-    score_ = fbuf(score_n_);
+    if (scores_apart()) {   // sized for the context, not for a call's tokens: 64 MiB that both layouts share
+        if (!scores_) scores_ = (float*) dmalloc(score_n_ * sizeof(float), "the attention's scores");
+        score_ = scores_;
+    } else {
+        score_ = fbuf(score_n_);
+    }
     zeros_ = fbuf((size_t) n_head_);
     xqo_ = fbuf((kernels::native_q8_1_bytes(n_head_ * head_dim_) + sizeof(float) - 1) / sizeof(float));
     if (buf_rows_ >= kStageRows) awork_ = fbuf(heads + heads / 2 + 1 + 3 * n * n_head_);   // a prompt batch's attention
