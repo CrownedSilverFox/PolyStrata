@@ -288,7 +288,7 @@ class InklingCustomGgufTests(unittest.TestCase):
     # the header of Inkling-2-Mini-IQ4_NL.gguf (17,627,940,768 bytes): its routed experts' bytes per type
     IQ4_NL = {"IQ4_NL": 11466178560, "Q8_0": 4331667456}
 
-    def _resolve(self, name: str, arch: str, expert_bytes: dict):
+    def _resolve(self, name: str, arch: str, expert_bytes: dict, check: bool = False):
         tools = str(Path(_ROOT) / "tools")
         if tools not in sys.path:
             sys.path.insert(0, tools)
@@ -304,7 +304,7 @@ class InklingCustomGgufTests(unittest.TestCase):
             _write_gguf(p)
             stack.enter_context(mock.patch.dict(sys.modules, {"strata_inspect": stub}))
             stack.enter_context(mock.patch.dict(setup.FAMILIES["inkling"]["models"]))   # put back after the test
-            family, model, shards = setup.resolve_custom_gguf(str(p))
+            family, model, shards = setup.resolve_custom_gguf(str(p), check)
             return family, model, dict(setup.FAMILIES["inkling"]["models"]), p.stat().st_size
 
     def test_iq4_nl_is_a_size_of_its_own(self):
@@ -347,6 +347,30 @@ class InklingCustomGgufTests(unittest.TestCase):
         kind, sentence = strata_inspect.verdict({"arch": "inkling2_loop"}, {})
         self.assertEqual(kind, "family")
         self.assertIn("--custom-gguf", sentence)
+
+    def test_the_warning_says_what_it_read(self):
+        """The warning names the quant only when the name has one, says "would be installed" under --check, and says
+        which estimate is borrowed from an offered size."""
+        said = []
+        with mock.patch.object(setup, "warn", said.append):
+            _, model, _, _ = self._resolve("Inkling-2-Mini.gguf", "inkling2_loop", self.IQ4_NL)
+            self._resolve("Inkling-2-Mini-IQ4_NL.gguf", "inkling2_loop", self.IQ4_NL, check=True)
+        self.assertEqual(model, "custom")
+        self.assertIn("the file name has no quant", said[0])
+        self.assertNotIn("'Mini'", said[0])
+        self.assertIn("installed as its own size, custom", said[0])
+        self.assertIn("the VRAM before any expert is UD-Q4_K_XL's", said[0])
+        self.assertIn("quant 'IQ4_NL'", said[1])
+        self.assertIn("would be installed as its own size, IQ4_NL", said[1])
+
+    def test_no_experts_is_refused(self):
+        """A header with no routed experts: a clear refusal, not a division by zero later."""
+        def fail(msg, hint=""):
+            raise SystemExit(msg)
+
+        with mock.patch.object(setup, "fail", fail), self.assertRaises(SystemExit) as cm:
+            self._resolve("Inkling-2-Mini-IQ4_NL.gguf", "inkling2_loop", {})
+        self.assertIn("no routed experts", str(cm.exception))
 
     def test_top_level_layout_is_taken(self):
         """Unsloth's top-level files (architecture inkling2), which the engine reads too: an offered size by its

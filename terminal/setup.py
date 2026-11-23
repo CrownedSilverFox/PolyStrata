@@ -12147,9 +12147,9 @@ def preview_family(a) -> int:
     return 0
 
 
-def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
+def resolve_custom_gguf(path_str: str, check: bool = False) -> tuple[str, str, list[Path]]:
     """--custom-gguf PATH: inspect the GGUF header, match it to a family/model,
-    and return (family, model, [shard paths])."""
+    and return (family, model, [shard paths]).  `check`: --check (nothing is installed)."""
     _tools = str(ROOT / "tools")
     if _tools not in sys.path:
         sys.path.insert(0, _tools)
@@ -12239,10 +12239,14 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
             # a quantization setup does not offer (Inkling 2 Mini's IQ4_NL, Q4_K_M, ...): a size of its own, its
             # estimates read from the file's header
             model = quant if m_q else "custom"
-            models_dict[model] = custom_size(models_dict, fp, sum(f.stat().st_size for f in files))
-            warn(f"{title} (architecture {fp['arch']!r}): your file's quant '{quant}' is not one setup offers "
-                 f"({', '.join(sorted(k for k in models_dict if k != model))}): installed as its own size, {model}; "
-                 "the RAM and VRAM estimates are read from its header")
+            offered = ", ".join(sorted(models_dict))
+            d, near = custom_size(models_dict, fp, sum(f.stat().st_size for f in files))
+            models_dict[model] = d
+            warn(f"{title} (architecture {fp['arch']!r}): "
+                 + (f"your file's quant '{quant}' is not one setup offers ({offered})" if m_q else
+                    f"the file name has no quant setup offers ({offered})")
+                 + f": {'would be installed' if check else 'installed'} as its own size, {model}; its experts' "
+                 f"size and the RAM estimate are read from its header, the VRAM before any expert is {near}'s")
         if not model:
             model = sorted(models_dict)[0]
             warn(f"PolyStrata: {sentence}\n  your file's quant '{quant}' is not one setup offers "
@@ -12255,16 +12259,19 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
          "use --inspect to read the full explanation, or give it to --gguf-dir")
 
 
-def custom_size(sizes: dict, fp: dict, file_bytes: int) -> dict:
-    """--custom-gguf's entry for a quantization a strata-poly family does not offer: its experts' bytes (the arena)
-    and its file size from the header, and the VRAM beside the experts of the offered size whose experts are closest
-    in bytes (what is not an expert is stored about alike in every size)."""
+def custom_size(sizes: dict, fp: dict, file_bytes: int) -> tuple[dict, str]:
+    """--custom-gguf's entry for a quantization a strata-poly family does not offer, and the offered size it borrows
+    from: its experts' bytes (the arena) and its file size from the header, and the VRAM beside the experts of the
+    offered size whose experts are closest in bytes (what is not an expert is stored about alike in every size)."""
     arena = sum(fp["expert_bytes"].values()) / 1e9
-    near = min(sizes.values(), key=lambda d: abs(d["arena_gb"] - arena))
+    if arena <= 0:
+        fail("cannot install this GGUF with --custom-gguf: its header lists no routed experts",
+             "the file may be damaged or of another model; use --inspect to read its tensors")
+    near = min(sizes, key=lambda m: abs(sizes[m]["arena_gb"] - arena))
     d = {"about": "your own file, a quantization setup does not offer", "download_gb": file_bytes / 1e9,
-         "arena_gb": arena, "vram_beside_gb": poly_beside_gb(near)}
+         "arena_gb": arena, "vram_beside_gb": poly_beside_gb(sizes[near])}
     d["ram_gb"] = round(poly_ram_need(d, 8.0))           # as the offered sizes' (an 8 GB card's estimate)
-    return d
+    return d, near
 
 
 def mac_vision(asked, model: str, ram: float) -> str:
@@ -12882,7 +12889,7 @@ def main() -> int:
     if a.inspect:                                      # headers only: nothing is installed
         sys.exit(subprocess.run([sys.executable, str(ROOT / "tools" / "strata_inspect.py"), *a.inspect[:2]]).returncode)
     if a.custom_gguf:                                   # your own GGUF: inspect it, match it, skip download
-        _fam, _model, a._custom_gguf_shards = resolve_custom_gguf(a.custom_gguf)
+        _fam, _model, a._custom_gguf_shards = resolve_custom_gguf(a.custom_gguf, a.check)
         p = Path(a.custom_gguf)
         if (a.family and a.family != _fam) or (a.model and a.model != _model):
             fail(f"--custom-gguf resolves to --family {_fam} --model {_model}, "
