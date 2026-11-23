@@ -2,7 +2,7 @@
 // (gemm_iq_i8_grouped, declared in include/strata/kernels/iq_kernels.hpp), for a matrix of any size.  Included once by
 // i8_mma.cu inside its anonymous namespace, after i8_expert.cuh: a weight sub-block is decoded by that file's
 // i8_load / i8_pack / i8_convert (32 values as 8 words of int8, their integer scales and float base), or read by the
-// loaders here and decoded by i8_pack / i8_convert, Q3_K by the decoder here.  CUDA only, Ampere and newer: mma.sync
+// loaders here and decoded by i8_pack / i8_convert, Q3_K, Q2_K and IQ1_S by the decoders here.  CUDA only, Ampere and newer: mma.sync
 // m16n8k32 and m16n8k16 with s8 operands; Turing when asked (gemm_iq_i8_turing()), by m8n8k16.
 //
 // A block: WR = 64 weight rows of one matrix x up to 16 NJ of its activation rows (blockIdx.y walks a matrix's rows
@@ -24,8 +24,8 @@
 constexpr int I8M_NT = 256;
 constexpr int I8M_LD = 68;   // words of a shared row of codes: 64 + 4, so the 8 rows a warp reads at once lie in 8 banks
 
-#define STRATA_I8M_TYPES(X) X(2) X(6) X(7) X(8) X(10) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42)
-__host__ __device__ constexpr bool i8m_type(int t) { return t == 10 || t == 11 || i8_block_bytes(t) != 0; }
+#define STRATA_I8M_TYPES(X) X(2) X(6) X(7) X(8) X(10) X(11) X(12) X(13) X(14) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(19) X(42)
+__host__ __device__ constexpr bool i8m_type(int t) { return t == 10 || t == 11 || t == 19 || i8_block_bytes(t) != 0; }
 __host__ __device__ constexpr bool i8m_two(int t) { return t == 10 || t == 11 || i8_two_scales(t); }   // a scale per 16 values
 __host__ __device__ constexpr bool i8m_min16(int t) { return t == 10; }   // and a minimum per 16 values (Q2_K)
 
@@ -253,7 +253,31 @@ __device__ __forceinline__ void i8m_q2k_convert(const uint32_t (&r)[I8M_Q2K_RAW]
     m0 = -dmin * (float) ((r[8] >> 4) & 15u);
     m1 = -dmin * (float) ((r[8] >> 12) & 15u);
 }
-template <int T> constexpr int I8M_RAW = T == 11 ? I8M_Q3K_RAW : T == 10 ? I8M_Q2K_RAW : I8NR<T>;   // words a thread reads for a sub-block
+// IQ1_S (block_iq1_s, 50 bytes: d, qs 32, qh 8 16-bit words), sub-block ib (0..7) of super-block sb: 32 values in 4
+// groups of 8.  Group l's grid entry is iq1s_grid_gpu[qs[4 ib + l] | (bits 3 l .. 3 l + 2 of qh[ib]) << 8], 8 nibbles of
+// 0..2 (value g - 1), and the sub-block's value is d (2 s + 1) (g - 1 +- 1/8), s = bits 12-14 of qh[ib], the 1/8 negative
+// where bit 15 is set (IQ1S_DELTA).  As IQ1_M's (i8_expert.cuh) the delta goes into the int8 code: 8 (g - 1) +- 1, with a
+// float scale d (2 s + 1) / 8, one a sub-block.  The words as they are read: qs's 4 bytes, qh[ib], d.
+constexpr int I8M_IQ1S_RAW = 3;
+__device__ __forceinline__ void i8m_iq1s_load(I8P row, int sb, int ib, uint32_t (&r)[I8M_IQ1S_RAW]) {
+    I8P b = row + (size_t) sb * 50;
+    r[0] = i8_ld32(b + 2 + 4 * ib);   // (2-byte aligned)
+    r[1] = i8_ld16(b + 34 + 2 * ib);
+    r[2] = i8_ld16(b);
+}
+__device__ __forceinline__ void i8m_iq1s_convert(const uint32_t (&r)[I8M_IQ1S_RAW], const uint32_t* grid, uint32_t (&q)[8], float& f0) {
+    const uint32_t qh = r[1];
+    // per byte 8 g + 121 (+1/8) or 8 g + 119 (-1/8), g 0..2: no carry between bytes; less 128 by the top bit's flip
+    const uint32_t K = (qh & 0x8000u) ? 0x77777777u : 0x79797979u;
+#pragma unroll
+    for (int l = 0; l < 4; ++l) {
+        const uint32_t e = grid[((r[0] >> (8 * l)) & 255u) | (((qh >> (3 * l)) & 7u) << 8)];
+        q[2 * l] = (((e & 0x0F0F0F0Fu) << 3) + K) ^ 0x80808080u;           // values 8 l .. 8 l + 3: the low nibbles
+        q[2 * l + 1] = ((((e >> 4) & 0x0F0F0F0Fu) << 3) + K) ^ 0x80808080u;  // 8 l + 4 .. 8 l + 7: the high ones
+    }
+    f0 = i8_half(r[2]) * 0.125f * (float) (2u * ((qh >> 12) & 7u) + 1u);
+}
+template <int T> constexpr int I8M_RAW = T == 11 ? I8M_Q3K_RAW : T == 10 ? I8M_Q2K_RAW : T == 19 ? I8M_IQ1S_RAW : I8NR<T>;   // words a thread reads for a sub-block
 // The sub-blocks of a stage a thread decodes, of its weight row (RT threads a row, 8 / RT sub-blocks each): r0, r0 + RT,
 // ..., so that the threads of a row read their sub-blocks side by side; for Q3_K, Q6_K and IQ4_XS two that share most of
 // what they read (Q3_K's code and high-bit words and scales, Q6_K's high bits and low bits: 0 and 2, 1 and 3, ...;
@@ -471,6 +495,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                 else if constexpr (T == 8) i8m_q8_load(blob + row_off, S, ib, wraw[part]);
                 else if constexpr (T == 14) i8m_q6k_load(blob + row_off, S, ib, wraw[part]);
                 else if constexpr (T == 23) i8m_iq4xs_load(blob + row_off, S, ib, wraw[part]);
+                else if constexpr (T == 19) i8m_iq1s_load(blob + row_off, S, ib, wraw[part]);
                 else i8_load<T>(blob, i8_offs<T>(row_off, ib & 3), 2 * S + (ib >> 2), wraw[part]);
             }
         }
@@ -519,6 +544,8 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                     i8m_q3k_convert(wraw[part], ib, q, f0, f1);
                 } else if constexpr (T == 10) {
                     i8m_q2k_convert(wraw[part], ib, q, f0, f1, mn, mn1);
+                } else if constexpr (T == 19) {
+                    i8m_iq1s_convert(wraw[part], grid_rd, q, f0);
                 } else {
                     uint32_t w[I8NW<T>];
                     int m0, m1;

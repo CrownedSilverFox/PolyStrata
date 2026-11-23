@@ -65,6 +65,12 @@ same most likely token at 560 of the 576 steps. Prompt speed, three runs each:
 | **UD-Q2_K_XL** | 2,048 tokens | 361-363 tokens/s | 434-439 tokens/s |
 | | 8,192 tokens | 347-348 tokens/s | 411-412 tokens/s |
 
+On an RTX 30 card or newer, most of a prompt's products run on the int8 tensor cores, with the prompt's numbers
+rounded to 8 bits. UD-Q2_K_XL's IQ1_S experts (the gate and up of 6 layers) are the exception: they stay on halves
+unless `STRATA_PREFILL_IQ1S=int8` is set. On an RTX 3090 that setting reads a 2,048-token prompt 7.7% faster (2,159
+against 2,005 tokens/s) and an 8,192-token one 6.7% faster, but on a 302-token prompt it moved the answers more for
+each matrix than the other experts' int8 products do, so it is opt-in until more prompts are measured.
+
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
 gives Inkling 2 Mini four settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's

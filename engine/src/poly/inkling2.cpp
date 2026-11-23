@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace strata::poly {
@@ -104,6 +106,14 @@ void Inkling2::load_geometry() {
     // Turing's prompt products on the int8 kernel that Ampere and newer take by default (i8_mma.cuh), unless
     // --no-prompt-int8 (STRATA_PF_I8MMA=0 turns the kernel off on every card)
     kernels::gemm_iq_i8_turing(opt_.prompt_int8 != 0);
+    // STRATA_PREFILL_IQ1S=int8: IQ1_S (UD-Q2_K_XL's gate|up in 6 layers) on the int8 prompt kernel, as the file's
+    // other types are on Ampere and newer (i8_mma.cuh: activations int8 a 32 values).  Opt-in: on a 302-token prompt
+    // it cost more KL a matrix than those types do.  Unset or =fp16: the FP16 kernel, as before.  Other models never
+    // ask, so their IQ1_S products stay on the FP16 kernel.
+    {
+        const char* v = std::getenv("STRATA_PREFILL_IQ1S");
+        kernels::gemm_iq_i8_allow(19, v && std::string(v) == "int8");
+    }
 #endif
     // --kv fp8: the attention caches in FP8 E4M3 with a scale a row's head, about half the bytes of fp16, as Strata
     // v0.2.19's Inkling engine has them on small cards (ink_cuda_backend.cu): at 32K tokens the eight full-attention

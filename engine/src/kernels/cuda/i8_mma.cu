@@ -16,8 +16,8 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <atomic>
+#include <cstdlib>
 #include <mutex>
 #include <type_traits>
 
@@ -28,6 +28,11 @@ namespace {
 #include "i8_expert.cuh"
 #include "i8_mma.cuh"
 
+// The types this kernel takes only once a model's engine has asked for them (gemm_iq_i8_allow()): IQ1_S, whose
+// prompt products went to the FP16 kernel before, so that another model's stay as they were
+constexpr bool i8m_asked_type(int t) { return t == 19; }
+std::atomic<uint64_t> i8m_allowed{0};   // bit t: type t asked for
+
 void check(const char* what) {
     const cudaError_t e = cudaGetLastError();
     if (e != cudaSuccess) { std::fprintf(stderr, "%s: %s\n", what, cudaGetErrorString(e)); std::exit(1); }
@@ -37,10 +42,16 @@ void check(const char* what) {
 // K whole stages of 256, or for a type of 32-value blocks whole blocks: the kernel leaves out what lies past K in its
 // last stage (Gemma 4 26B's down, K = 704: Q8_0, Q5_1, IQ4_NL, Q4_0)
 bool gemm_iq_i8_takes(int ty, int K) {
+    if (i8m_asked_type(ty) && !((i8m_allowed.load(std::memory_order_relaxed) >> ty) & 1u)) return false;
     return i8m_type(ty) && K > 0 && K % (i8_block_vals(ty) == 32 ? 32 : 256) == 0 && i8m_card().on;
 }
 
 void gemm_iq_i8_turing(bool on) { i8m_turing.store(on, std::memory_order_relaxed); }
+void gemm_iq_i8_allow(int ty, bool on) {
+    if (!i8m_asked_type(ty)) return;
+    if (on) i8m_allowed.fetch_or(uint64_t{1} << ty, std::memory_order_relaxed);
+    else i8m_allowed.fetch_and(~(uint64_t{1} << ty), std::memory_order_relaxed);
+}
 
 void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream) {
     if (rows <= 0) return;
