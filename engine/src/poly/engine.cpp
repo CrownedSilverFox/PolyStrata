@@ -4637,6 +4637,11 @@ void Engine::pool_ahead(int j, int n, size_t part, int k) {
 // with 6 the card took 84% of the experts in place of 81%, but more uploads were late and the answer slower; with
 // 8 a third of them went unused.
 void Engine::vram_ahead(int j, int n, size_t part) {
+    // up_ copies in order: guesses put behind uploads it has not finished land after their layer has run, and a
+    // call's own miss (moe()) waits behind them with the card.  A bus that keeps up is done before the next layer.
+    // Qwen3.6 UD-Q4_K_M on a 4090 D held to 11 GiB, PCIe 4.0 x8: the first answer after a load wrote 102-109
+    // tokens/s with them queued, 173-185 without; UD-Q3_K_M on the PRO 6000, PCIe 5.0 x16: 300-358 and 334-347.
+    if (up_busy()) return;
     const Layer& L = layers_[(size_t) j];
     const size_t ne = (size_t) n_expert_;
     constexpr int k = kAheadGuesses;
@@ -4684,10 +4689,13 @@ void Engine::vram_ahead(int j, int n, size_t part) {
         ck(cudaEventRecord((cudaEvent_t) g.arrived[i], cs(up_)), "upload ahead");   // usable on its own
     }
     ck(cudaEventRecord((cudaEvent_t) g.up, cs(up_)), "upload ahead");
+    up_last_ = g.up;
     g.here = 0;
     g.il = j;
     stats_.ahead_sent += g.n;
 }
+
+bool Engine::up_busy() const { return up_last_ && cudaEventQuery((cudaEvent_t) up_last_) == cudaErrorNotReady; }
 
 // Expert e of layer il in a group vram_ahead() uploaded, once it has arrived, or null.  `read` gets the group's bit:
 // moe() marks the group's last reader after its launches.
@@ -5212,8 +5220,9 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
         // the card waits for one upload less than the CPU takes for it.  At 6 GB (vram_ahead()) 85% of the experts
         // went to the card in place of 81%, 182-189 tokens/s in place of 175-187; two or three a call left the card
         // waiting for their uploads, and were slower than none.
+        // Not while up_ still copies the guesses for this layer or earlier ones: the card would wait for all of them.
         int own = -1;   // that expert, which launch() uploads; -1: none
-        if (aheads && n_host > 0 && at == 0) {
+        if (aheads && n_host > 0 && at == 0 && !up_busy()) {
             int best = 0, most = 0;
             for (int i = 0; i < n_host; ++i) {
                 if (host[i].gate != mirror(il, host_e[i])) continue;
@@ -5268,6 +5277,7 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
                                    L.gu2() + L.d_bytes, cudaMemcpyHostToDevice, cs(up_)),
                    "upload ahead");
                 ck(cudaEventRecord((cudaEvent_t) g.up, cs(up_)), "upload ahead");
+                up_last_ = g.up;
             }
             // The upload's uses come last in cached: the experts before them go at once, and only the launches with
             // its uses wait for it.  When every launch waited for it, the card was still busy after the CPU's experts

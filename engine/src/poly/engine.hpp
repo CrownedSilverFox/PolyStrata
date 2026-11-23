@@ -747,6 +747,7 @@ protected:
     GatherPiece* gather_slot();
     void vram_ahead(int j, int n, size_t part);
     const uint8_t* ahead_of(int il, int e, unsigned& read);
+    bool up_busy() const;   ///< up_ has uploads ahead still to copy (up_last_)
     void mind_memory();
     void follow(int written);
     void follow_loop();
@@ -907,6 +908,7 @@ protected:
     static constexpr int kAheadGroups = 6, kAheadGuesses = 4;
     Ahead ahead_[kAheadGroups + 1];   ///< and last, the misses a call uploads for itself (moe())
     int ahead_turn_ = 0, ahead_slots_ = 0;
+    void* up_last_ = nullptr;   ///< the `up` of the last uploads ahead put on up_
     size_t ahead_stride_ = 0;
     std::atomic<bool> map_quit_{false};
     /// Options::lock_experts without the mirror: the experts whose pages are locked (layer * n_expert + expert), first
