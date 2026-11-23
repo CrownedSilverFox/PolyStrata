@@ -365,7 +365,7 @@ Off unless you set them. The last column says where each one is described.
 | `STRATA_WDDM_BUDGET` | number | AMD, Intel Arc | [AMD_HIP.md](AMD_HIP.md) |
 | `STRATA_WDDM_MARGIN_MIB` | number | AMD | [AMD_HIP.md](AMD_HIP.md) |
 
-## Switches that go back to earlier behaviour (120)
+## Switches that go back to earlier behaviour (121)
 
 These behaviours are on by default. Setting the switch returns the earlier behaviour; the notes in the register say which
 version made it the default.
