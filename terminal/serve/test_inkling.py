@@ -172,6 +172,19 @@ class ServiceForInkling(unittest.TestCase):
                 head = self.tok.decode(ids[:req["strata_prefix"].get("tokens", 0)])
                 self.assertTrue(head.endswith("DOC <|end_message|>"), head[-60:])
 
+    def test_a_shared_prefix_with_a_numeric_effort_or_thinking_off_over_one(self):
+        # PR 213: a number is an effort of its own, and thinking off wins over a named effort, as in render_prompt
+        msgs = [{"role": "user", "content": "DOC " * 40}, {"role": "user", "content": "Which word repeats?"}]
+        for kwargs, effort in (({"reasoning_effort": 0.5}, "0.5"),
+                               ({"reasoning_effort": "max", "enable_thinking": False}, "none")):
+            with self.subTest(**kwargs):
+                req = {"strata_prefix": {"messages": 1}}
+                ids, _, _ = self.svc.prepare(msgs, None, dict(kwargs), 16, req=req)
+                head = self.tok.decode(ids[:req["strata_prefix"].get("tokens", 0)])
+                self.assertEqual(head, f"<|message_system|>effort={effort}<|end_message|>"
+                                       f"<|message_user|>{'DOC ' * 40}<|end_message|>")
+                self.assertTrue(self.svc.render_prompt(msgs, None, dict(kwargs)).startswith(head))
+
     def test_a_reply_goes_on_in_the_text_block_a_prompt_opened(self):
         for kwargs, reply, reasoning in (({}, THINK + TEXT + STOP, "the capital of Italy"),
                                          ({"enable_thinking": False}, "Rome" + END + STOP, "")):
