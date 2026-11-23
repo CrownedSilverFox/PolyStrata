@@ -6111,13 +6111,17 @@ class ContainerLimits(unittest.TestCase):
         return telemetry.Cgroup(d)
 
     def test_quota_and_limit(self):
-        with tempfile.TemporaryDirectory() as d:
+        from serve import telemetry
+        # A fake clock: on a busy machine the real time between two readings adds to the second, and 50 % read 47
+        clock = mock.Mock(wraps=time, time=lambda: now[0])
+        now = [1000.0]
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(telemetry, "time", clock):
             c = self.cgroup(d)
             self.assertEqual((c.cpus, c.mem), (25.0, 120 << 30))
             self.assertEqual(c.ram_used(), 10 << 30)        # without the file cache
             (Path(d) / "cpu.stat").write_text("usage_usec 13500000\n")   # 12.5 CPU-seconds later
-            c.prev = (c.prev[0] - 1.0, c.prev[1])
-            self.assertAlmostEqual(c.cpu(), 50.0, delta=2.0)             # of the 25 CPUs, over about a second
+            now[0] += 1.0
+            self.assertAlmostEqual(c.cpu(), 50.0, places=6)              # of the 25 CPUs, over one second
 
     def test_no_limit(self):
         with tempfile.TemporaryDirectory() as d:
