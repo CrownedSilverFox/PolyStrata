@@ -1,6 +1,6 @@
 // poly_inkling2_attend_test: Inkling 2's token attention (ink_attend(), the score/softmax/value/join kernels) on
 // made-up caches of Inkling 2 Mini's shape (24 query heads on 8 key heads of 128 values, 16 relative values).
-//   hash <file>   a battery of calls (fp16 and FP8 caches when the card takes them, full and window layers, 1 to 7
+//   hash <file>   a battery of calls (fp16, q8_0, and FP8 where the card takes it, full and window layers, 1 to 7
 //                 rows, positions on the host and on the card, gate and q8 output on and off): one FNV-1a hash of each
 //                 call's output bytes a line.  Two builds' files differ where their outputs differ; equal files mean the same bits
 //                 (but for a hash collision).  Exit 1 if a call's output is not finite.
@@ -48,9 +48,11 @@ template <class T> T* up(const std::vector<T>& v) {
     return d;
 }
 
-enum Fmt { kF16, kF8 };
-const char* fmt_name(Fmt f) { return f == kF16 ? "fp16" : "fp8"; }
-size_t row_bytes(Fmt f) { return f == kF16 ? (size_t) kKv * kDim * 2 : ink_kv8_row(kKv, kDim); }
+enum Fmt { kF16, kF8, kQ8 };
+const char* fmt_name(Fmt f) { return f == kF16 ? "fp16" : f == kF8 ? "fp8" : "q8_0"; }
+size_t row_bytes(Fmt f) {
+    return f == kF16 ? (size_t) kKv * kDim * 2 : f == kF8 ? ink_kv8_row(kKv, kDim) : ink_kvq8_row(kKv, kDim);
+}
 
 // A cache of `rows` rows in format f, random values of about unit size.
 uint8_t* make_cache(Fmt f, size_t rows) {
@@ -61,6 +63,17 @@ uint8_t* make_cache(Fmt f, size_t rows) {
         for (size_t i = 0; i < v.size(); ++i) {
             const uint16_t b = __half_as_ushort(__float2half(v[i]));
             std::memcpy(&h[2 * i], &b, 2);
+        }
+    } else if (f == kQ8) {   // Q8_0 codes, then a half scale a block of 32
+        std::uniform_int_distribution<int> code(-127, 127);
+        std::uniform_real_distribution<float> sc(0.004f, 0.012f);
+        for (size_t r = 0; r < rows; ++r) {
+            uint8_t* p = &h[r * rb];
+            for (int i = 0; i < kKv * kDim; ++i) p[i] = (uint8_t) (int8_t) code(rng);
+            for (int b = 0; b < kKv * kDim / 32; ++b) {
+                const uint16_t s = __half_as_ushort(__float2half(sc(rng)));
+                std::memcpy(p + kKv * kDim + 2 * b, &s, 2);
+            }
         }
     } else {   // E4M3 codes without NaN (0x7f, 0xff), then a float scale a head
         std::uniform_int_distribution<int> code(0, 253);
@@ -123,6 +136,7 @@ InkAttn base(const Bufs& b, const uint8_t* k, const uint8_t* v, Fmt f) {
     a.n_rel = kRel;
     a.scale = 1.0f / std::sqrt((float) kDim);
     a.kv8 = f == kF8;
+    a.kvq8 = f == kQ8;
     return a;
 }
 
@@ -137,7 +151,7 @@ int run_hash(const char* path) {
     if (!f) return 2;
     const int64_t ctx = 40000, ring = 1024 + kMaxRows;
     Bufs b = make_bufs(ctx + kMaxRows);
-    std::vector<Fmt> fmts = {kF16};
+    std::vector<Fmt> fmts = {kF16, kQ8};
     if (ink_kv8_ok()) fmts.push_back(kF8);
     const int64_t poss[] = {0, 1, 5, 30, 31, 32, 33, 100, 1000, 1022, 1023, 1024, 1025, 2047, 4095, 4100, 32766,
                             32767, 32768, 32769, 39990};
@@ -203,7 +217,7 @@ int run_bench() {
     const int64_t rooms[] = {302, 1024, 2048, 4096, 8192, 16384, 32768, 131072, 262144, 524288, 1048576};
     size_t free_b = 0, total_b = 0;
     ck(cudaMemGetInfo(&free_b, &total_b), "meminfo");
-    std::vector<Fmt> fmts = {kF16};
+    std::vector<Fmt> fmts = {kF16, kQ8};
     if (ink_kv8_ok()) fmts.push_back(kF8);
     for (Fmt fm : fmts) {
         int64_t most = 0;
