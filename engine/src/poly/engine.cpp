@@ -6583,10 +6583,9 @@ void Engine::moe_rows(Layer& L, int il, int n) {
             h_slot_at_[g] = L.slot[(size_t) group_[(size_t) g]] - slot0;
             by_at = by_at && h_slot_at_[g] % 16 == 0;
         }
-        if (by_at)
-            ck(cudaMemcpyAsync(d_slot_at_, h_slot_at_, (size_t) n_cached * sizeof(int64_t), cudaMemcpyHostToDevice,
-                               cs(st_)),
-               "expert offsets");
+        // by a kernel that reads them from pinned memory, as the tables: a copy would wait behind the experts the
+        // copy engine is taking to the card, and the cached experts' launches behind it
+        if (by_at) copy2(h_slot_at_, d_slot_at_, 2 * n_cached, nullptr, nullptr, 0, st_);
     }
     // the cached experts lie class after class in group_: a launch for each class with rows, over all of its experts
     // (Metal's Mmq has no mul_at(): by_at is never set there)
