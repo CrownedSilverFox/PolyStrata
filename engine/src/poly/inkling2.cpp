@@ -9,6 +9,8 @@
 #include "strata/kernels/iq_kernels.hpp"
 #endif
 
+#include <cuda.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -556,6 +558,17 @@ void Inkling2::load_layer(int il) {
 }
 
 size_t Inkling2::recurrent_floats() const { return slots_.size() * past_floats(); }
+
+// ROCm on Linux gives VRAM back only with its addresses (Engine::vmm_unmap()), and a prompt's lent buffers crashed
+// strata-poly there (an RX 9070 XT, Inkling 2 Mini IQ4_NL with some experts in RAM): the prompt batch's scratch stays
+// out of them, in one layout as before.
+bool Inkling2::scratch_layouts() const {
+#ifdef STRATA_VMM_RELEASE_WITH_ADDRESSES
+    return false;
+#else
+    return !ds_file_;
+#endif
+}
 
 int Inkling2::widest() const { return std::max(n_head_ * head_dim_, 2 * n_embd_); }
 
