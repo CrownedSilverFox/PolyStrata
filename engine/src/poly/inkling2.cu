@@ -591,57 +591,6 @@ __global__ void __launch_bounds__(kDownThreads) ink_ctrl_down_kernel(CtrlDown d,
     }
 }
 
-// STRATA_INK_FAST_CTRL=1 (opt-in, other bits): ink_ctrl_down_kernel in one pass over cur and msg.  An output's block
-// of kFastDownThreads takes, in one read of the two rows, the down row's products with cur and with msg and the two
-// rows' squares, and scales the products by the norms after the sums: down . [cur * ia, msg * ib] as
-// (down_l . cur) * ia + (down_r . msg) * ib.  The same values up to rounding (where the norm's scale is applied, and
-// the sums' order); half the threads of a block, and cur and msg are read once a block instead of twice.  From our
-// earlier Inkling engine's ctrl_down_kernel (PR 200), written anew on this kernel's arguments.
-constexpr int kFastDownThreads = 256;
-template <typename W>
-__global__ void __launch_bounds__(kFastDownThreads) ink_ctrl_down_fast_kernel(CtrlDown d, int n_embd, int rank) {
-    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
-    pdl_wait();
-    __shared__ float part[kFastDownThreads / WARP][4];
-    const int j = blockIdx.x / rank, o = blockIdx.x % rank, tid = threadIdx.x;
-    const size_t row = size_t(blockIdx.y) * n_embd;
-    const float* __restrict__ cur = d.cur[j] + row;
-    const float* __restrict__ msg = d.msg[j] + row;
-    const W* __restrict__ wl = static_cast<const W*>(d.w[j]) + size_t(o) * 2 * n_embd;
-    const W* __restrict__ wr = wl + n_embd;
-    float dl = 0.0f, dr = 0.0f, cc = 0.0f, mm = 0.0f;
-    for (int i = tid; i < n_embd; i += kFastDownThreads) {
-        const float c = cur[i], m = msg[i];
-        dl += wval(wl, i) * c;
-        dr += wval(wr, i) * m;
-        cc += c * c;
-        mm += m * m;
-    }
-    dl = warp_sum(dl), dr = warp_sum(dr), cc = warp_sum(cc), mm = warp_sum(mm);
-    if ((tid & 31) == 0) part[tid >> 5][0] = dl, part[tid >> 5][1] = dr, part[tid >> 5][2] = cc, part[tid >> 5][3] = mm;
-    __syncthreads();
-    if (tid == 0) {
-        float v[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        for (int w = 0; w < kFastDownThreads / WARP; ++w)
-#pragma unroll
-            for (int k = 0; k < 4; ++k) v[k] += part[w][k];
-        d.y[j][size_t(blockIdx.y) * rank + o] = v[0] * cat_scale(v[2], n_embd) + v[1] * cat_scale(v[3], n_embd);
-    }
-}
-
-int g_fast_ctrl = -1;   // -1: STRATA_INK_FAST_CTRL decides (ink_set_fast_ctrl() for the kernel test)
-bool fast_ctrl_on() {
-#if defined(__HIPCC__)
-    return false;   // CUDA only: not measured on AMD cards yet
-#else
-    if (g_fast_ctrl < 0) {
-        const char* v = std::getenv("STRATA_INK_FAST_CTRL");
-        g_fast_ctrl = v != nullptr && v[0] == '1';
-    }
-    return g_fast_ctrl == 1;
-#endif
-}
-
 struct GateSet {
     const float* cur[kSet];
     const float* msg[kSet];
@@ -1788,8 +1737,6 @@ void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, in
     ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
 }
 
-void ink_set_fast_ctrl(bool on) { g_fast_ctrl = on ? 1 : 0; }
-
 bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
                    int count, int n_embd, int rank, int rows, void* stream, bool bf16) {
     if (count < 1 || count > kSet) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
@@ -1801,16 +1748,6 @@ bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void*
         d.msg[j] = msg[j];
         d.w[j] = down[j];
         d.y[j] = ch[j];
-    }
-    if (fast_ctrl_on()) {
-        if (bf16)
-            launch_pdl(ink_ctrl_down_fast_kernel<uint16_t>, dim3(count * rank, rows), dim3(kFastDownThreads), 0,
-                       cs(stream), d, n_embd, rank);
-        else
-            launch_pdl(ink_ctrl_down_fast_kernel<float>, dim3(count * rank, rows), dim3(kFastDownThreads), 0,
-                       cs(stream), d, n_embd, rank);
-        launched("ink_ctrl_down_fast");
-        return true;
     }
     if (bf16)
         launch_pdl(ink_ctrl_down_kernel<uint16_t>, dim3(count * rank, rows), dim3(kDownThreads), 0, cs(stream), d,
