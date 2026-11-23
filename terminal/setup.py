@@ -1355,7 +1355,7 @@ OWN_PATH_FAMILIES = {
 }
 PREVIEW_FAMILIES = OWN_PATH_FAMILIES             # the earlier name (tools and tests that import it)
 
-# Tencent Hy4-Flash (220B-A12B), Strata's own `.strata` v1.0 builds: a family with its own engine program (strata-hy4, a component like a model shape's engine), its own files
+# Tencent Hy4-Flash (220B-A12B), the Strata project's own `.strata` v1.0 builds: a family with its own engine program (strata-hy4, a component like a model shape's engine), its own files
 # (one build + the Engram shard every build shares + an optional Vision shard) and its own installer, install_hy4_flash.  Not in OWN_PATH_FAMILIES: that table's installer is
 # the single-GGUF one (mmproj, MTP, GGUF tokenizer) and its membership is pinned by tests.  The files, sizes and rules are strata_control/hy4_family.py and hy4_fit.py.
 from strata_control import hy4_family, hy4_fit  # noqa: E402
@@ -11824,7 +11824,7 @@ def hy4_verify(dst: Path, name: str, own: bool) -> None:
         return
     got = dst.stat().st_size if dst.exists() else -1
     if got != size:
-        fail(f"{name} is {got:,} bytes, not the {size:,} this Strata expects", "download it again (the file there may have changed)")
+        fail(f"{name} is {got:,} bytes, not the {size:,} this PolyStrata expects", "download it again (the file there may have changed)")
     if not done(dst):
         mark(dst)
     warn(f"{name}: checked by its size only (its SHA-256 is not published yet)")
@@ -12041,7 +12041,7 @@ def install_hy4_flash(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopt
     engram = paths[hy4_family.ENGRAM_FILE] if hy4_family.ENGRAM_FILE in paths else folder / hy4_family.ENGRAM_FILE
     ok(f"Engram file: {engram}")
 
-    step(6, "preparing the model for Strata")
+    step(6, "preparing the model for PolyStrata")
     data, _ = data_folder_for(a)
     tokdir = hy4_tokenizer_dir(paths[files[0]], data / "packs" / tag.lower() / "tokenizer", engine_program, a=a, folder=folder, own=own, data=data)
     if tokdir is None:
@@ -12633,7 +12633,7 @@ def mac_control_setup(a) -> int:
 def mac_hy4_setup(a) -> int:
     """Tencent Hy4-Flash on a Mac (Apple Silicon, Metal): unified memory, strata-hy4 Metal component, no Flash-Next repack."""
     from strata_control import mac_fit as MF
-    say("Strata - Tencent Hy4-Flash 220B-A12B on a Mac (Apple Silicon, Metal)")
+    say("PolyStrata - Tencent Hy4-Flash 220B-A12B on a Mac (Apple Silicon, Metal)")
     step(1, "checking your Mac")
     info = MF.mac_info()
     ram = float(info["ram_gb"] or ram_gb())
@@ -12692,7 +12692,7 @@ def main() -> int:
                          "35B-A3B, ornith122 = Ornith 1.5 122B (docs/BACKENDS.md), inkling = Inkling 2 Mini (experimental, text "
                          "only; docs/models/inkling.md), qwen36-strata = Qwen3.6-35B-A3B on the Strata project's "
                          "own engine (UD-Q4_K_XL and up, 32 GB of RAM or more; pictures with --vision, several "
-                         "requests at once with --parallel; docs/QWEN36.md), hy4-flash = Tencent Hy4-Flash on the Strata "
+                         "requests at once with --parallel; docs/QWEN36.md), hy4-flash = Tencent Hy4-Flash on the PolyStrata "
                          "project's own engine (SQ-64 / SQ-96 / SQ-128)")
     ap.add_argument("--model", type=model_alias, choices=list(dict.fromkeys(
         [*MODELS, *(m for f in FAMILIES.values() for m in f.get("models", {})),
