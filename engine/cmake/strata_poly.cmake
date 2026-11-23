@@ -229,6 +229,18 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_link_libraries(poly_draft_race_test PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant
                                                     ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target}
                                                     ${_strata_poly_driver} Threads::Threads)
+  # the engine's logits for a list of tokens as raw floats, to compare two builds or settings; needs the model file,
+  # so it is run by hand: poly_logits_dump MODEL.gguf --tokens ID,ID,... (its usage says the rest)
+  add_executable(poly_logits_dump src/poly/logits_dump.cpp src/poly/engine.cpp src/poly/expert_card.cpp src/poly/glm5next.cpp
+                                  src/poly/qwen35.cpp src/poly/gemma4.cpp src/poly/deepseek4.cpp
+                                  src/poly/lfm2moe.cpp src/poly/flint.cpp src/poly/kolibri1.cpp src/poly/laguna.cpp src/poly/inkling2.cpp src/poly/inkling2_pictures.cpp src/poly/inkling2.cu
+                                  src/poly/cpu_experts.cpp src/poly/kernels.cu src/poly/kernels_dsv4.cu
+                                  src/core/conversation_memory.cpp)
+  target_include_directories(poly_logits_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                     ${_strata_gpu_include_directories})
+  target_link_libraries(poly_logits_dump PRIVATE strata_poly_mmq strata_kernels strata_spec strata_quant
+                                                ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target}
+                                                ${_strata_poly_driver} Threads::Threads)
   # a prompt batch's routing on the card against the hosts' routing; needs a card, so it is run by hand
   add_executable(poly_route_test src/poly/route_test.cu src/poly/kernels.cu)
   target_include_directories(poly_route_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -359,6 +371,15 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_include_directories(poly_dsv4_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                    ${_strata_gpu_include_directories})
   target_link_libraries(poly_dsv4_test PRIVATE ${_strata_gpu_runtime_target})
+  # Inkling 2's kernels (inkling2.cu) against the same arithmetic on the host, and the fused launches against the
+  # calls they stand for; needs a card (77 without one)
+  add_executable(poly_inkling2_test src/poly/inkling2_test.cu src/poly/inkling2.cu src/poly/kernels.cu)
+  target_include_directories(poly_inkling2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                       ${_strata_gpu_include_directories})
+  target_link_libraries(poly_inkling2_test PRIVATE strata_kernels ${_strata_gpu_blas_target}
+                                                   ${_strata_gpu_runtime_target})
+  add_test(NAME poly_inkling2_test COMMAND poly_inkling2_test)
+  set_tests_properties(poly_inkling2_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   # the pool of the CPU experts, without a model
   add_executable(poly_workers_test src/poly/workers_test.cpp src/poly/cpu_experts.cpp)
   target_link_libraries(poly_workers_test PRIVATE strata_quant Threads::Threads)
