@@ -126,6 +126,16 @@ class Blocks(unittest.TestCase):
                 self.assertEqual([e.call.arguments for e in evs if e.kind == "tool_call"], [{"code": code}] * 2)
                 self.assertEqual(said(evs, "content"), "Rome")
 
+    def test_text_written_right_after_the_block_start_shows_no_tags(self):
+        # #283: after the budget's wrap-up opened a block, the model wrote its answer with no <|content_text|>
+        for step in (1, 3, 1000):
+            with self.subTest(step=step):
+                evs = read(THINK + "<|message_model|> there! Happy to help.\nMore." + END + STOP, step)
+                self.assertEqual(said(evs, "content"), " there! Happy to help.\nMore.")
+                self.assertEqual(said(evs, "content") + said(evs, "reasoning"),
+                                 said(evs, "content").replace("<|", "") + said(evs, "reasoning"))
+                self.assertEqual(said(read("<|message_model|>Rome" + END, step), "content"), "Rome")
+
     def test_a_reply_whose_text_block_the_prompt_opened(self):
         evs = read("Rome" + END + STOP, 3, opened=True)
         self.assertEqual((said(evs, "reasoning"), said(evs, "content")), ("", "Rome"))
