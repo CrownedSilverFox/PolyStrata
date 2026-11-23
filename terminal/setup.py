@@ -9299,8 +9299,8 @@ def settings_summary(cfg: dict, port=None) -> str:
     srv = [f"{cfg.get('host', '127.0.0.1')}:{port or cfg.get('port', 8080)}"]
     if cfg.get("api_key"):
         srv.append("api key set")
-    if cfg.get("open_browser") is False:               # #609
-        srv.append("no browser")
+    if cfg.get("open_browser") is True:                # --browser (#609)
+        srv.append("opens the Monitor page")
     for k in ("gpu", "layer_split", "draft_vocab", "fit_max_tokens", "reasoning_budget_tokens", "anthropic_thinking"):
         if cfg.get(k) is not None:
             v = cfg[k]
@@ -9429,7 +9429,7 @@ def _start(cfg_path: Path, port: int | None, gpu: int | list | None = None, open
             if not glm:
                 cfg = ensure_engine_for([g], cfg_path, cfg, yes)
             ok("GPU: " + gpu_name(g))
-    browser = open_browser and cfg.get("open_browser") is not False   # #609: "open_browser": false, --no-browser
+    browser = open_browser and cfg.get("open_browser") is True        # only after --browser (#609; no chat page to open)
     if browser:
         cmd.append("--open")
     gb = 0.0
@@ -9458,6 +9458,7 @@ def _start(cfg_path: Path, port: int | None, gpu: int | list | None = None, open
     say("  restart). That is normal: please wait and don't close this window - " + (
         "the browser opens when it is ready." if browser else "the server says when it is ready."))
     say("  Later, closing this window stops the model.")
+    say("  Want an app to chat with it? We recommend Linger (optional): https://github.com/simplexai-labs/linger")
     say("  " + "-" * 100)
     for n, line in enumerate(textwrap.wrap(f"Settings ({cfg_path.name}): {settings_summary(cfg, port)}", 100,
                                            break_on_hyphens=False)):   # #564: what this start uses
@@ -10002,7 +10003,7 @@ def use_cuda12(cards, cfg_path: Path, cfg: dict, yes: bool) -> dict:
 
 
 def write_run_script(model, cfg_path, port, open_browser=True):
-    """run-<model>.bat / .sh: the server with this config; `open_browser` False (#609: --no-browser) leaves --open out."""
+    """run-<model>.bat / .sh: the server with this config; `--open` (the Monitor page) only when `open_browser` is True (--browser)."""
     serve = [sys.executable, str(ROOT / "serve" / "server.py"), "--engine", "strata", "--config", str(cfg_path),
              "--port", str(port)] + (["--open"] if open_browser else [])
     if WIN:
@@ -10915,7 +10916,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
     poly_kv_whole(cfg)
     warm_start_into(cfg, a)
     write_setup_config(cfg_path, cfg, earlier)
-    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is not False)
+    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is True)
     ok(f"start script: {script.name}")
 
     say()
@@ -10923,7 +10924,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
     say(f"  API (OpenAI):     http://127.0.0.1:{port}/v1   (any API key; model name: anything)")
     say(f"  API (Anthropic):  http://127.0.0.1:{port}/v1/messages")
     if vision != "none":
-        say("  Images:           send them in the chat page, in chat.py (/image <path>) or over the API")
+        say("  Images:           send them over the API (your app) or in chat.py (/image <path>)")
     if a.host and a.host not in ("127.0.0.1", "localhost"):
         say(f"  Other devices:    the server window prints this PC's address (http://<IP>:{port}/)"
             + ("" if a.api_key else " - no API key set: anyone on your network can use it"))
@@ -11687,7 +11688,7 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
             ok("parallel requests: one at a time (--parallel 1)")
     warm_start_into(cfg, a)
     write_setup_config(cfg_path, cfg, adopted if adopted is not None and adopted.name == cfg_path.name else None, explicit_args(a))
-    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is not False)
+    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is True)
     ok(f"start script: {script.name}")
     say()
     say("All set.")
@@ -11695,7 +11696,7 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
     say(f"  API (Anthropic):  http://127.0.0.1:{port}/v1/messages")
     say(f"  Next time:        just run {'START-HERE.bat' if WIN else './setup.sh'} (or {script.name}) - it starts right away")
     if vision != "none":
-        say("  Images:           send them in the chat page, in chat.py (/image <path>) or over the API")
+        say("  Images:           send them over the API (your app) or in chat.py (/image <path>)")
     if par is None and not par_said:                   # the opt-in, said once (nothing changes)
         for line in own_path_parallel_note(None, fam, model, vram_gb, ctx):
             say("  " + line)
@@ -12054,7 +12055,7 @@ def install_hy4_flash(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopt
         cfg["open_browser"] = a.browser
     cfg_path = home() / f"strata-{tag.lower()}.json"
     write_setup_config(cfg_path, cfg, adopted if adopted is not None and adopted.name == cfg_path.name else None, explicit_args(a))
-    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is not False)
+    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is True)
     ok(f"start script: {script.name}")
     say()
     say("All set.")
@@ -12554,7 +12555,7 @@ def mac_control_setup(a) -> int:
             cfg["vision"]["threads"] = vision_threads()
     cfg_path = home() / f"strata-{tag.lower()}.json"
     write_setup_config(cfg_path, cfg)
-    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is not False)
+    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is True)
     ok(f"start script: {script.name}")
     say()
     say("All set.")
@@ -12685,10 +12686,10 @@ def main() -> int:
     ap.add_argument("--api-key", help="require this key from clients (recommended with --host 0.0.0.0 or --host ::); "
                                       "several keys: key1,key2")
     ap.add_argument("--no-browser", dest="browser", action="store_false", default=None,
-                    help="do not open the chat page in the browser when the model is ready (for a harness or an app "
-                         "that uses the API; remembered for this model, also in run-<model>.bat/.sh)")
+                    help="open no browser when the model is ready (the default; undoes --browser)")
     ap.add_argument("--browser", dest="browser", action="store_true",
-                    help="open the chat page again when the model is ready (the default; undoes --no-browser)")
+                    help="open the Monitor page in the browser when the model is ready (remembered for this model, also "
+                         "in run-<model>.bat/.sh)")
     ap.add_argument("--data-dir", help="where the model files go (~70-120 GB): default PolyStrata-data next to this folder, "
                                        "remembered for every PolyStrata folder on this PC")
     ap.add_argument("--move-data", action="store_true",
@@ -13505,7 +13506,7 @@ def main() -> int:
                 warn("most of the experts are read from the SSD while it answers: expect it to be much slower than "
                      "with enough RAM (a faster SSD and a smaller size help)")
     # EXPERIMENTAL: the experimental-speed-projection control vector (data/experimental-speed-projection), off unless
-    # chosen here; with it loaded, the web app and the API switch it off per request
+    # chosen here; with it loaded, a request switches it off with "experimental_speed_projection": false
     esp = None
     esp_choice = (a.experimental_speed_projection or "").strip()
     if family in ("qwen", "coder"):                   # the Coder: the same model's residual stream
@@ -13513,8 +13514,8 @@ def main() -> int:
             say()
             say("  EXPERIMENTAL - speed projection: a small control vector applied while the model runs (layers 4-44).")
             say("  It changes how the model answers: its package describes it as a refusal-direction projection (the")
-            say("  model declines far fewer requests). Off unless you choose it; when on, the web app can switch it off")
-            say("  per chat. Details: data/experimental-speed-projection/README.md")
+            say("  model declines far fewer requests). Off unless you choose it; when on, a request can switch it off")
+            say("  (\"experimental_speed_projection\": false). Details: data/experimental-speed-projection/README.md")
             esp_choice = "on" if ask("Turn on the experimental speed projection?", ["y", "n"], "n", a.yes) == "y" else "off"
         if esp_choice.lower() not in ("off", "no", "n", "0"):
             esp = ESP_VECTOR if esp_choice.lower() in ("on", "yes", "y", "1") else Path(esp_choice).expanduser().resolve()
@@ -13760,7 +13761,7 @@ def main() -> int:
     warm_start_into(cfg, a)
     write_setup_config(cfg_path, cfg, adopted if adopted is not None and adopted.name == cfg_path.name else None, explicit_args(a),
                        after_carry=(lambda c: uma_cache_guard(c, model, gpu)) if gpu.get("uma") else None)
-    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is not False)
+    script = write_run_script(tag, cfg_path, port, cfg.get("open_browser") is True)
     # offered only when someone answers: --yes installs and adopted earlier installs are not held up by it
     # P12: Skip is the default, as in the Terminal's first launch (T5): a person who presses Enter all the way does not wait 15-30 minutes
     if cal is None and not hip and not a.no_start and not a.yes and ask(TUNE_QUESTION.format(again=setup_command()), ["y", "n"], "n", a.yes, shown=TUNE_DEFAULT_SHOWN) == "y":
@@ -13778,7 +13779,7 @@ def main() -> int:
             + ("" if a.api_key else " - no API key set: anyone on your network can use it"))
     say(f"  Next time:        just run {'START-HERE.bat' if WIN else './setup.sh'} (or {script.name}) - it starts right away")
     if vision != "none":
-        say("  Images:           send them in the chat page, in chat.py (/image <path>) or over the API")
+        say("  Images:           send them over the API (your app) or in chat.py (/image <path>)")
     if cfg.get("images"):
         say(f"  Image generation: POST http://127.0.0.1:{port}/v1/images/generations (OpenAI's images API)")
     if a.parallel is None:                             # #465: the opt-in, said once (nothing changes)

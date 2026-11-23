@@ -16,7 +16,7 @@ background processes this server starts itself; it keeps their process id and st
 ever stops a process it started (a PolyStrata started elsewhere, e.g. from its own window, is only asked over its API to
 unload the model).
 
-Not to be confused with serve/mcp.py: that is PolyStrata's MCP *client* (the model calling your tools from the chat page).
+Not to be confused with serve/mcp.py: that is PolyStrata's MCP *client* (the model calling your tools, for a request that asks).
 This file is an MCP *server* for the AI assistant you already use.
 """
 from __future__ import annotations
@@ -2898,7 +2898,7 @@ class Tools:
             info = s.probe(port)
             if info and not info.get("other"):
                 return {"summary": f"PolyStrata is running: {info.get('model')} on http://127.0.0.1:{port}/v1 "
-                                   "(OpenAI and Anthropic APIs; chat page at http://127.0.0.1:" + str(port) + "/)",
+                                   "(OpenAI and Anthropic APIs; Monitor at http://127.0.0.1:" + str(port) + "/)",
                         "server": {**info, "pid": p.pid}}
             if time.time() >= end:
                 return {"summary": f"PolyStrata is loading {desc['model']} (this takes 1-3 minutes; the PC may be slow "
