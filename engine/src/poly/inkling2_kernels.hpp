@@ -257,6 +257,14 @@ int ink_attend_parts(int n_head, int n_kv, int dim, int window, int64_t last);
 /// and fp16 caches, their products split in halves (hi + lo, about float-exact), the weights too.  False, with nothing
 /// launched, where it does not take them.
 bool ink_attend_batch(const InkAttn& a, void* stream);
+/// ink_attend_batch() with the rows a block of ink_flash_kernel (without LEAN) fixed: `tokens` 64, 48 or 32, which
+/// change no bit (poly_ink_flash_test compares them); anything else, the size ink_flash_tokens() picks.  The other
+/// kernels ink_attend_batch() may take ignore it.  CUDA and HIP only (Metal has its own ink_attend_batch()).
+bool ink_attend_batch_rows(const InkAttn& a, void* stream, int tokens);
+/// The rows a block ink_flash_kernel takes for this call on the current card, by how its blocks fill the
+/// multiprocessors' last wave: 64, 48 or 32 (STRATA_INK_FLASH_TOKENS=64/48/32 fixes it).  0 where the call goes
+/// elsewhere: attend_batch(), Turing's kernel, LEAN (sm_80), STRATA_FAST_ATTN's kernel, HIP.
+int ink_flash_tokens(const InkAttn& a);
 
 /// An FP8 cache row's bytes.
 inline size_t ink_kv8_row(int n_kv, int dim) { return (size_t) n_kv * dim + (size_t) n_kv * sizeof(float); }

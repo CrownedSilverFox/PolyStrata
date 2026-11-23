@@ -1528,7 +1528,7 @@ template <int ahead> __device__ __forceinline__ void ink_cp_wait() {
 #endif
 
 // ink_attend() of a prompt batch on the tensor cores (ink_attend_batch()), FlashAttention-2's way, as kernels.cu's
-// attn_flash128_kernel goes: a launch block takes 64 tokens of a key head (32 when LEAN), a warp 16 tokens of one of the
+// attn_flash128_kernel goes: a launch block takes TOKENS tokens of a key head (32 when LEAN), a warp 16 tokens of one of the
 // head's G query heads, and the keys go kFlashKeys at a time, two buffers of keys and values in turn, each row's
 // softmax kept as it goes, so no score leaves the registers.  A score is what attend_batch() with an AttnBias makes
 // of it: the query rounded to halves, its product with the key summed in floats and times the scale, plus the bias
@@ -1545,21 +1545,25 @@ template <int ahead> __device__ __forceinline__ void ink_cp_wait() {
 // would add weights of 0 and scale by 1, every tile still starts at a multiple of kFlashKeys, and a row's tiles and
 // the order of its sums are the same.  On the other cards (sm_86, sm_89, sm_120) it was slower per layer, so they
 // keep the kernel without LEAN.
+// TOKENS without LEAN (64, 48 or 32; ink_flash_tokens() picks it by how the blocks fill the card's last wave): a
+// block's rows.  A row's scores, weights and sums are the same whatever block it is in: its tiles of keys still start
+// at multiples of kFlashKeys and go in the same order, and a tile none of whose keys the row sees (the block's wider
+// span) adds weights of 0 and scales by 1, or keeps the zeros before the row's first key, so TOKENS changes no bit.
 constexpr int kFlashKeys = 64, kFlashRow = 128 + 8, kFlashRel = 16;
-constexpr int flash_tokens(bool lean) { return lean ? 32 : 64; }   // the kernel's TOKENS
+constexpr int flash_tokens(bool lean) { return lean ? 32 : 64; }   // the kernel's default TOKENS
 constexpr size_t kFlashKv = size_t(4) * kFlashKeys * kFlashRow * sizeof(__half);
-// the shared memory of ink_flash_kernel<G, LEAN>: keys and values, the table's columns (LEAN, G < 4), r
-constexpr size_t flash_smem(int g, bool lean) {
-    return kFlashKv +
-           (lean && g < 4 ? size_t(2) * (flash_tokens(lean) + kFlashKeys) * kFlashRel * sizeof(float) : 0) +
-           size_t(flash_tokens(lean)) * g * kFlashRel * sizeof(float);
+// the shared memory of ink_flash_kernel<G, LEAN, TOKENS>: keys and values, the table's columns (LEAN, G < 4), r
+constexpr size_t flash_smem(int g, bool lean, int tokens) {
+    return kFlashKv + (lean && g < 4 ? size_t(2) * (tokens + kFlashKeys) * kFlashRel * sizeof(float) : 0) +
+           size_t(tokens) * g * kFlashRel * sizeof(float);
 }
 
-template <int G, bool LEAN>
-__global__ void __launch_bounds__((LEAN ? 32 : 64) / 16 * G * 32, 1) ink_flash_kernel(InkAttn a) {
+template <int G, bool LEAN, int TOKENS = flash_tokens(LEAN)>
+__global__ void __launch_bounds__(TOKENS / 16 * G * 32, 1) ink_flash_kernel(InkAttn a) {
+    static_assert(!LEAN || TOKENS == 32, "LEAN takes 32 tokens a block");
+    static_assert(TOKENS % 16 == 0, "a warp takes 16 tokens");
 #if INK_FLASH
-    constexpr int TOKENS = LEAN ? 32 : 64, DIM = 128, KEYS = kFlashKeys, ROW = kFlashRow, NR = kFlashRel,
-                  THREADS = TOKENS / 16 * G * 32;
+    constexpr int DIM = 128, KEYS = kFlashKeys, ROW = kFlashRow, NR = kFlashRel, THREADS = TOKENS / 16 * G * 32;
     constexpr int SPAN = TOKENS + KEYS;   // a tile's distances (one more than it spans, for 16 bytes)
     extern __shared__ __align__(16) __half ink_flash_sm[];
     __half(*ks)[KEYS][ROW] = reinterpret_cast<__half(*)[KEYS][ROW]>(ink_flash_sm);
@@ -3327,41 +3331,161 @@ bool ink_attend_batch(const InkAttn& a, void* stream) {
     launched("ink_wmma");
     return true;
 #else
-    if (a.rows <= 0) return true;
-    static const bool off = [] {   // STRATA_INK_FLASH=0: attend_batch()'s path
-        const char* v = std::getenv("STRATA_INK_FLASH");
-        return v && v[0] == '0';
-    }();
-    const int per = a.n_kv > 0 && a.n_head % a.n_kv == 0 ? a.n_head / a.n_kv : 0;
-    if (off) return false;
-    if (a.dim != 128 || a.n_rel != kFlashRel || per < 1 || per > kMaxPer || a.at || a.q8) return false;
+    return ink_attend_batch_rows(a, stream, 0);
+#endif
+}
+
+#if !defined(__HIPCC__)
+namespace {
+
+int flash_ptx() {
     static const int ptx = [] {
         cudaFuncAttributes f{};
         return cudaFuncGetAttributes(&f, ink_flash_kernel<1, false>) == cudaSuccess ? f.ptxVersion : 0;
     }();
-    // Turing: ink_flash75_kernel reads fp16 caches only (FP8 and Q8_0 rows go to attend_batch())
-    if (ptx < 80) return ptx >= 75 && !a.kv8 && !a.kvq8 && flash75(a, per, stream);
-    static const bool lean = [] {   // ink_flash_kernel's LEAN on sm_80 (A100 class) only: the card it was faster on
+    return ptx;
+}
+
+bool flash_lean() {   // ink_flash_kernel's LEAN on sm_80 (A100 class) only: the card it was faster on
+    static const bool lean = [] {
         int dev = 0, major = 0, minor = 0;
         return cudaGetDevice(&dev) == cudaSuccess &&
                cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess &&
                cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev) == cudaSuccess && major == 8 &&
                minor == 0;
     }();
-    const auto launch = [&](auto kernel, int g, bool ln) {
-        const size_t smem = flash_smem(g, ln);
-        const int tokens = flash_tokens(ln);
-        const cudaError_t e = cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) smem);
-        if (e != cudaSuccess) throw std::runtime_error(std::string("ink_attend_batch: shared memory: ") + cudaGetErrorString(e));
-        kernel<<<dim3(grid((size_t) a.rows, tokens), a.n_kv), tokens / 16 * g * 32, smem, cs(stream)>>>(a);
-    };
-    static const bool fast = [] {   // STRATA_FAST_ATTN=1: ink_fast_kernel for full layers (opt-in, other bits)
+    return lean;
+}
+
+bool flash_fast() {   // STRATA_FAST_ATTN=1: ink_fast_kernel for full layers (opt-in, other bits)
+    static const bool fast = [] {
         const char* v = std::getenv("STRATA_FAST_ATTN");
         const bool on = v && v[0] == '1';
         if (on) std::fprintf(stderr, "strata: STRATA_FAST_ATTN=1: Inkling 2's full layers read prompts on ink_fast_kernel (other bits)\n");
         return on;
     }();
-    if (fast && a.window <= 0 && !a.kvq8) {   // ink_fast_kernel reads fp16 and FP8 caches
+    return fast;
+}
+
+// the query heads on a key head when ink_attend_batch() takes the call at all, else 0
+int flash_per(const InkAttn& a) {
+    static const bool off = [] {   // STRATA_INK_FLASH=0: attend_batch()'s path
+        const char* v = std::getenv("STRATA_INK_FLASH");
+        return v && v[0] == '0';
+    }();
+    const int per = a.n_kv > 0 && a.n_head % a.n_kv == 0 ? a.n_head / a.n_kv : 0;
+    if (off || a.dim != 128 || a.n_rel != kFlashRel || per < 1 || per > kMaxPer || a.at || a.q8) return 0;
+    return per;
+}
+
+constexpr int kFlashSizes[] = {64, 48, 32};   // ink_flash_kernel's TOKENS without LEAN, main's first
+
+int flash_size_index(int tokens) { return tokens == 64 ? 0 : tokens == 48 ? 1 : 2; }
+
+template <int G, int T> void* flash_fn() { return reinterpret_cast<void*>(ink_flash_kernel<G, false, T>); }
+
+void* flash_kernel(int g, int tokens) {   // ink_flash_kernel<g, false, tokens>
+    static void* const fns[4][3] = {{flash_fn<1, 64>(), flash_fn<1, 48>(), flash_fn<1, 32>()},
+                                    {flash_fn<2, 64>(), flash_fn<2, 48>(), flash_fn<2, 32>()},
+                                    {flash_fn<3, 64>(), flash_fn<3, 48>(), flash_fn<3, 32>()},
+                                    {flash_fn<4, 64>(), flash_fn<4, 48>(), flash_fn<4, 32>()}};
+    return fns[g - 1][flash_size_index(tokens)];
+}
+
+// The kernel's shared memory set (once a kernel and device), and its blocks a multiprocessor
+int flash_resident(int g, int tokens) {
+    constexpr int kDevs = 16;
+    static std::atomic<int> cache[kDevs][4][3] = {};   // 0: not asked yet; else 1 + blocks
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess) dev = 0;
+    std::atomic<int>* c = dev >= 0 && dev < kDevs ? &cache[dev][g - 1][flash_size_index(tokens)] : nullptr;
+    if (c && c->load(std::memory_order_relaxed) > 0) return c->load(std::memory_order_relaxed) - 1;
+    void* fn = flash_kernel(g, tokens);
+    const size_t smem = flash_smem(g, false, tokens);
+    const cudaError_t e = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) smem);
+    if (e != cudaSuccess) throw std::runtime_error(std::string("ink_attend_batch: shared memory: ") + cudaGetErrorString(e));
+    int n = 0;
+    if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&n, fn, tokens / 16 * g * 32, smem) != cudaSuccess) n = 0;
+    if (c) c->store(1 + n, std::memory_order_relaxed);
+    return n;
+}
+
+int flash_sms() {
+    int dev = 0, n = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess) return 0;
+    return cudaDeviceGetAttribute(&n, cudaDevAttrMultiProcessorCount, dev) == cudaSuccess ? n : 0;
+}
+
+// The rows a block for a call ink_flash_kernel without LEAN takes: STRATA_INK_FLASH_TOKENS=64/48/32 fixes them (64:
+// main's shape); else the size whose launch ends soonest by its waves: blocks over the multiprocessors' resident
+// slots, rounded up, times a block's time against one of 64 rows (kFlashCost, measured on an RTX 5080 Laptop at 2K to
+// 32K keys: a block of 48 takes 0.9 of one of 64, as nvcc gives both 168 registers, and one of 32 0.65).  Another size
+// than 64 is taken only when that is at least kFlashGain less, so a card whose last wave is full or nearly so keeps
+// 64.  Inkling 2 Mini's 1,024-row calls (128 blocks of 64, one a multiprocessor) move to 48 on 59 to 63
+// multiprocessors (a third wave of 64 nearly empty), 88 to 127 and 176 to 199, and keep 64 elsewhere.
+int flash_pick(const InkAttn& a, int per) {
+    static const int fixed = [] {
+        const char* v = std::getenv("STRATA_INK_FLASH_TOKENS");
+        const int t = v ? std::atoi(v) : 0;
+        return t == 64 || t == 48 || t == 32 ? t : 0;
+    }();
+    if (fixed) return fixed;
+    constexpr double kFlashCost[] = {1.0, 0.9, 0.65}, kFlashGain = 0.05;   // kFlashSizes' blocks
+    const int sms = flash_sms();
+    if (sms < 1 || a.rows <= 0) return 64;
+    double best = 0.0, main_cost = 0.0;
+    int pick = 64;
+    for (int i = 0; i < 3; ++i) {
+        const int t = kFlashSizes[i], res = flash_resident(per, t);
+        if (res < 1) continue;
+        const long long blocks = (long long) grid((size_t) a.rows, t) * a.n_kv, slots = (long long) sms * res;
+        const double cost = (double) ((blocks + slots - 1) / slots) * res * kFlashCost[i];
+        if (t == 64) {
+            main_cost = best = cost;
+        } else if (main_cost > 0.0 && cost < best && cost <= main_cost * (1.0 - kFlashGain)) {
+            best = cost;
+            pick = t;
+        }
+    }
+    return pick;
+}
+
+// whether the call goes to ink_flash_kernel without LEAN (not Turing's kernel, LEAN's or ink_fast_kernel)
+bool flash_sized(const InkAttn& a, int per) {
+    return per > 0 && flash_ptx() >= 80 && !flash_lean() && !(flash_fast() && a.window <= 0 && !a.kvq8);
+}
+
+}  // namespace
+
+int ink_flash_tokens(const InkAttn& a) {
+    if (a.rows <= 0) return 0;
+    const int per = flash_per(a);
+    return flash_sized(a, per) ? flash_pick(a, per) : 0;
+}
+#else
+int ink_flash_tokens(const InkAttn&) { return 0; }
+#endif
+
+bool ink_attend_batch_rows(const InkAttn& a, void* stream, int tokens) {
+#if defined(__HIPCC__)
+    if (tokens == 64 || tokens == 48 || tokens == 32) return false;   // no ink_flash_kernel on HIP
+    return ink_attend_batch(a, stream);
+#else
+    if (a.rows <= 0) return true;
+    const int per = flash_per(a);
+    if (per == 0) return false;
+    const int ptx = flash_ptx();
+    // Turing: ink_flash75_kernel reads fp16 caches only (FP8 and Q8_0 rows go to attend_batch())
+    if (ptx < 80) return ptx >= 75 && !a.kv8 && !a.kvq8 && flash75(a, per, stream);
+    const bool lean = flash_lean();
+    const auto launch = [&](auto kernel, int g, bool ln) {
+        const int t = flash_tokens(ln);
+        const size_t smem = flash_smem(g, ln, t);
+        const cudaError_t e = cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) smem);
+        if (e != cudaSuccess) throw std::runtime_error(std::string("ink_attend_batch: shared memory: ") + cudaGetErrorString(e));
+        kernel<<<dim3(grid((size_t) a.rows, t), a.n_kv), t / 16 * g * 32, smem, cs(stream)>>>(a);
+    };
+    if (flash_fast() && a.window <= 0 && !a.kvq8) {   // ink_fast_kernel reads fp16 and FP8 caches
         // HACC where the tensor cores sum fp16 products into floats at half rate: all but sm_80, sm_90 and sm_100,
         // whose whitepapers give the same dense FP16 TFLOPS with FP32 accumulation as with FP16
         static const bool hacc = [] {
@@ -3388,20 +3512,24 @@ bool ink_attend_batch(const InkAttn& a, void* stream) {
         launched("ink_fast");
         return true;
     }
-    if (lean)
+    if (lean) {
         switch (per) {
             case 1: launch(ink_flash_kernel<1, true>, 1, true); break;
             case 2: launch(ink_flash_kernel<2, true>, 2, true); break;
             case 3: launch(ink_flash_kernel<3, true>, 3, true); break;
             default: launch(ink_flash_kernel<4, true>, 4, true); break;
         }
-    else
-        switch (per) {
-            case 1: launch(ink_flash_kernel<1, false>, 1, false); break;
-            case 2: launch(ink_flash_kernel<2, false>, 2, false); break;
-            case 3: launch(ink_flash_kernel<3, false>, 3, false); break;
-            default: launch(ink_flash_kernel<4, false>, 4, false); break;
-        }
+        launched("ink_flash");
+        return true;
+    }
+    // without LEAN: the rows a block by the card's last wave (flash_pick()), or `tokens`; the same bits each way
+    if (tokens != 64 && tokens != 48 && tokens != 32) tokens = flash_pick(a, per);
+    flash_resident(per, tokens);   // sets the kernel's shared memory
+    InkAttn arg = a;
+    void* args[] = {&arg};
+    (void) cudaLaunchKernel(flash_kernel(per, tokens), dim3(grid((size_t) a.rows, tokens), a.n_kv),
+                            dim3(tokens / 16 * per * 32), args, flash_smem(per, false, tokens),
+                            cs(stream));   // as a <<<>>> launch: an error shows at the next check
     launched("ink_flash");
     return true;
 #endif
