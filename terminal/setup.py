@@ -10515,6 +10515,10 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         confirm_risk(f"{title} has been run on Linux only: its engine compiles on Windows, the model was not tried "
                      "there", bool(a.family), a.yes, f"{title} has not been tried on Windows",
                      f"use Linux, or --family {family} --yes to try it here")
+    if multi and fam.get("one_card"):                  # the engine has no layer split for this family yet: it would
+        multi = []                                     # exit with "Inkling 2 runs on one card"; one card from here on,
+        # so the size, the images and the small-card flags below are this card's
+        warn(f"{title} runs on one card so far (--layer-split is not supported for it yet): using {gpu_name(gpu)}")
     sees = fam.get("vision") is True
     if sees and hip:   # the image encoder is a CUDA program: no HIP build of it yet (as for the main engine)
         say("  Images: the image encoder is a CUDA program: on the AMD card images are off (text answers).")
@@ -10845,9 +10849,6 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         cfg["tool_call_recovery"] = True
         ok("its tool calls are JSON inside the wrapper: they are read with the recovery (tool_call_recovery in the "
            "config)")
-    if multi and fam.get("one_card"):                  # the engine has no layer split for this family yet: it would
-        multi = []                                     # exit with "Inkling 2 runs on one card", so one card is set
-        warn(f"{title} runs on one card so far (--layer-split is not supported for it yet): using {gpu_name(gpu)}")
     if multi:                                          # the server passes --layer-split and orders the cards
         cfg["gpu"], cfg["gpus_asked"] = multi, True
         cfg["layer_split"] = a.layer_split or "auto"
