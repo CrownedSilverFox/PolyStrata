@@ -1,6 +1,6 @@
 # PolyStrata media and video guide
 
-For people and AI tools creating an article, overview or video. Last reviewed: 20 November 2026, for PolyStrata 0.2.19.
+For people and AI tools creating an article, overview or video. Last reviewed: 20 November 2026, for PolyStrata 0.2.20.
 Use [AI_REFERENCE.md](AI_REFERENCE.md) for product facts and [README.md](../README.md) for the public introduction.
 
 ## Short description

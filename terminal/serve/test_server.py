@@ -7184,7 +7184,7 @@ class VisionArgs(unittest.TestCase):
             seen.append(args)
             return Proc()
 
-        with mock.patch.object(server.subprocess, "Popen", popen):
+        with mock.patch.object(server.subprocess, "Popen", popen), mock.patch.object(server.lifeline, "_watch"):
             # kept running: on the CPU an encoder starts with the first picture by default
             server.Vision({"exe": "strata-vision", "mmproj": "m.gguf", "model": "t.gguf", "elastic": False, **cfg})
         return seen[0]

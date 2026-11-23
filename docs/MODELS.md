@@ -1,12 +1,14 @@
 ﻿# Which model? Sizes, versions and what fits
 
 This page helps you choose a model and check that your computer can run it. It covers
-Qwen3.8-Flash-Next (and its variants) and Qwen3.6-35B-A3B. For installing, see [INSTALL.md](INSTALL.md).
+Qwen3.8-Flash-Next (and its variants), Qwen3.6-35B-A3B and Tencent Hy4-Flash. For installing, see [INSTALL.md](INSTALL.md).
 GLM 5.3 Flash has a page of its own: [GLM.md](GLM.md).
 
 > **On this page:** [Quick start](#quick-start) · [Pick by memory](#pick-by-memory) ·
 > [Qwen3.8-Flash-Next](#qwen38-flash-next) ·
-> [Qwen3.6-35B-A3B](#qwen36-35b-a3b) · [Adding or switching models](#adding-or-switching-models) ·
+> [Qwen3.6-35B-A3B](#qwen36-35b-a3b) ·
+> [Tencent Hy4-Flash](#tencent-hy4-flash) ·
+> [Adding or switching models](#adding-or-switching-models) ·
 > [History](#history--older-measurements)
 
 ## Quick start
@@ -47,7 +49,8 @@ They are estimates; a given context may still not fit.
 - **Less memory, coding only:** [Coder](#coder) runs around 32 GB of RAM with a suitable GPU.
 - **Less memory, general use:** compare Unsloth, then [Gyro](#gyro-s-and-gyro-m-agentionai), which uses the least memory and is slower.
 - **More memory:** [Unsloth's 4 to 8 bit files](#unsloths-files-ud-iq4_xs-to-q8_0) need 72 to 136 GB for all experts in RAM.
-- **A smaller model:** [Qwen3.6-35B-A3B](#qwen36-35b-a3b), 32 to 52 GB of RAM.
+- **A smaller model:** [Qwen3.6-35B-A3B](#qwen36-35b-a3b) (32 to 52 GB of RAM).
+- **Large native MoE:** [Tencent Hy4-Flash](#tencent-hy4-flash) (64 to 128 GB of RAM or unified memory, plus Engram shard on SSD).
 
 If RAM is short, setup can read experts from the SSD instead ([below](#will-it-fit)). That works and is much slower.
 
@@ -55,7 +58,7 @@ If RAM is short, setup can read experts from the SSD instead ([below](#will-it-f
 
 ## Qwen3.8-Flash-Next
 
-Four ISTA-DASLab sizes are the original model; the versions below are variants or other providers' packs of it.
+Four [ISTA-DASLab](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) sizes are the original model; the versions below are variants or other providers' packs of it.
 Every version in setup's menu reads pictures. [Picture rules](#pictures).
 
 ### Will it fit?
@@ -131,7 +134,7 @@ START-HERE.bat --setup --family swift --model IQ2_XS        # Linux and Mac: ./s
 
 ### Unsloth's files: UD-IQ4_XS to Q8_0
 
-`--family unsloth` is Unsloth's 4 to 8 bit quantizations of the same model. They keep the experts at more bits than
+`--family unsloth` is [Unsloth's 4 to 8 bit quantizations](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF) of the same model. They keep the experts at more bits than
 the sizes above, so they need more RAM. Setup keeps every expert in RAM when they fit with 16 GB to spare. With less RAM
 it keeps as many as fit and reads the rest from the SSD (much slower), and for the bigger files it asks first.
 
@@ -155,7 +158,7 @@ START-HERE.bat --setup --family unsloth --model UD-Q5_K_XL        # Linux and Ma
 
 ### Gyro-S and Gyro-M (agentionai)
 
-`--family gyro` is agentionai's Gyro quantization: trellis-coded experts in a rotated basis. They are the smallest
+`--family gyro` is [agentionai's Gyro quantization](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF): trellis-coded experts in a rotated basis. They are the smallest
 options and never setup's default. The download includes the 28 GB n-gram table. The memory figure is VRAM and RAM together.
 
 | Size | Download | Memory (VRAM + RAM) | In plain words |
@@ -238,6 +241,23 @@ Pictures, parallel requests, full measurements and limits: [QWEN36.md](QWEN36.md
 
 ```sh
 START-HERE.bat --setup --family qwen36-strata --model UD-Q4_K_XL        # Linux and Mac: ./setup.sh --setup ...
+```
+
+## Tencent Hy4-Flash
+
+[Tencent Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) runs on its dedicated Strata shape engine (`strata-hy4`) using
+[Strata's native `.strata` quantizations](https://huggingface.co/strata-engine/Hy4-Flash-Strata). It includes the built-in DFly2
+drafter, reads pictures (`Hy4-Flash-Vision.strata`, 0.93 GB), and streams its 67.6 GB Engram lookup shard (`Hy4-Flash-Engram-Q8.strata`)
+directly from the SSD.
+
+| Build | Model file | Engram shard (SSD) | Planning memory | In plain words |
+| --- | ---: | ---: | ---: | --- |
+| **SQ-64** | 62.0 GB | 67.6 GB | 64 GB RAM + 8+ GB GPU | flagship size; also supports 4-tier SSD cold-expert streaming on smaller RAM |
+| **SQ-96** | 89.6 GB | 67.6 GB | 96 GB RAM or 128 GB unified | higher precision, closer to the full model |
+| **SQ-128** | 113.7 GB | 67.6 GB | 128 GB RAM or 128 GB unified | highest precision native build |
+
+```sh
+strata launch --family hy4-flash --model SQ-64
 ```
 
 ## Adding or switching models
