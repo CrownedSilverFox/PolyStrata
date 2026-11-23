@@ -51835,7 +51835,7 @@
    "reads": [
     {
      "file": "engine/src/core/device.cu",
-     "line": 195,
+     "line": 267,
      "backend": "hip",
      "fn": "getenv"
     },
@@ -51865,6 +51865,76 @@
    "status": "opt-in",
    "owner": "core",
    "note": "[auto] documented for users (docs/AMD_HIP.md:152)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_WDDM_MARGIN_MIB",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/core/device.cu",
+     "line": 275,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:154"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "core",
+   "note": "[reviewed] Windows HIP: the margin kept free beside other processes' VRAM, MiB (default 1024) (engine/src/core/device.cu:275, docs/AMD_HIP.md:154)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_WDDM_OTHERS",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/core/device.cu",
+     "line": 271,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:154"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "rollback",
+   "owner": "core",
+   "note": "[reviewed] Windows HIP: the free VRAM figure is also lowered by what other processes hold on the card (GPU Adapter Memory counter minus this process's DXGI usage) and STRATA_WDDM_MARGIN_MIB; per card; on unless =0 (STRATA_WDDM_BUDGET=0 does not turn it off) (engine/src/core/device.cu:271, docs/AMD_HIP.md:154)",
    "retire_after": "",
    "retired_in": ""
   },

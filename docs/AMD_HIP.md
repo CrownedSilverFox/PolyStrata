@@ -147,7 +147,13 @@ no NVIDIA card PolyStrata can use, the AMD card is chosen by itself; with both, 
   combinations measured. A tested Linux pair does not validate the same pair on Windows.
 - **VRAM budget:** `hipMemGetInfo` on Windows does not subtract what the desktop and other programs hold. The engine lowers
   the free figure by what Windows' video memory budget for the process withholds (logged once). `STRATA_WDDM_BUDGET=0` turns
-  that off.
+  that off. The budget does not always count the other programs: on an RX 9070 XT it stayed at 15,419 of 16,304 MiB
+  while the desktop held 2.5 GB, and prompts were read at a third of their speed. strata-poly therefore also lowers the
+  free figure by what the other processes hold on the card (the "GPU Adapter Memory" counter minus this process's own
+  use) and a 1,024 MiB margin, whichever of the two takes more, for each card on its own (logged once per card:
+  `other programs hold N MiB of card D`; the counter is read again at most once a second). `STRATA_WDDM_OTHERS=0`
+  leaves that out (`STRATA_WDDM_BUDGET=0` turns off only the budget's share), and `STRATA_WDDM_MARGIN_MIB=N` sets
+  the margin.
 - **Pinned expert arena (#3431):** the HIP runtime gives each page-locked range of the arena a second address for the GPU, and
   it takes any pointer of the process inside that range for the arena. Through engine 0.1.54 about one start in ten on an RX
   7900 XTX had the engine thread's stack there (the same symptom was reported on an R9700): every long prompt was then read
