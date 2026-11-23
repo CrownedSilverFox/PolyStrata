@@ -237,8 +237,11 @@ bool run(const float* q, Kvq8 kq8, Kvq8 vq8, const half* keys, const half* vals,
 
 // keys a CUDA block takes, counted from the cache's first row.  1024 gave 4,833 tokens of context 5 blocks a group
 // (16 in a launch recorded for 8,192), on a card with 188 multiprocessors: Qwen3.6 wrote 433 tokens/s after them
-// at 24 GB with 1024, 477 with 256, 415 with 128.
-constexpr int kSplit = 256;
+// at 24 GB with 1024, 477 with 256, 415 with 128.  Each split leaves its rows' results in the scratch, which is
+// sized for the context (qwen35.cpp's chunk_): with 256 alone, a --max-context of 262,144 or more found no room and
+// the kernel was off, and Qwen3.6 UD-Q3_K_M wrote 51-64 tokens/s after a 120K prompt on the PRO 6000 instead of
+// 155-162.  Where 256 does not fit, a launch takes 1,024 keys a block (split_keys()).
+constexpr int kSplits[] = {256, 1024};
 constexpr int kTile = 64;      // keys a block takes at a time: 16 a warp
 constexpr int kDecWarps = 4;
 constexpr int kDecRows = 32;   // 4 tokens x 8 heads, or 2 x 16; the scratch has the same size
@@ -278,7 +281,7 @@ __device__ __forceinline__ float scale_of(const uint4& v, int b) {   // half b o
     return __half2float(__ushort_as_half((unsigned short) (b & 1 ? w >> 16 : w & 0xffff)));
 }
 
-// One CUDA block: the keys [split * kSplit, +kSplit) of group blockIdx.y for the launch's tokens (MT * 16 / Group
+// One CUDA block: the keys [split * keys, +keys) of group blockIdx.y for the launch's tokens (MT * 16 / Group
 // at most, row = token * Group + head of the group), as flash attention: per tile of 64 keys, a warp scores 16
 // (S = Q K^T, mma m16n8k16, the queries as halves, the key codes exact as halves and each 32-value block's scale
 // applied to its sum in floats), the softmax max and sum go on per row, and a warp adds 64 of the 256 value
@@ -292,7 +295,7 @@ __global__ void __launch_bounds__(kDecWarps * WARP_SIZE)
 fdec_kernel(const float* __restrict__ q, const void* __restrict__ kc, const uint16_t* __restrict__ ks,
             const void* __restrict__ vc, const uint16_t* __restrict__ vs, long long pos,
             const long long* __restrict__ at, int first, int tokens, int total_tokens, bool whole, int n_head,
-            int kv_heads, float scale, float* __restrict__ part, float* __restrict__ ml, size_t rs) {
+            int kv_heads, float scale, float* __restrict__ part, float* __restrict__ ml, size_t rs, int keys) {
     constexpr int Q = MT * 16, QS = kD + 8, PS = kTile + 8;
     __shared__ __align__(16) half Qs[Q * QS];
     __shared__ __align__(16) half Ps[Q * PS];
@@ -301,9 +304,9 @@ fdec_kernel(const float* __restrict__ q, const void* __restrict__ kc, const uint
     const int grp = blockIdx.y, split = blockIdx.x;
     const long long base_pos = at ? *at : pos;
     const long long p0 = base_pos + first, last = whole ? (base_pos + total_tokens - 1) : (p0 + tokens - 1),
-                    r0 = (long long) split * kSplit;
+                    r0 = (long long) split * keys;
     if (r0 > last) return;
-    const long long r1 = r0 + kSplit < last + 1 ? r0 + kSplit : last + 1;
+    const long long r1 = r0 + keys < last + 1 ? r0 + keys : last + 1;
     for (int i = threadIdx.x; i < Q * kD; i += blockDim.x) {
         const int row = i / kD, d = i % kD, tok = row / Group;
         const float x = tok < tokens ? q[((size_t) (first + tok) * n_head + grp * Group + row % Group) * kD + d] : 0.f;
@@ -539,11 +542,11 @@ fdec_kernel(const float* __restrict__ q, const void* __restrict__ kc, const uint
 template <int Group>
 __global__ void fdec_merge_kernel(const float* __restrict__ part, const float* __restrict__ ml, float* __restrict__ out,
                                   long long pos, const long long* __restrict__ at, int first, int total_tokens,
-                                  bool whole, int n_head, int kv_heads, float* __restrict__ ml_out) {
+                                  bool whole, int n_head, int kv_heads, float* __restrict__ ml_out, int keys) {
     const int h = blockIdx.x, tok = blockIdx.y, d = threadIdx.x, grp = h / Group;
     const long long base_pos = at ? *at : pos;
     const long long p = whole ? (base_pos + total_tokens - 1) : (base_pos + first + tok);
-    const int splits = int(p / kSplit) + 1, row = tok * Group + h % Group;
+    const int splits = int(p / keys) + 1, row = tok * Group + h % Group;
     float top = -INFINITY;
     for (int i = 0; i < splits; ++i) top = fmaxf(top, ml[2 * (((size_t) i * kv_heads + grp) * kDecRows + row)]);
     float sum = 0.f, acc = 0.f;
@@ -561,8 +564,17 @@ __global__ void fdec_merge_kernel(const float* __restrict__ part, const float* _
     out[out_row * kD + d] = sum > 0.f ? acc / sum : 0.f;
 }
 
-// splits of 1,024 keys up to `rows`, each with its results for kDecRows query rows and a max and a sum each
-size_t fdec_floats(int rows, int kv_heads) { return (size_t) grid(rows, kSplit) * kv_heads * kDecRows * (kD + 2); }
+// splits of `keys` keys up to `rows`, each with its results for kDecRows query rows and a max and a sum each
+size_t fdec_floats(int rows, int kv_heads, int keys) {
+    return (size_t) grid(rows, keys) * kv_heads * kDecRows * (kD + 2);
+}
+
+// The keys a split of `rows` takes: the first of kSplits whose results the scratch holds, or 0 for none.
+int split_keys(int rows, int kv_heads, size_t scratch_floats) {
+    for (const int keys : kSplits)
+        if (fdec_floats(rows, kv_heads, keys) <= scratch_floats) return keys;
+    return 0;
+}
 
 }  // namespace
 
@@ -617,12 +629,12 @@ bool fdec_fits(int dim, int n_head, int kv_heads, int rows, size_t scratch_float
     if (dim != kD || kv_heads <= 0 || (n_head != 8 * kv_heads && n_head != 16 * kv_heads) || rows <= 0) return false;
 #if !defined(STRATA_POLY_OWN)
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
-    return GGML_CUDA_CC_IS_NVIDIA(cc) && ampere_mma_available(cc) && fdec_floats(rows, kv_heads) <= scratch_floats;
+    return GGML_CUDA_CC_IS_NVIDIA(cc) && ampere_mma_available(cc) && split_keys(rows, kv_heads, scratch_floats) > 0;
 #else   // Ampere or later, which is what llama.cpp's ampere_mma_available() asks
     int dev = 0, major = 0;
     return cudaGetDevice(&dev) == cudaSuccess &&
            cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess && major >= 8 &&
-           fdec_floats(rows, kv_heads) <= scratch_floats;
+           split_keys(rows, kv_heads, scratch_floats) > 0;
 #endif
 }
 
@@ -635,7 +647,7 @@ bool run_dec(const float* q, const void* kc, const uint16_t* ks, const void* vc,
     const int rows = (int) (at ? room : pos + n);   // a recorded launch is sized for `room` rows
     if (n <= 0 || rows <= 0 || !kc || !vc || !fdec_fits(dim, n_head, kv_heads, rows, scratch_floats)) return false;
     if (!rs) rs = size_t(kv_heads) * dim;
-    const int splits = grid(rows, kSplit);
+    const int keys = split_keys(rows, kv_heads, scratch_floats), splits = grid(rows, keys);
     float* ml = scratch + (size_t) splits * kv_heads * kDecRows * kD;
     const cudaStream_t s = (cudaStream_t) stream;
     constexpr int kDecTokens = kDecRows / Group;
@@ -644,9 +656,9 @@ bool run_dec(const float* q, const void* kc, const uint16_t* ks, const void* vc,
         const dim3 blocks(splits, kv_heads);
         const auto kernel = c * Group <= 16 ? fdec_kernel<1, F16, Group> : fdec_kernel<2, F16, Group>;
         kernel<<<blocks, kDecWarps * WARP_SIZE, 0, s>>>(q, kc, ks, vc, vs, (long long) pos, at, first, c, n, whole,
-                                                        n_head, kv_heads, scale, scratch, ml, rs);
+                                                        n_head, kv_heads, scale, scratch, ml, rs, keys);
         fdec_merge_kernel<Group><<<dim3(n_head, c), kD, 0, s>>>(scratch, ml, out, (long long) pos, at, first, n, whole,
-                                                                n_head, kv_heads, ml_out);
+                                                                n_head, kv_heads, ml_out, keys);
     }
     ck("decode attention");
     return true;

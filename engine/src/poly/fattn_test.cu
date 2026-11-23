@@ -18,7 +18,7 @@
 //        poly_fattn_test [dec] gqa16   the same checks with Ornith 122B's 32 heads / 2 KV heads
 //        poly_fattn_test dec   fdec_q8() and fdec_f16() (the decode kernel) against attend() and the doubles, up
 //                              to 170,000 rows; a token alone and with others, and from a position on the card,
-//                              to the bit
+//                              to the bit; in Qwen35's scratch and in a quarter of it (the splits of 1,024 keys)
 #include "fattn.hpp"
 #include "strata/poly/kernels.hpp"
 
@@ -215,15 +215,18 @@ int decode_main() {
         attend(dq, f16 ? kh : nullptr, f16 ? vh : nullptr, pos, n, score, chunk, out, kDim, kHeads, kKvHeads, scale, nullptr,
                0, 0, false, nullptr, 0, 0, f16 ? Kvq8{} : kq, f16 ? Kvq8{} : vq);
     };
+    // a quarter of Qwen35's scratch holds the splits of 1,024 keys but not those of 256 for the cases from 120,000
+    // rows on: they take the wider splits (split_keys(), as a --max-context of 262,144 does)
+    size_t floats = kScore;
     auto dec = [&](long long pos, int n, bool on_card) {
         int room = 1024;
         while (room < pos + n) room *= 2;
         if (on_card) cudaMemcpy(at, &pos, sizeof pos, cudaMemcpyHostToDevice);
         const long long* a = on_card ? at : nullptr;
         return f16 ? fdec_f16(dq, kh, vh, pos, n, a, std::min(room, kRows), out, kDim, kHeads, kKvHeads, scale, score,
-                              kScore, nullptr)
+                              floats, nullptr)
                    : fdec_q8(dq, kq, vq, pos, n, a, std::min(room, kRows), out, kDim, kHeads, kKvHeads, scale, score,
-                             kScore, nullptr);
+                             floats, nullptr);
     };
     auto time = [&](auto&& run) {
         run();
@@ -239,9 +242,11 @@ int decode_main() {
     struct Case { long long pos; int n; };
     const Case cases[] = {{0, 1}, {5, 3}, {1022, 2}, {1023, 4}, {1024, 1}, {2047, 5}, {30000, 2},
                           {120000, 3}, {140000, 1}, {140000, 3}, {170000, 4}, {170000, 6}, {170000, 9}};
+    for (const size_t scratch : {kScore, kScore / 4})
     for (const bool half_cache : {false, true})
     for (const Case& c : cases) {
         f16 = half_cache;
+        floats = scratch;
         const size_t n_cells = size_t(c.n) * kHeads * kDim;
         old(c.pos, c.n);
         const std::vector<float> ref = download(out, n_cells);
@@ -288,10 +293,10 @@ int decode_main() {
         const float ms_old = time([&] { old(c.pos, c.n); }), ms_dec = time([&] { dec(c.pos, c.n, false); });
         const bool ok = same && most <= 1e-2f && most_fd <= 1e-2f;
         bad += !ok;
-        std::printf("%s %s pos %6lld rows %d: %.2e from attend() (results up to %.2f); against doubles: fdec %.2e, "
-                    "attend %.2e; %s; %.3f ms against %.3f\n", ok ? "ok  " : "FAIL", f16 ? "f16" : "q8 ", c.pos, c.n,
-                    most, big, most_fd, most_ref, same ? "same bits alone and on the card" : "BITS DIFFER", ms_dec,
-                    ms_old);
+        std::printf("%s %s %s pos %6lld rows %d: %.2e from attend() (results up to %.2f); against doubles: fdec %.2e, "
+                    "attend %.2e; %s; %.3f ms against %.3f\n", ok ? "ok  " : "FAIL", f16 ? "f16" : "q8 ",
+                    floats == kScore ? "scratch 1/1" : "scratch 1/4", c.pos, c.n, most, big, most_fd, most_ref,
+                    same ? "same bits alone and on the card" : "BITS DIFFER", ms_dec, ms_old);
     }
     std::printf(bad ? "%d failed\n" : "all passed\n", bad);
     return bad ? 1 : 0;
