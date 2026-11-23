@@ -4,7 +4,7 @@ Raw results and short reports from measurement runs, one folder per run, named b
 the PolyStrata version, hardware and method of its own day, and none is a statement about a later release. Current numbers are in the
 [docs](../README.md) and the [README](../../README.md); how to measure is in [BENCHMARK_PROTOCOL.md](../BENCHMARK_PROTOCOL.md).
 
-This page is built by `python tools/bench_results_index.py` (`--check` fails when a folder is missing from it). 176 folders and 3 loose files, 2756 files in all.
+This page is built by `python tools/bench_results_index.py` (`--check` fails when a folder is missing from it). 178 folders and 3 loose files, 2762 files in all.
 
 
 ## 2026-09
@@ -197,6 +197,8 @@ This page is built by `python tools/bench_results_index.py` (`--check` fails whe
 | [2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-iq3-s](2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-iq3-s/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
 | [2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-q2-0](2026-11-17-community-rx-7600-xt-qwen3-8-flash-next-q2-0/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
 | [2026-11-17-community-rx-7600-xt-tiel-coder-35b-a3b-ud-q4-k-xl](2026-11-17-community-rx-7600-xt-tiel-coder-35b-a3b-ud-q4-k-xl/) | Community benchmark on AMD Radeon RX 7600 XT | 3 |
+| [2026-11-22-community-rtx-4060-ti-inkling-2-mini-ud-q4-k-xl](2026-11-22-community-rtx-4060-ti-inkling-2-mini-ud-q4-k-xl/) | Community benchmark on NVIDIA GeForce RTX 4060 Ti | 3 |
+| [2026-11-22-community-rtx-5080-inkling-2-mini-ud-q4-k-xl](2026-11-22-community-rtx-5080-inkling-2-mini-ud-q4-k-xl/) | Community benchmark on NVIDIA GeForce RTX 5080 | 3 |
 
 ## Loose files
 
