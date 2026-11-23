@@ -4356,11 +4356,11 @@ void merge_attn_piece(float* acc_out, float* acc_ml, const float* piece_out, con
 // instead: out[r * width + i] = (float)codes[row + r][i] * __half2float(scales[row + r][i / 32]).  blockIdx.y is
 // the row of the block (blockIdx.x the columns).  A block never wraps a ring: it ends where a ring starts over.
 __global__ void dequant_q8_kernel(const int8_t* __restrict__ codes, const uint16_t* __restrict__ scales,
-                                  half* __restrict__ out, int width, long long row, size_t rs) {
+                                  half* __restrict__ out, int width, long long row, size_t rs, size_t ss) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= width) return;
     const size_t r = (size_t) (row + blockIdx.y), at = r * rs;
-    const float d = __half2float(__ushort_as_half(scales[r * (rs >> 5) + (i >> 5)]));
+    const float d = __half2float(__ushort_as_half(scales[r * ss + (i >> 5)]));
     out[(size_t) blockIdx.y * width + i] = __float2half((float) codes[at + i] * d);
 }
 
@@ -5071,10 +5071,13 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
     const int work_rows_f = width > 0 ? (int) std::min<size_t>(work_halves / 2 / (size_t) width, (size_t) INT_MAX) : 0;
     const size_t chunk_max = std::max<size_t>(16, kAttendResults / (size_t(n_head) * dim * sizeof(float)));
     const size_t cells_f = ((score_floats > qres ? score_floats - qres : 0) / 2) & ~size_t(3);   // a multiple of 4: the floats are read 4 at a time
+    // Both read a q8 cache as rows of width codes and width / 32 scales in two arrays (dequant_q8_f32_kernel, gemm_q8):
+    // a cache with its own row strides (Inkling 2's, codes and scales in one row) keeps the half path, which takes them.
+    const bool strided = kq8.rs || kq8.ss || vq8.rs || vq8.ss;
     // level 2: the head's values in whole blocks of 32 for the scales, and a block of at least 64 keys at the largest chunk
-    const bool own = level == 2 && kq && vq && dim % 32 == 0 && width % 32 == 0 && score_floats >= 4 * qres &&
+    const bool own = level == 2 && kq && vq && !strided && dim % 32 == 0 && width % 32 == 0 && score_floats >= 4 * qres &&
                      cells_f / n_head >= 64 * chunk_max;
-    const bool f32 = own || (level >= 1 && kq && vq && work_rows_f >= 256 && score_floats >= 4 * qres);
+    const bool f32 = own || (level >= 1 && kq && vq && !strided && work_rows_f >= 256 && score_floats >= 4 * qres);
     const size_t cells = f32 ? cells_f : score_floats / 3 * 2;
     float* weight32 = score + cells;
     float* qg32 = score + 2 * cells;   // the grouped queries as floats, in the scratch past the scores and weights
@@ -5170,10 +5173,12 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
             // a q8 cache's rows are dequantized into the workspace the products read as an fp16 cache
             if (kq)
                 dequant_q8_kernel<<<dim3(grid(width, 256), m), 256, 0, cs(stream)>>>(
-                    kq8.codes, kq8.scales, (half*) kwork, width, row, kq8.rs ? kq8.rs : size_t(width));
+                    kq8.codes, kq8.scales, (half*) kwork, width, row, kq8.rs ? kq8.rs : size_t(width),
+                    kq8.ss ? kq8.ss : (kq8.rs ? kq8.rs : size_t(width)) >> 5);
             if (vq)
                 dequant_q8_kernel<<<dim3(grid(width, 256), m), 256, 0, cs(stream)>>>(
-                    vq8.codes, vq8.scales, (half*) vwork, width, row, vq8.rs ? vq8.rs : size_t(width));
+                    vq8.codes, vq8.scales, (half*) vwork, width, row, vq8.rs ? vq8.rs : size_t(width),
+                    vq8.ss ? vq8.ss : (vq8.rs ? vq8.rs : size_t(width)) >> 5);
             const half* krow = kq ? (const half*) kwork : (const half*) kcache + size_t(row) * width;
             const half* vrow = vq ? (const half*) vwork : (const half*) vcache + size_t(row) * width;
             // A product a group: its heads' queries of every token of the chunk against the group's keys.  cuBLAS

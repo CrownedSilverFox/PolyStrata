@@ -181,6 +181,40 @@ __device__ void kv8_store(const float* v, uint8_t* cache, long long cell, int n_
     if (threadIdx.x == 0) reinterpret_cast<float*>(row + (size_t) n_kv * dim)[h] = sc;
 }
 
+// ---- the attention caches in Q8_0 (InkAttn::kvq8, --kv q8_0): a row the n_kv heads' dim int8 codes, then a half
+// scale for each block of 32 values (n_kv * dim / 32 of them, in the codes' order), ink_kvq8_row() bytes.  A block's
+// scale is its largest magnitude over 127 and a code round(x / scale), as llama.cpp's quantize_row_q8_0 makes them.
+// A row's codes start 4-aligned (dp4a can read them as they lie) and its scales 2-aligned. ----
+constexpr int kKvF16 = 0, kKvFp8 = 1, kKvQ8 = 2;   // the token kernels' cache formats (InkAttn::kv8, ::kvq8)
+__device__ __forceinline__ size_t kvq8_row(int n_kv, int dim) { return (size_t) n_kv * dim + (size_t) n_kv * dim / 16; }
+__device__ __forceinline__ const uint16_t* kvq8_scales(const uint8_t* row, int n_kv, int dim) {
+    return reinterpret_cast<const uint16_t*>(row + (size_t) n_kv * dim);
+}
+
+// kv8_store() for a Q8_0 cache.  A block's 32 values are one warp's in one pass (dim and blockDim.x multiples of 32),
+// so a warp finds its block's largest magnitude by itself.
+__device__ void kvq8_store(const float* v, uint8_t* cache, long long cell, int n_kv, int dim, int h) {
+    uint8_t* row = cache + (size_t) cell * kvq8_row(n_kv, dim);
+    for (int i = threadIdx.x; i < dim; i += blockDim.x) {
+        const float x = v[i];
+        float a = fabsf(x);
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) a = fmaxf(a, __shfl_xor_sync(0xffffffff, a, o, 32));
+        const float d = a / 127.0f, id = d != 0.0f ? 1.0f / d : 0.0f;
+        reinterpret_cast<int8_t*>(row)[(size_t) h * dim + i] = (int8_t) roundf(x * id);
+        if ((i & 31) == 0)
+            reinterpret_cast<uint16_t*>(row + (size_t) n_kv * dim)[((size_t) h * dim + i) >> 5] =
+                __half_as_ushort(__float2half(d));
+    }
+}
+
+template <int KV>
+__device__ __forceinline__ void kv_store(const float* v, void* cache, long long cell, int n_kv, int dim, int h,
+                                         float* part) {
+    if (KV == kKvFp8) kv8_store(v, (uint8_t*) cache, cell, n_kv, dim, h, part);
+    else if (KV == kKvQ8) kvq8_store(v, (uint8_t*) cache, cell, n_kv, dim, h);
+}
+
 constexpr int kQueries = 4;
 constexpr int kMixThreads = 1024;
 constexpr int kMixSums = 1 + kQueries;   // a state's sum of squares, and its product with each query
@@ -793,7 +827,7 @@ __global__ void ink_clip_kernel(float* x, const float* __restrict__ scale, float
 }
 
 // ink_clip() and ink_head_rms() of InkClips' four jobs in one launch, a block a token's head as each of them
-template <bool KV8>
+template <int KV>
 __global__ void ink_clips_kernel(InkClips c) {
     __shared__ float part[128 / WARP];
     int b = blockIdx.x, j = 0;
@@ -807,8 +841,8 @@ __global__ void ink_clips_kernel(InkClips c) {
     if (!c.cache[j]) return;   // each thread its own values, as clip_head() and rms_head() left them
     long long cell = (c.at ? c.at[0] : c.pos) + row;
     if (c.ring > 0) cell %= c.ring;
-    if (KV8) {
-        kv8_store(v, (uint8_t*) c.cache[j], cell, c.heads[j], c.dim[j], head, part);
+    if (KV != kKvF16) {
+        kv_store<KV>(v, c.cache[j], cell, c.heads[j], c.dim[j], head, part);
         return;
     }
     __half* to = (__half*) c.cache[j] + (size_t) cell * c.heads[j] * c.dim[j] + (size_t) head * c.dim[j];
@@ -864,7 +898,7 @@ struct QkvArgs {
 };
 
 // ink_qkv(): blocks [0, n_head) Q's heads, then K's n_kv, V's n_kv, and the relative positions' n_head; 128 threads.
-template <bool KV8>
+template <int KV>
 __global__ void ink_qkv_kernel(QkvArgs g) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -894,7 +928,7 @@ __global__ void ink_qkv_kernel(QkvArgs g) {
         if (is_v) rms_head(head, a.dim, a.eps, part);
         else clip_head(head, nullptr, a.qk_thr, a.dim, 0.0f, 1.0f, p, part);
         const long long row = a.ring > 0 ? p % a.ring : p;
-        if (KV8) kv8_store(head, (uint8_t*) (is_v ? a.vals : a.keys), row, a.n_kv, a.dim, h, part);
+        if (KV != kKvF16) kv_store<KV>(head, is_v ? a.vals : a.keys, row, a.n_kv, a.dim, h, part);
         else if (i < a.dim)
             ((__half*) (is_v ? a.vals : a.keys))[size_t(row) * channels + size_t(h) * a.dim + i] = __float2half(head[i]);
         return;
@@ -944,6 +978,18 @@ __device__ __forceinline__ void lane_fp8(const void* cache, long long row, int n
     for (int c = 0; c < kLaneHalves; ++c) out[c] = c < n ? e4m3_val(p[c]) * sc : 0.0f;
 }
 
+// lane_halves() of a Q8_0 cache: row `row`'s head g, its codes times their block's scale (a lane's n values lie in
+// one block)
+__device__ __forceinline__ void lane_q8(const void* cache, long long row, int n_kv, int dim, int g, int lane, int n,
+                                        float* out) {
+    const uint8_t* r = (const uint8_t*) cache + (size_t) row * kvq8_row(n_kv, dim);
+    const size_t at = (size_t) g * dim + lane * n;
+    const float d = __half2float(__ushort_as_half(kvq8_scales(r, n_kv, dim)[at >> 5]));
+    const int8_t* p = reinterpret_cast<const int8_t*>(r) + at;
+#pragma unroll
+    for (int c = 0; c < kLaneHalves; ++c) out[c] = c < n ? (float) p[c] * d : 0.0f;
+}
+
 __device__ __forceinline__ void lane_halves(const __half* head, int lane, int n, float* out) {
     const __half2* p = (const __half2*) (head + lane * n);
 #pragma unroll
@@ -970,7 +1016,7 @@ constexpr int kScoreShares = 32 / kScoreLanes;   // a lane's shares of a score
 constexpr int kScoreSteps = 8;                   // the most steps of kScoreKeys keys a warp takes
 static_assert(kScoreShares == 4, "a lane adds the butterfly's first two rounds itself");
 
-template <bool KV8, int LH>
+template <int KV, int LH>
 __global__ void __launch_bounds__(kScoreWarps * 32) ink_score_kernel(InkAttn a, int t0, int nk_max, int steps) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -1016,7 +1062,8 @@ __global__ void __launch_bounds__(kScoreWarps * 32) ink_score_kernel(InkAttn a, 
         for (int k = 0; k < kScoreShares; ++k) {
             const int vl = sub + kScoreLanes * k;
             if (here) {
-                if (KV8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, vl, LH, kx[k]);
+                if (KV == kKvFp8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, vl, LH, kx[k]);
+                else if (KV == kKvQ8) lane_q8(a.keys, row, a.n_kv, a.dim, g, vl, LH, kx[k]);
                 else lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, vl, LH, kx[k]);
             } else {
 #pragma unroll
@@ -1088,7 +1135,7 @@ __global__ void ink_softmax_kernel(InkAttn a, int t0, int nk_max, float* norm) {
 // as the score kernel reads a key; a lane holds one of the warp's weights, a head and a key each.  The warps'
 // sums are added in their order.  value_warps() launches up to 32 warps, so the registers must fit 1,024 threads on
 // every card: sm_86 and sm_89 gave this kernel 66 a thread without the bound, and the launch failed there.
-template <bool KV8>
+template <int KV>
 __global__ void __launch_bounds__(1024) ink_value_kernel(InkAttn a, int t0, int nk_max, float* parts, int n_parts) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
@@ -1116,7 +1163,8 @@ __global__ void __launch_bounds__(1024) ink_value_kernel(InkAttn a, int t0, int 
 #pragma unroll
     for (int u = 0; u < kValueKeys; ++u) {
         if (j0 + u < j1) {
-            if (KV8) lane_fp8(a.vals, row, a.n_kv, a.dim, g, lane, lh, v[u]);
+            if (KV == kKvFp8) lane_fp8(a.vals, row, a.n_kv, a.dim, g, lane, lh, v[u]);
+            else if (KV == kKvQ8) lane_q8(a.vals, row, a.n_kv, a.dim, g, lane, lh, v[u]);
             else lane_halves((const __half*) a.vals + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, v[u]);
             if (++row == a.ring) row = 0;
         }
@@ -1324,6 +1372,26 @@ __global__ void __launch_bounds__((LEAN ? 32 : 64) / 16 * G * 32, 1) ink_flash_k
                         uint32_t h[4];
 #pragma unroll
                         for (int e = 0; e < 4; ++e) h[e] = ink_h2(e4m3_val(b[2 * e]) * sc, e4m3_val(b[2 * e + 1]) * sc);
+                        (side ? vh : kh) = make_uint4(h[0], h[1], h[2], h[3]);
+                    }
+                }
+                *reinterpret_cast<uint4*>(&ks[buf][r][c]) = kh;
+                *reinterpret_cast<uint4*>(&vs[buf][r][c]) = vh;
+                continue;
+            }
+            if (a.kvq8) {   // eight codes of the key and of the value, as halves times their block's scale
+                uint4 kh = make_uint4(0, 0, 0, 0), vh = make_uint4(0, 0, 0, 0);
+                if (whole) {
+                    const size_t rb = (size_t) (a.ring > 0 ? key % a.ring : key) * kvq8_row(a.n_kv, DIM);
+                    for (int side = 0; side < 2; ++side) {
+                        const uint8_t* row = (const uint8_t*) (side ? a.vals : a.keys) + rb;
+                        const size_t at = (size_t) g * DIM + c;
+                        const float d = __half2float(__ushort_as_half(kvq8_scales(row, a.n_kv, DIM)[at >> 5]));
+                        const uint2 q = *reinterpret_cast<const uint2*>(row + at);
+                        const int8_t* b = reinterpret_cast<const int8_t*>(&q);
+                        uint32_t h[4];
+#pragma unroll
+                        for (int e = 0; e < 4; ++e) h[e] = ink_h2((float) b[2 * e] * d, (float) b[2 * e + 1] * d);
                         (side ? vh : kh) = make_uint4(h[0], h[1], h[2], h[3]);
                     }
                 }
@@ -2224,7 +2292,9 @@ void ink_qkv(const InkQkv& a, void* stream) {
         throw std::invalid_argument("ink_qkv: heads of up to 128 values, 2 to 8 taps");
     QkvArgs g{a, 1.0f / std::sqrt((float) ((a.kdyn ? 2 : 1) * a.taps + 1)),
               1.0f / std::sqrt((float) ((a.vdyn ? 2 : 1) * a.taps + 1))};
-    launch_pdl(a.kv8 ? ink_qkv_kernel<true> : ink_qkv_kernel<false>, dim3(2 * a.n_head + 2 * a.n_kv), dim3(128), 0,
+    launch_pdl(a.kvq8  ? ink_qkv_kernel<kKvQ8>
+               : a.kv8 ? ink_qkv_kernel<kKvFp8>
+                       : ink_qkv_kernel<kKvF16>, dim3(2 * a.n_head + 2 * a.n_kv), dim3(128), 0,
                cs(stream), g);
     launched("ink_qkv");
 }
@@ -2239,7 +2309,7 @@ void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int r
 
 void ink_clips(const InkClips& c, void* stream) {
     if (c.rows <= 0) return;
-    auto* k = c.kv8 ? ink_clips_kernel<true> : ink_clips_kernel<false>;
+    auto* k = c.kvq8 ? ink_clips_kernel<kKvQ8> : c.kv8 ? ink_clips_kernel<kKvFp8> : ink_clips_kernel<kKvF16>;
     k<<<c.rows * (c.heads[0] + c.heads[1] + c.heads[2] + c.heads[3]), 128, 0, cs(stream)>>>(c);
     launched("ink_clips");
 }
@@ -2276,7 +2346,7 @@ static int value_warps(int n_head, int n_kv, int dim) {
 
 // ink_score_kernel() for a call's caches and heads
 template <int LH> static auto score_kernel_lh(const InkAttn& a) {
-    return a.kv8 ? ink_score_kernel<true, LH> : ink_score_kernel<false, LH>;
+    return a.kvq8 ? ink_score_kernel<kKvQ8, LH> : a.kv8 ? ink_score_kernel<kKvFp8, LH> : ink_score_kernel<kKvF16, LH>;
 }
 static auto score_kernel(const InkAttn& a) { return a.dim == 128 ? score_kernel_lh<4>(a) : score_kernel_lh<2>(a); }
 
@@ -2335,7 +2405,9 @@ void ink_attend(const InkAttn& a, void* stream) {
         launched("ink_score");
         launch_pdl(ink_softmax_kernel, dim3(m * a.n_head), dim3(kAttnThreads), 0, cs(stream), a, t0, nk_max, norm);
         launched("ink_softmax");
-        launch_pdl(a.kv8 ? ink_value_kernel<true> : ink_value_kernel<false>, dim3(m * a.n_kv, n_parts),
+        launch_pdl(a.kvq8  ? ink_value_kernel<kKvQ8>
+                   : a.kv8 ? ink_value_kernel<kKvFp8>
+                           : ink_value_kernel<kKvF16>, dim3(m * a.n_kv, n_parts),
                    dim3(warps * 32), (size_t) warps * group * a.dim * sizeof(float), cs(stream), a, t0, nk_max, parts,
                    n_parts);
         launched("ink_value");
@@ -2380,7 +2452,8 @@ bool ink_attend_batch(const InkAttn& a, void* stream) {
         cudaFuncAttributes f{};
         return cudaFuncGetAttributes(&f, ink_flash_kernel<1, false>) == cudaSuccess ? f.ptxVersion : 0;
     }();
-    if (ptx < 80) return ptx >= 75 && !a.kv8 && flash75(a, per, stream);
+    // Turing: ink_flash75_kernel reads fp16 caches only (FP8 and Q8_0 rows go to attend_batch())
+    if (ptx < 80) return ptx >= 75 && !a.kv8 && !a.kvq8 && flash75(a, per, stream);
     static const bool lean = [] {   // ink_flash_kernel's LEAN on sm_80 (A100 class) only: the card it was faster on
         int dev = 0, major = 0, minor = 0;
         return cudaGetDevice(&dev) == cudaSuccess &&
@@ -2401,7 +2474,7 @@ bool ink_attend_batch(const InkAttn& a, void* stream) {
         if (on) std::fprintf(stderr, "strata: STRATA_FAST_ATTN=1: Inkling 2's full layers read prompts on ink_fast_kernel (other bits)\n");
         return on;
     }();
-    if (fast && a.window <= 0) {
+    if (fast && a.window <= 0 && !a.kvq8) {   // ink_fast_kernel reads fp16 and FP8 caches
         // HACC where the tensor cores sum fp16 products into floats at half rate: all but sm_80, sm_90 and sm_100,
         // whose whitepapers give the same dense FP16 TFLOPS with FP32 accumulation as with FP16
         static const bool hacc = [] {
