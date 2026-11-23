@@ -262,9 +262,11 @@ RX 7900 XT's; after 302 and 8,192 tokens they match CUDA's. Use an NVIDIA card o
 
 Not run yet: an AMD card on native Linux or Windows, two cards (`--expert-gpu`, built but not run), UD-Q4_K_XL on the
 8 GB card and UD-Q4_K_XL on a Mac. Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or
-the card; on a Mac, on the CPU. The draft file is an option (`--draft-model`). Several requests at once (`"parallel"`, see [BATCHING.md](../BATCHING.md)) are
-opt-in on an NVIDIA card, not with the draft file and not on AMD; on a Mac the engine takes one request at a time for
-this model, and the installer writes `"parallel": 1` there. Its license is Apache 2.0.
+the card; on a Mac, on the CPU. The draft file is an option (`--draft-model`). Several requests at once (`"parallel"`,
+see [BATCHING.md](../BATCHING.md)) are opt-in on an NVIDIA card (up to 16 slots), not with the draft file and not on
+AMD. With `--tail-skip` (setup's small-card flags) a chat's answer can then depend on the other chats writing at the
+same time. On a Mac the engine takes one request at a time for this model, and the installer writes `"parallel": 1`
+there. Its license is Apache 2.0.
 
 ## Install
 
