@@ -152,7 +152,7 @@ says so and starts the engine you had.
 
 ### Coming from 0.1.45-poly.10 or older
 
-Since 0.2.19-poly.1 PolyStrata has a folder for each part (`app/`, `engine/`, `terminal/`, `docs/`, `tools/`).
+Since 0.2.19-poly.1 PolyStrata has a folder for each part (`engine/`, `terminal/`, `docs/`, `tools/`).
 `START-HERE.bat`, `UPDATE.bat` and `setup.sh` stay at the top and work as before. What was at the top besides them
 is now in `terminal/`:
 
