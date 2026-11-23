@@ -112,7 +112,7 @@ To turn them off, delete `"--attn-requant", "q5_0", "--loop-bf16", "--tail-skip"
 the `"args"` list of the model's run config, `strata-inkling-<size>.json` in the install's `terminal` folder (for
 example `strata-inkling-ud-q3_k_xl.json`), and restart the server. To keep the rounding but compute every expert,
 change the `4` after `--tail-skip` to `0`, or add `"env": {"STRATA_ROUTE_TAIL_SKIP": "0"}` to the config. Running
-setup again for the size writes them back.
+setup again for the size writes the four back into `"args"`; an `"env"` entry you added stays.
 
 Three of them round the numbers more coarsely (lossy). `--tail-skip 4` is different: it leaves experts out. For each
 token, an expert that is not on the card and that the router ranks fifth or lower of the token's eight is not
@@ -184,8 +184,8 @@ two runs of the same settings:
 `--tail-skip 4`, `--expert-swaps 0` and `--loop-bf16` change nothing (100%, KL 0). On the 16 GB card one step of most
 settings has a KL of 6 to 8, which sets the means there; so does the default with the doorbell off
 (`STRATA_POLY_BELL=0`; the doorbell is how the card hands its misses to the CPU one token at a time). The medians
-are 0.0002 (again), 0.0004 (`--expert-swaps 0`), 0.0003 (`--loop-bf16`), 0.0017 (`--attn-requant q5_0`), 0.0007
-(`--tail-skip 4`) and 0.0025 (all four).
+are 0.0002 and 0.0001 (again), 0.0004 (`--expert-swaps 0`), 0.0003 (`--loop-bf16`), 0.0017 (`--attn-requant
+q5_0`), 0.0007 (`--tail-skip 4`) and 0.0025 (all four).
 
 `--tail-skip 4` leaves out more the fewer experts the card holds. With it, the engine's "experts from VRAM" count
 also takes the left-out experts as found in VRAM, so it reads high. The engine counts the left-out experts only with
