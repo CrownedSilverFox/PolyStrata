@@ -51550,7 +51550,7 @@
    "reads": [
     {
      "file": "engine/src/core/device.cu",
-     "line": 195,
+     "line": 267,
      "backend": "hip",
      "fn": "getenv"
     },
@@ -51591,7 +51591,7 @@
    "reads": [
     {
      "file": "engine/src/core/device.cu",
-     "line": 266,
+     "line": 275,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -51614,7 +51614,7 @@
    "last_date": null,
    "status": "opt-in",
    "owner": "core",
-   "note": "[reviewed] Windows HIP: the margin kept free beside other processes' VRAM, MiB (default 1024) (engine/src/core/device.cu:266, docs/AMD_HIP.md:154)",
+   "note": "[reviewed] Windows HIP: the margin kept free beside other processes' VRAM, MiB (default 1024) (engine/src/core/device.cu:275, docs/AMD_HIP.md:154)",
    "retire_after": "",
    "retired_in": ""
   },
@@ -51626,7 +51626,7 @@
    "reads": [
     {
      "file": "engine/src/core/device.cu",
-     "line": 262,
+     "line": 271,
      "backend": "hip",
      "fn": "getenv"
     }
@@ -51649,7 +51649,7 @@
    "last_date": null,
    "status": "rollback",
    "owner": "core",
-   "note": "[reviewed] Windows HIP: the free VRAM figure is also lowered by what other processes hold on the card (GPU Adapter Memory counter minus this process's DXGI usage) and STRATA_WDDM_MARGIN_MIB; on unless =0 (engine/src/core/device.cu:262, docs/AMD_HIP.md:154)",
+   "note": "[reviewed] Windows HIP: the free VRAM figure is also lowered by what other processes hold on the card (GPU Adapter Memory counter minus this process's DXGI usage) and STRATA_WDDM_MARGIN_MIB; per card; on unless =0 (STRATA_WDDM_BUDGET=0 does not turn it off) (engine/src/core/device.cu:271, docs/AMD_HIP.md:154)",
    "retire_after": "",
    "retired_in": ""
   },
