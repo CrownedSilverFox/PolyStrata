@@ -3435,6 +3435,19 @@ class InklingOutputParser(OutputParser):
         self.mode = "content" if opened else "between"
         self.header = ""         # the block's header: a call's tool name
 
+    # The state the server reads (Service._run) for each mode: "reasoning" in a thinking block, "content" between
+    # blocks (a forced call's opening goes there once the thinking is closed), "text" inside a text block
+    STATES = {"between": "content", "header": "header", "reasoning": "reasoning", "content": "text", "call": "call"}
+
+    @property
+    def state(self) -> str:
+        mode = getattr(self, "mode", None)
+        return self.STATES[mode] if mode is not None else self._state
+
+    @state.setter
+    def state(self, value: str):
+        self._state = value          # OutputParser.__init__'s; this parser's state is its mode
+
     @property
     def clean(self) -> bool:
         return not self.ink

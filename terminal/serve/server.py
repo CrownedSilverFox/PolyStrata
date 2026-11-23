@@ -6622,6 +6622,8 @@ class Service:
                         if wrap:
                             budget = st["thinking_budget"] = None
                             text = closed_with(REASONING_WRAP_UP, parser.think_end) + (force or "")
+                        elif self.call_format == "inkling":     # a block of its own: no blank line before it
+                            text = force
                         else:
                             text = "\n" * (2 - (len(tail) - len(tail.rstrip("\n")))) + force
                         force = None

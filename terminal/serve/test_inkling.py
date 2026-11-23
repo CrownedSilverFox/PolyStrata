@@ -171,6 +171,32 @@ class ServiceForInkling(unittest.TestCase):
                        if kind == "event"]
                 self.assertEqual((said(evs, "reasoning"), said(evs, "content")), (reasoning, "Rome"))
 
+    def test_a_named_tool_choice_is_opened_once_the_thinking_is_closed(self):
+        # the model thinks; the server writes the call's opening right after the closed thinking block, in place of
+        # the text block the model would open, and the model goes on with the arguments
+        tools = [{"name": "get_weather", "parameters": {"properties": {"city": {"type": "string"}}}}]
+        force = self.svc.force_text(FUNC_START + "get_weather>\n")
+        ids = self.svc.encode_prompt(self.chat, tools, {})
+        self.svc.engine = MockEngine(self.tok, [THINK + "<|message_model|><|content_text|>No tool needed.",
+                                                '{"city":"Rome"}}' + END + STOP])
+        evs = [e for kind, e in self.svc.run(ids, True, tools, 256, {}, threading.Event(), force) if kind == "event"]
+        forced = self.tok.encode(force, parse_special=True)
+        self.assertEqual(self.svc.engine.last_prompt[-len(forced):], forced)
+        self.assertEqual(self.tok.decode(self.svc.engine.last_prompt[len(ids):]), THINK + force)
+        self.assertEqual(said(evs, "reasoning"), "the capital of Italy")
+        self.assertEqual([(e.call.name, e.call.arguments) for e in evs if e.kind == "tool_call"],
+                         [("get_weather", {"city": "Rome"})])
+        self.assertEqual(said(evs, "content"), "")
+
+    def test_the_parser_says_where_a_forced_call_can_go(self):
+        p = InklingOutputParser(tools=SCHEMA)
+        p.feed("<|message_model|><|content_thinking|>x")
+        self.assertEqual(p.state, "reasoning")
+        p.feed(END)
+        self.assertEqual((p.state, p.clean), ("content", True))     # between blocks
+        p.feed("<|message_model|><|content_text|>y")
+        self.assertEqual(p.state, "text")                            # not inside a text block
+
 
 if __name__ == "__main__":
     unittest.main()
