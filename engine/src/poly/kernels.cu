@@ -3439,6 +3439,11 @@ void* blas_create(void* stream) {
     }
 #endif
     cudaStreamSynchronize(cs(stream));
+#if defined(STRATA_USE_HIP)
+    // hipBLAS on Windows can leave a stale error behind a product that worked (prefill/gemm.cu): nothing reads these
+    // products, so whatever they leave must not reach the next launch's check
+    (void) cudaGetLastError();
+#endif
     cudaFree(p);
     return h;
 }
