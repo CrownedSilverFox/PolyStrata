@@ -1878,8 +1878,8 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     // moe() weighs the picks as a softmax of their scores, which is how only this architecture's router does
     if (o.cache_bias > 0.f && !qwen35)
         throw std::runtime_error("--cache-bias is supported for qwen35moe models; this is a '" + name + "' model");
-    if ((!o.attn_requant.empty() || o.loop_bf16 || o.prompt_int8) && name != "inkling2_loop")
-        throw std::runtime_error("--attn-requant, --loop-bf16 and --prompt-int8 are Inkling 2's; this is a '" + name + "' model");
+    if ((!o.attn_requant.empty() || o.loop_bf16 || o.prompt_int8 >= 0) && name != "inkling2_loop")
+        throw std::runtime_error("--attn-requant, --loop-bf16 and --prompt-int8 / --no-prompt-int8 are Inkling 2's; this is a '" + name + "' model");
     if (o.expert_gpu >= 0 && (name != "inkling2_loop" || !o.layer_split.empty()))
         throw std::runtime_error("--expert-gpu is Inkling 2's, on one card beside it (no --layer-split); this is a '" +
                                  name + "' model");

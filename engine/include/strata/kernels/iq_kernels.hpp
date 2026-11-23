@@ -211,7 +211,8 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
 /// of Y (row i without ids).  With `from`, row i is row from[i] of xq.  false: not launched.
 bool gemm_iq_i8_takes(int ty, int K);
 /// The int8 kernel on Turing (sm_75) too, from now on in this process, by m8n8k16 MMAs: the same sums as on Ampere.
-/// Off by default, where Turing's products are the halves' (mmq_own.cu); a model's engine turns it on when asked.
+/// Off by default, where Turing's products are the halves' (mmq_own.cu); a model's engine turns it on (Inkling 2
+/// does unless --no-prompt-int8).
 void gemm_iq_i8_turing(bool on);
 void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream);
 bool gemm_iq_i8_grouped(int ty, const void* W, size_t mat_bytes, int n_out, int K, const void* xq, int64_t total_rows,
