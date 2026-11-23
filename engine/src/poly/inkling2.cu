@@ -2383,9 +2383,76 @@ void ink_moe_conv_add(const float* x, const float* w, const float* scale, const 
     launched("ink_moe_conv_add");
 }
 
+#if defined(__HIPCC__)
+// HIP: ink_clips() as the launches its contract names (ink_clip(), ink_head_rms() and fp16 stores of its jobs), and
+// ink_qkv() as ink_conv() of K and V and then those; the fused kernels are not built there.  ink_clips_kernel and
+// ink_qkv_kernel never finished on an RX 7900 XT (gfx1100) or an RX 9070 XT (gfx1201) under ROCm 7.2.4, the first
+// prompt or token of Inkling 2 Mini with them, and the same code built with any change to ink_clips_kernel finished:
+// the compiler's code for these two kernels, not their arithmetic.  The separate kernels give the same bits
+// (poly_inkling2_test's clips and qkv cases compare them).
+// A Q8_0 cache's rows (kvq8_store()'s), for clips_apart(): a block a row's head, its cell pos + row (at[0] + row
+// with at), % ring when ring > 0.
+__global__ void ink_store_q8_kernel(const float* x, uint8_t* cache, int n_kv, int dim, long long pos,
+                                    const long long* at, int ring) {
+    const int row = blockIdx.x / n_kv, h = blockIdx.x % n_kv;
+    long long cell = (at ? at[0] : pos) + row;
+    if (ring > 0) cell %= ring;
+    kvq8_store(x + (size_t(row) * n_kv + h) * dim, cache, cell, n_kv, dim, h);
+}
+
+static void clips_apart(const InkClips& c, void* stream) {
+    if (c.kv8) throw std::logic_error("ink_clips: no FP8 caches under HIP");
+    for (int j = 0; j < 4; ++j) {
+        if (c.heads[j] <= 0) continue;
+        if (c.rms[j])
+            ink_head_rms(c.x[j], c.dim[j], c.heads[j], c.rows, c.eps, stream);
+        else
+            ink_clip(c.x[j], c.scale[j], c.thr[j], c.dim[j], c.heads[j], c.rows, c.pos, c.alpha[j], c.floor[j], stream,
+                     c.at);
+        if (!c.cache[j]) continue;
+        const int n = c.heads[j] * c.dim[j];
+        if (c.kvq8) {
+            if (c.dim[j] % 32) throw std::invalid_argument("ink_clips: Q8_0 caches need heads of whole 32-value blocks");
+            ink_store_q8_kernel<<<c.rows * c.heads[j], 128, 0, cs(stream)>>>(c.x[j], (uint8_t*) c.cache[j], c.heads[j],
+                                                                           c.dim[j], c.pos, c.at, c.ring);
+        } else if (c.at) store_f16_at(c.x[j], c.cache[j], n, c.at, c.rows, c.ring, stream);
+        else if (c.ring > 0) ink_store_ring(c.x[j], c.cache[j], n, c.pos, c.rows, c.ring, stream);
+        else store_f16(c.x[j], c.cache[j], n, c.pos, c.rows, stream);
+        launched("ink_clips' stores");
+    }
+}
+#endif
+
 void ink_qkv(const InkQkv& a, void* stream) {
     if (a.dim > 128 || a.n_rel > 128 || a.taps < 2 || a.taps > 8 || a.n_kv < 1)
         throw std::invalid_argument("ink_qkv: heads of up to 128 values, 2 to 8 taps");
+#if defined(__HIPCC__)
+    if (a.kv8) throw std::logic_error("ink_qkv: no FP8 caches under HIP");
+    const int kv = a.n_kv * a.dim;
+    ink_conv(a.kraw, a.kstate, a.kw, a.kdyn, a.k, kv, a.n_kv, a.taps, 1, stream);
+    ink_conv(a.vraw, a.vstate, a.vw, a.vdyn, a.v, kv, a.n_kv, a.taps, 1, stream);
+    InkClips c;
+    float* xs[4] = {a.q, a.k, a.v, a.r};
+    const float* sc[4] = {a.q_scale, nullptr, nullptr, a.r_scale};
+    const float thr[4] = {a.qk_thr, a.qk_thr, 0.f, a.rel_thr}, al[4] = {a.alpha, 0.f, 0.f, a.alpha};
+    const float fl[4] = {a.floor, 1.f, 1.f, a.floor};
+    const int dims[4] = {a.dim, a.dim, a.dim, a.n_rel}, hs[4] = {a.n_head, a.n_kv, a.n_kv, a.n_head};
+    for (int j = 0; j < 4; ++j) {
+        c.x[j] = xs[j], c.scale[j] = sc[j], c.thr[j] = thr[j], c.alpha[j] = al[j], c.floor[j] = fl[j];
+        c.dim[j] = dims[j], c.heads[j] = hs[j];
+    }
+    c.rms[2] = true;
+    c.eps = a.eps;
+    c.pos = a.pos;
+    c.at = a.at;
+    c.rows = 1;
+    c.cache[1] = a.keys;
+    c.cache[2] = a.vals;
+    c.ring = a.ring;
+    c.kv8 = a.kv8;
+    c.kvq8 = a.kvq8;
+    clips_apart(c, stream);
+#else
     QkvArgs g{a, 1.0f / std::sqrt((float) ((a.kdyn ? 2 : 1) * a.taps + 1)),
               1.0f / std::sqrt((float) ((a.vdyn ? 2 : 1) * a.taps + 1))};
     launch_pdl(a.kvq8  ? ink_qkv_kernel<kKvQ8>
@@ -2393,6 +2460,7 @@ void ink_qkv(const InkQkv& a, void* stream) {
                        : ink_qkv_kernel<kKvF16>, dim3(2 * a.n_head + 2 * a.n_kv), dim3(128), 0,
                cs(stream), g);
     launched("ink_qkv");
+#endif
 }
 
 void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int rows, int64_t pos, float alpha,
@@ -2405,9 +2473,13 @@ void ink_clip(float* x, const float* scale, float thr, int dim, int heads, int r
 
 void ink_clips(const InkClips& c, void* stream) {
     if (c.rows <= 0) return;
+#if defined(__HIPCC__)
+    clips_apart(c, stream);
+#else
     auto* k = c.kvq8 ? ink_clips_kernel<kKvQ8> : c.kv8 ? ink_clips_kernel<kKvFp8> : ink_clips_kernel<kKvF16>;
     k<<<c.rows * (c.heads[0] + c.heads[1] + c.heads[2] + c.heads[3]), 128, 0, cs(stream)>>>(c);
     launched("ink_clips");
+#endif
 }
 
 void ink_head_rms(float* x, int dim, int heads, int rows, float eps, void* stream) {
