@@ -4574,7 +4574,7 @@
    "last_date": "2026-11-23",
    "status": "rollback",
    "owner": "kernels/cpu",
-   "note": "0 (only the exact value 0): the quant layer's IQ3_S dot product on an AVX2 CPU goes back to ggml's port avx2_iq3_s_q8_K instead of avx2_iq3_s_q8_K_words (the same bits, slower)",
+   "note": "0 (only the exact value 0): the quant layer's IQ3_S dot product goes back to ggml's port avx2_iq3_s_q8_K instead of avx2_iq3_s_q8_K_words on an AVX2 CPU, and to avx512_iq3_s_q8_K instead of avx512vbmi_iq3_s_q8_K on an AVX-512 VBMI CPU (the same bits, slower)",
    "retire_after": "",
    "retired_in": ""
   },
