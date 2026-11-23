@@ -51584,6 +51584,76 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_WDDM_MARGIN_MIB",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/core/device.cu",
+     "line": 266,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:154"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "opt-in",
+   "owner": "core",
+   "note": "[reviewed] Windows HIP: the margin kept free beside other processes' VRAM, MiB (default 1024) (engine/src/core/device.cu:266, docs/AMD_HIP.md:154)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
+   "name": "STRATA_WDDM_OTHERS",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/core/device.cu",
+     "line": 262,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "int",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:154"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "rollback",
+   "owner": "core",
+   "note": "[reviewed] Windows HIP: the free VRAM figure is also lowered by what other processes hold on the card (GPU Adapter Memory counter minus this process's DXGI usage) and STRATA_WDDM_MARGIN_MIB; on unless =0 (engine/src/core/device.cu:262, docs/AMD_HIP.md:154)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_WDDM_SHARED_RESERVE_MIB",
    "backends": [
     "cuda-hip"
