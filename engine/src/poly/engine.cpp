@@ -2130,6 +2130,9 @@ void Engine::fill_expert_cache() {
                                              std::to_string(need >> 20) + " MiB" : std::string()) +
                                  ": lower N or --vram-reserve-mib");
     };
+    // STRATA_GPU_EXPERTS=0 caches nothing: its line (FNV's starting value, no pairs) is printed here, before the
+    // returns below for a cache of no bytes, so that every N prints one
+    if (expert_cap_ == 0) std::fprintf(stderr, "strata-poly: cache set 0 experts fnv %016llx\n", 14695981039346656037ULL);
     if (!claim_later && free_b <= reserve) return short_of(0, 0);
 
     struct Cand {
@@ -2305,8 +2308,8 @@ void Engine::fill_expert_cache() {
 #endif
     // STRATA_GPU_EXPERTS: which experts the cache holds, an FNV-style hash of its (layer, expert) pairs (FNV-1a's
     // constants, one 32-bit value a step).  Only there is the set fixed for the run; experts of several sizes are
-    // taken past one that does not fit, so two runs can cache as many experts but not the same ones.
-    if (expert_cap_ >= 0) {
+    // taken past one that does not fit, so two runs can cache as many experts but not the same ones.  (N = 0: above.)
+    if (expert_cap_ > 0) {
         uint64_t h = 14695981039346656037ULL;
         int n = 0;
         for (size_t il = 0; il < layers_.size(); ++il)
