@@ -245,13 +245,6 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
   target_include_directories(poly_gemm_small_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
                                                          ${_strata_gpu_include_directories})
   target_link_libraries(poly_gemm_small_test PRIVATE ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
-  # Inkling 2's token attention (ink_attend()): output hashes of a battery of calls, and a long-context bench; needs a
-  # card, run by hand
-  add_executable(poly_inkling2_attend_test src/poly/inkling2_attend_test.cu src/poly/inkling2.cu src/poly/kernels.cu)
-  target_include_directories(poly_inkling2_attend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
-                                                               ${_strata_gpu_include_directories})
-  target_link_libraries(poly_inkling2_attend_test PRIVATE strata_kernels ${_strata_gpu_blas_target}
-                                                          ${_strata_gpu_runtime_target})
   # Inkling 2's one-pass controller down kernel (STRATA_INK_FAST_CTRL=1) against the default one and float64; needs a
   # card, run by hand
   add_executable(poly_ctrl_fast_test src/poly/ctrl_fast_test.cu src/poly/inkling2.cu src/poly/kernels.cu)
