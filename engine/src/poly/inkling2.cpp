@@ -5,6 +5,9 @@
 #include "runtime.hpp"
 #include "strata/poly/kernels.hpp"
 #include "strata/kernels/native_mmvq.hpp"
+#if !defined(STRATA_GPU_METAL)
+#include "strata/kernels/iq_kernels.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +100,11 @@ void Inkling2::load_geometry() {
     attn_type_ = a == "q4_0" ? 2 : a == "q5_0" ? 6 : a == "iq4_nl" ? 20 : 0;
     if (attn_type_) guess_type_ = attn_type_;
     ctrl_bf16_ = opt_.loop_bf16;
+#if !defined(STRATA_GPU_METAL)
+    // Turing's prompt products on the int8 kernel that Ampere and newer take by default (i8_mma.cuh), unless
+    // --no-prompt-int8 (STRATA_PF_I8MMA=0 turns the kernel off on every card)
+    kernels::gemm_iq_i8_turing(opt_.prompt_int8 != 0);
+#endif
     // --kv fp8: the attention caches in FP8 E4M3 with a scale a row's head, about half the bytes of fp16, as Strata
     // v0.2.19's Inkling engine has them on small cards (ink_cuda_backend.cu): at 32K tokens the eight full-attention
     // runs' caches are 1 GiB in fp16, VRAM the expert cache does without.  Only where the flash kernel reads prompts

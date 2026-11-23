@@ -8147,6 +8147,7 @@ bool gemm_iq_f16_grouped(int, const void*, size_t, int, int, const void*, int, c
     return false;
 }
 bool gemm_iq_i8_takes(int, int) { return false; }
+void gemm_iq_i8_turing(bool) {}
 void gemm_iq_i8_quantize(const float*, const int32_t*, int64_t, int64_t, int, void*, void*) {}
 bool gemm_iq_i8_grouped(int, const void*, size_t, int, int, const void*, int64_t, const int32_t*, int, int, const int32_t*, float*,
                         int64_t, void*, const int32_t*) {

@@ -3,7 +3,7 @@
 // i8_mma.cu inside its anonymous namespace, after i8_expert.cuh: a weight sub-block is decoded by that file's
 // i8_load / i8_pack / i8_convert (32 values as 8 words of int8, their integer scales and float base), or read by the
 // loaders here and decoded by i8_pack / i8_convert, Q3_K by the decoder here.  CUDA only, Ampere and newer: mma.sync
-// m16n8k32 and m16n8k16 with s8 operands.
+// m16n8k32 and m16n8k16 with s8 operands; Turing when asked (gemm_iq_i8_turing()), by m8n8k16.
 //
 // A block: WR = 64 weight rows of one matrix x up to 16 NJ of its activation rows (blockIdx.y walks a matrix's rows
 // in such chunks).  K goes in stages of 256 values; a type of 32-value blocks may end inside the last one
@@ -86,11 +86,26 @@ struct I8mSmem {
 };
 
 // (not volatile: a product has no effect but its sums, and the compiler may then move it among the others)
+// Turing (sm_75) has the int8 MMA only as m8n8k16: an m16n8k32 is four of them and an m16n8k16 two, on the same
+// operand registers (a0 / a1 the fragment's rows g and g + 8, a2 / a3 its next 16 values; b0 / b1 likewise).  The
+// sums are integers, so they are the same as Ampere's to the bit.
+__device__ __forceinline__ void i8m_mma8(int& c0, int& c1, uint32_t a, uint32_t b) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750
+    asm("mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {%0,%1}, {%2}, {%3}, {%0,%1};\n"
+        : "+r"(c0), "+r"(c1)
+        : "r"(a), "r"(b));
+#endif
+}
 __device__ __forceinline__ void i8m_mma32(int (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t b0, uint32_t b1) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
     asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
         : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
         : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+#else
+    i8m_mma8(c[0], c[1], a0, b0);
+    i8m_mma8(c[0], c[1], a2, b1);
+    i8m_mma8(c[2], c[3], a1, b0);
+    i8m_mma8(c[2], c[3], a3, b1);
 #endif
 }
 __device__ __forceinline__ void i8m_mma16(int (&c)[4], uint32_t a0, uint32_t a1, uint32_t b0) {
@@ -98,13 +113,16 @@ __device__ __forceinline__ void i8m_mma16(int (&c)[4], uint32_t a0, uint32_t a1,
     asm("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, {%4,%5}, {%6}, {%0,%1,%2,%3};\n"
         : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
         : "r"(a0), "r"(a1), "r"(b0));
+#else
+    i8m_mma8(c[0], c[1], a0, b0);
+    i8m_mma8(c[2], c[3], a1, b0);
 #endif
 }
 // Four 8 x 16-byte pieces of shared memory, a lane's 16 bytes at p (lanes 8 m to 8 m + 7: the rows of piece m): word
 // (lane & 3) of row (lane >> 2) of each piece, which is an MMA's operand as the tensor cores take it.  One instruction
 // for what took four 32-bit reads.
 __device__ __forceinline__ void i8m_ldsm4(uint32_t (&r)[4], const uint32_t* p) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750
     asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
                  : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
                  : "r"((uint32_t) __cvta_generic_to_shared(p)));
@@ -320,7 +338,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                                                     const float* __restrict__ XS, const int32_t* __restrict__ bounds, int ch_per_e,
                                                     const int32_t* __restrict__ ids, const int32_t* __restrict__ from,
                                                     float* __restrict__ Y, long long ldy) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800   // (a pass for an older card compiles this empty: the host asks i8m_arch_kernel first)
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750   // (a pass for an older card compiles this empty: the host asks i8m_arch_kernel first)
     using SM = I8mSmem<T, NJ, WR, RAW>;
     constexpr int MT = SM::MT, LDS = SM::LDS, LDB = SM::LDB, XQ = SM::XQ, XSTR = SM::XSTR;
     // NT threads.  A warp multiplies NA tiles of 16 weight rows (two where the activation rows are many: each piece of
@@ -722,10 +740,15 @@ __global__ void i8m_arch_kernel(int* out) {
 
 struct I8mCard {
     bool read = false, on = false;
+    int arch = 0;                       // the architecture of the code it runs (i8m_arch_kernel)
     size_t shared = 0, shared_sm = 0;   // a block's most, a multiprocessor's
 };
 
-// the current card: int8 tensor cores in the code it runs, and the shared memory it gives a block
+// gemm_iq_i8_turing(): the kernel also on Turing's code (sm_75), whose products a model asks for
+std::atomic<bool> i8m_turing{false};
+
+// the current card: int8 tensor cores in the code it runs (Ampere's, or Turing's when asked), and the shared memory
+// it gives a block
 I8mCard i8m_card() {
     static I8mCard known[64];
     static std::mutex mu;
@@ -745,10 +768,12 @@ I8mCard i8m_card() {
             cudaFree(d_arch);
         }
         (void) cudaGetLastError();
-        c.on = arch >= 800;
+        c.arch = arch;
         known[dev] = c;
     }
-    return known[dev];
+    I8mCard c = known[dev];
+    c.on = c.arch >= 800 || (c.arch >= 750 && i8m_turing.load(std::memory_order_relaxed));
+    return c;
 }
 
 template <int T, int NJ, int WR, bool RAW>
@@ -791,7 +816,8 @@ bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t
     // two blocks to one: 6% slower).  (The blocks a multiprocessor by shared memory, 1 KB of it the system's a block.)
     static const bool raw_on = [] { const char* v = std::getenv("STRATA_I8M_RAW"); return v == nullptr || v[0] != '0'; }();
     const auto per_sm = [&](size_t b) { return card.shared_sm / (b + 1024); };
-    const bool raw = raw_on && i8m_raw_type(T) && K % 256 == 0 && (uintptr_t) W % 16 == 0 &&
+    // (Turing has no cp.async to copy it with)
+    const bool raw = raw_on && card.arch >= 800 && i8m_raw_type(T) && K % 256 == 0 && (uintptr_t) W % 16 == 0 &&
                      (i8m_raw_bytes(T) % 16 != 0 || (row_bytes % 16 == 0 && mat_bytes % 16 == 0)) &&
                      i8m_tile_bytes<T>(nj, wr, true) <= card.shared &&
                      per_sm(i8m_tile_bytes<T>(nj, wr, true)) >= per_sm(i8m_tile_bytes<T>(nj, wr, false));

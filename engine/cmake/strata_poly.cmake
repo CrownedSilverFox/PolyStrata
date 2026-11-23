@@ -316,7 +316,8 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
                                                         ${_strata_gpu_include_directories})
     target_link_libraries(poly_mmq_k32_test PRIVATE strata_poly_mmq ${_strata_gpu_blas_target} ${_strata_gpu_runtime_target})
     add_test(NAME poly_mmq_k32_test COMMAND poly_mmq_k32_test)
-    set_tests_properties(poly_mmq_k32_test PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME poly_mmq_k32_test_turing_int8 COMMAND poly_mmq_k32_test --turing-int8)
+    set_tests_properties(poly_mmq_k32_test poly_mmq_k32_test_turing_int8 PROPERTIES SKIP_RETURN_CODE 77)
   endif()
   # a prompt product of each path (the card's, and the BLAS path with STRATA_POLY_PROMPT_BLAS=1) against a double-precision
   # product of ggml's dequantized weights; needs a card
@@ -328,7 +329,9 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
     add_test(NAME poly_mmq_paths_test COMMAND poly_mmq_paths_test)
     add_test(NAME poly_mmq_paths_test_blas COMMAND poly_mmq_paths_test)
     add_test(NAME poly_mmq_paths_test_x2 COMMAND poly_mmq_paths_test)
-    set_tests_properties(poly_mmq_paths_test poly_mmq_paths_test_blas poly_mmq_paths_test_x2 PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME poly_mmq_paths_test_turing_int8 COMMAND poly_mmq_paths_test --turing-int8)
+    set_tests_properties(poly_mmq_paths_test poly_mmq_paths_test_blas poly_mmq_paths_test_x2 poly_mmq_paths_test_turing_int8
+                         PROPERTIES SKIP_RETURN_CODE 77)
     set_tests_properties(poly_mmq_paths_test_blas PROPERTIES ENVIRONMENT "STRATA_POLY_PROMPT_BLAS=1")
     set_tests_properties(poly_mmq_paths_test_x2 PROPERTIES ENVIRONMENT "STRATA_PREFILL_NVFP4=w4a4x2")
   endif()

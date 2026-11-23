@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <mutex>
 #include <type_traits>
 
@@ -38,6 +39,8 @@ void check(const char* what) {
 bool gemm_iq_i8_takes(int ty, int K) {
     return i8m_type(ty) && K > 0 && K % (i8_block_vals(ty) == 32 ? 32 : 256) == 0 && i8m_card().on;
 }
+
+void gemm_iq_i8_turing(bool on) { i8m_turing.store(on, std::memory_order_relaxed); }
 
 void gemm_iq_i8_quantize(const float* x, const int32_t* ids, int64_t ld, int64_t rows, int K, void* xq, void* stream) {
     if (rows <= 0) return;

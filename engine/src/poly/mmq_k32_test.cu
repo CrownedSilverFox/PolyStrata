@@ -4,8 +4,9 @@
 // must agree to the bit.  The unpadded matrices are allocated to their last byte, so that a read past them shows
 // under compute-sanitizer.  Q4_0's products are checked against its weights' values as well.
 //
-// usage: poly_mmq_k32_test   (exit 0: every case agrees; 77: no card, or no int8 product on it)
+// usage: poly_mmq_k32_test [--turing-int8]   (--turing-int8: the int8 product on Turing too, gemm_iq_i8_turing(); exit 0: every case agrees; 77: no card, or no int8 product on it)
 #include "mmq.hpp"
+#include "strata/kernels/iq_kernels.hpp"
 
 #include <cuda_runtime.h>
 
@@ -121,7 +122,8 @@ int run_case(const Quant& q, int k, int n, const std::vector<int>& rows, std::mt
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--turing-int8") == 0) strata::kernels::gemm_iq_i8_turing(true);
     int devices = 0;
     if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
         std::printf("no card: skipped\n");

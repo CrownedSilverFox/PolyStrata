@@ -131,6 +131,9 @@ struct Options {
     std::string attn_requant;     ///< Inkling 2: its attention's six matrices quantized again to this type at load
                                   ///< (q4_0, q5_0 or iq4_nl; --attn-requant); empty: the file's types
     bool loop_bf16 = false;       ///< Inkling 2: its loop controllers' matrices in BF16, not the file's F32 (--loop-bf16)
+    int prompt_int8 = -1;         ///< Inkling 2: on Turing its prompt products on the int8 tensor cores, as on Ampere
+                                  ///< (gemm_iq_i8_turing()); -1: the default, on; 1: --prompt-int8; 0: --no-prompt-int8,
+                                  ///< Turing's halves and cuBLAS
     float cache_bias = 0;         ///< a token's few-at-a-time routing adds this to the score of each expert in VRAM
                                   ///< before it picks its experts; their weights stay the softmax of the scores the
                                   ///< router gave (--cache-bias, qwen35moe only); 0: the router's own picks

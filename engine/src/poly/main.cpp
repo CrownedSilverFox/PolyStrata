@@ -1721,6 +1721,11 @@ void usage() {
                  "                         or iq4_nl) at load: fewer bytes a token, and the answers move a little\n"
                  "                         (default: the file's types; setup gives an 8 GB card q5_0)\n"
                  "  --loop-bf16            Inkling 2: its loop controllers' matrices in BF16, not F32\n"
+                 "  --no-prompt-int8       Inkling 2 on an RTX 20 (Turing): its prompt products as halves and cuBLAS,\n"
+                 "                         not on the int8 tensor cores as on RTX 30 and newer (the default there\n"
+                 "                         too: faster prompts, and the answers move a little, activations int8 a\n"
+                 "                         32 values; --prompt-int8 says the default; STRATA_PF_I8MMA=0 turns the\n"
+                 "                         int8 kernel off on every card)\n"
                  "  --skip-weight F        in place of --tail-skip: an expert outside VRAM that every token of a\n"
                  "                         window weighs under F of its experts' weight is left out (default 0 = off)\n"
                  "  --cache-bias F         qwen35moe: a token's router scores get F added for each expert in VRAM\n"
@@ -1848,6 +1853,8 @@ int main(int argc, char** argv) {
         else if (a == "--route-top") o.route_top = std::atoi(val());
         else if (a == "--attn-requant") o.attn_requant = val();
         else if (a == "--loop-bf16") o.loop_bf16 = true;
+        else if (a == "--prompt-int8") o.prompt_int8 = 1;
+        else if (a == "--no-prompt-int8") o.prompt_int8 = 0;
         else if (a == "--skip-weight") o.skip_weight = (float) std::atof(val());
         else if (a == "--cache-bias") o.cache_bias = (float) std::atof(val());
         else if (a == "--layer-split") o.layer_split = val();

@@ -51,6 +51,20 @@ only part of the experts was not measured. Three runs each, 32 tokens written af
 | | 10,081 tokens | 3,340-3,360 tokens/s | 5,360-5,400 tokens/s |
 | | 20,162 tokens | 3,390-3,400 tokens/s | 5,480-5,510 tokens/s |
 
+On an RTX 20 card (Turing) the engine multiplies the experts on the int8 tensor cores while it reads a prompt, as
+it does on RTX 30 and newer, with the prompt's numbers rounded to 8 bits with a scale for every 32. `--no-prompt-int8`
+multiplies them as halves instead (`STRATA_PF_I8MMA=0` turns the int8 products off on every card). Measured on a
+Quadro RTX 4000 (8 GB), which holds a third to two thirds of the experts: written after the halves' greedy answers to
+three prompts of 302 to 8,192 tokens, 64 tokens each, with three files (the two below and an IQ3_S), it gives the
+same most likely token at 560 of the 576 steps. Prompt speed, three runs each:
+
+| Size | Prompt | Halves (`--no-prompt-int8`) | int8 (the default on RTX 20) |
+| --- | ---: | ---: | ---: |
+| **IQ4_NL** | 2,048 tokens | 329-338 tokens/s | 419-447 tokens/s |
+| | 8,192 tokens | 355-361 tokens/s | 456-461 tokens/s |
+| **UD-Q2_K_XL** | 2,048 tokens | 361-363 tokens/s | 434-439 tokens/s |
+| | 8,192 tokens | 347-348 tokens/s | 411-412 tokens/s |
+
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
 gives Inkling 2 Mini four settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
