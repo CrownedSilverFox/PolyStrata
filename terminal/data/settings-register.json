@@ -17814,6 +17814,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_IQ_SLOT_LANES",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/kernels/cuda/iq_kernels.cu",
+     "line": 5857,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "e25d2d501a",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "e25d2d501a",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "kernels/cuda",
+   "note": "0: Inkling 2's cached IQ1_S/IQ1_M/IQ2_XXS/IQ2_XS/IQ2_S decode products go back to mmvq_slots_kernel instead of mmvq_slots_staged_kernel (same bits)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_IQ_STAGE_GRID",
    "backends": [
     "cuda-hip",

@@ -408,6 +408,7 @@ version made it the default.
 | `STRATA_INK_PROJECT_MIXED` | on / off | NVIDIA | - | - |
 | `STRATA_IQ3_LANES` | on / off | NVIDIA and AMD | - | - |
 | `STRATA_IQ_MT_MIN` | on / off | NVIDIA and AMD, CPU | v0.2.16 | [BATCHING.md](BATCHING.md), [DETAILS.md](DETAILS.md), [OLDER_GPUS.md](OLDER_GPUS.md) |
+| `STRATA_IQ_SLOT_LANES` | on / off | NVIDIA and AMD | - | - |
 | `STRATA_KEEP_MAPPING` | on / off | NVIDIA and AMD | v0.2.16 | - |
 | `STRATA_KV_HOST_DMA` | on / off | NVIDIA and AMD, Intel Arc | v0.2.16 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 | `STRATA_MEM_CREDIT_INACTIVE` | text | NVIDIA and AMD | v0.2.16 | - |
