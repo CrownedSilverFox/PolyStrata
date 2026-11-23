@@ -77,7 +77,11 @@ int main(int argc, char** argv) {
     }
     if (!std::getenv("STRATA_POLY_CARDS")) {   // the parts on the devices there are, in turn
         const std::string parts = split == "auto" ? "2" : std::to_string(1 + std::count(split.begin(), split.end(), ','));
+#ifdef _WIN32
+        _putenv_s("STRATA_POLY_CARDS", parts == "1" ? "2" : parts.c_str());
+#else
         setenv("STRATA_POLY_CARDS", parts == "1" ? "2" : parts.c_str(), 1);
+#endif
     }
     Options o;
     o.model = argv[1];
