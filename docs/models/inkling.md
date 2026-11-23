@@ -53,10 +53,12 @@ only part of the experts was not measured. Three runs each, 32 tokens written af
 
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
-gives Inkling 2 Mini four settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
-matrices in 5 bits instead of 8), `--loop-bf16` (the loop controllers in BF16 instead of F32), `--tail-skip 4` and
-`--expert-swaps 0`. A card that holds the whole model gets none of them. The fastest of three runs of the README's
-benchmark:
+gives Inkling 2 Mini three settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
+matrices in 5 bits instead of 8), `--loop-bf16` (the loop controllers in BF16 instead of F32) and `--tail-skip 4`.
+A card that holds the whole model gets none of them. Expert swaps stay on: with `--expert-swaps 0` the experts the
+card holds stay the ones it loaded, fewer of a token's experts are found there, and the CPU computes more of them
+(16-23% slower writing after a 302-token prompt on the 8 and 16 GB cards measured, about the same after 8,192).
+The fastest of three runs of the README's benchmark, measured when setup also gave `--expert-swaps 0`:
 
 | UD-Q3_K_XL | Writes in a short chat | Reads a 30,902-token prompt | Writes after it |
 | --- | ---: | ---: | ---: |

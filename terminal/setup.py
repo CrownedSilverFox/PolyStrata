@@ -947,7 +947,10 @@ FAMILIES = {
                 # UD-Q3_K_XL on the RTX 4070 Laptop (8 GB), the README's benchmark, medians of 3 rounds: 43.7 -> 55.8
                 # tokens/s written in the short chat, 439 -> 466 read and 33.6 -> 41.9 written after the long prompt;
                 # the same most likely token as without them at 96.7% of 1,280 steps, the default run again at 98.3%
-                "small_card_args": ["--attn-requant", "q5_0", "--loop-bf16", "--tail-skip", "4", "--expert-swaps", "0"],
+                # (measured with --expert-swaps 0 as well, since dropped: it keeps the experts held as they were loaded,
+                # so the CPU computes more of a token's experts; 16-23% slower writing after a 302-token prompt on the
+                # 8 and 16 GB cards measured)
+                "small_card_args": ["--attn-requant", "q5_0", "--loop-bf16", "--tail-skip", "4"],
                 "models": {"UD-Q4_K_XL": {"about": "4-bit experts (NVFP4, Unsloth Dynamic), 8-bit where they write",
                                           "download_gb": 17.6, "ram_gb": 21, "arena_gb": 15.797846016,
                                           "vram_beside_gb": 3.7},
