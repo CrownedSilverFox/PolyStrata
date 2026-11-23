@@ -33841,28 +33841,30 @@
    "reads": [
     {
      "file": "engine/src/poly/inkling2.cpp",
-     "line": 111,
+     "line": 129,
      "backend": "cuda-hip",
      "fn": "getenv"
     }
    ],
    "parse": "flag",
-   "default_state": "off",
+   "default_state": "on",
    "code_default": null,
    "engine_sets": [],
    "engine_defaults": [],
    "launch_files": [],
    "launch_sets": [],
    "launch_reads": [],
-   "doc_mentions": [],
-   "first_commit": "261a529682",
+   "doc_mentions": [
+    "docs/models/inkling.md:85"
+   ],
+   "first_commit": "09e2e8e340",
    "first_date": "2026-11-23",
    "since": null,
-   "last_commit": "261a529682",
+   "last_commit": "09e2e8e340",
    "last_date": "2026-11-23",
-   "status": "opt-in",
+   "status": "rollback",
    "owner": "poly",
-   "note": "1 on Turing (sm_75), int8 prompt products on (--prompt-int8): Inkling 2's cached prompt experts in one int8 launch a class of rows (same bits)",
+   "note": "0: Inkling 2 on Turing (sm_75) with --prompt-int8 goes back to an int8 launch a run of slots for its cached prompt experts instead of one launch a class of rows (same bits either way)",
    "retire_after": "",
    "retired_in": ""
   },

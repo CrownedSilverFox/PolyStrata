@@ -123,10 +123,10 @@ void Inkling2::load_geometry() {
         const char* v = std::getenv("STRATA_PREFILL_MXFP4");
         kernels::gemm_iq_i8_allow(39, !(v && std::string(v) == "fp16"));
     }
-    // STRATA_POLY_EXPERT_TILES=1 on Turing, int8 products on (--prompt-int8): a prompt batch's cached experts in
-    // a launch a class of rows (Engine::expert_tiles_).  Not from Ampere on, where the default's launches were not
-    // measured slower.
-    if (const char* v = std::getenv("STRATA_POLY_EXPERT_TILES"); v && v[0] == '1' && opt_.prompt_int8 == 1) {
+    // On Turing, int8 products on (--prompt-int8): a prompt batch's cached experts in a launch a class of rows
+    // (Engine::expert_tiles_), the same numbers in fewer launches; STRATA_POLY_EXPERT_TILES=0: a launch a run of slots
+    // again.  Not from Ampere on, where the runs' launches were not measured slower.
+    if (const char* v = std::getenv("STRATA_POLY_EXPERT_TILES"); !(v && v[0] == '0') && opt_.prompt_int8 == 1) {
         int dev = 0, major = 0, minor = 0;
         if (cudaGetDevice(&dev) == cudaSuccess &&
             cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess &&

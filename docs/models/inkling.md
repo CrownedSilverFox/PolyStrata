@@ -78,6 +78,13 @@ unless `STRATA_PREFILL_IQ1S=int8` is set. On an RTX 3090 that setting reads a 2,
 against 2,005 tokens/s) and an 8,192-token one 6.7% faster, but on a 302-token prompt it moved the answers more for
 each matrix than the other experts' int8 products do, so it is opt-in until more prompts are measured.
 
+With the int8 products on (`--prompt-int8`), an RTX 20 card also multiplies a prompt batch's experts in VRAM in one launch for each
+class of rows (up to 32, up to 128, more) over all of that class's experts, wherever their slots are, in place of a
+launch for each run of slots that lie one behind the other. The int8 kernel sums each output in the same order
+whatever its launch, so the answers are the same to the bit. It was measured +1.8% to +2.5% on prompts on an RTX 2080
+Ti (22 GB, every expert in VRAM) and no change on an RTX 2070 (8 GB). `STRATA_POLY_EXPERT_TILES=0` goes back to a
+launch for each run.
+
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
 gives Inkling 2 Mini three settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's

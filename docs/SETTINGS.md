@@ -11,7 +11,7 @@ A number or a word is set like any environment variable, for example `STRATA_KVA
 (`terminal/strata-<model>.json`), which the server passes to the engine. The Strata project's Terminal writes it there with
 `strata launch --set NAME=value`.
 
-## Switches you can turn on (344)
+## Switches you can turn on (343)
 
 Off unless you set them. The last column says where each one is described.
 
@@ -251,7 +251,6 @@ Off unless you set them. The last column says where each one is described.
 | `STRATA_PIPE_BYIELD_NODRAIN` | on / off | NVIDIA and AMD | [BATCHING.md](BATCHING.md) |
 | `STRATA_PLE_COMPACT` | on / off | NVIDIA and AMD | [DETAILS.md](DETAILS.md) |
 | `STRATA_PLE_COPY_STREAM` | on / off | NVIDIA and AMD | [DETAILS.md](DETAILS.md) |
-| `STRATA_POLY_EXPERT_TILES` | on / off | NVIDIA and AMD | - |
 | `STRATA_POLY_STREAM_STAGE` | number | NVIDIA and AMD | [DETAILS.md](DETAILS.md) |
 | `STRATA_POOL_CORES` | on / off | NVIDIA and AMD, Intel Arc | [DETAILS.md](DETAILS.md), [release-notes-0.2.2.md](release-notes-0.2.2.md) |
 | `STRATA_POOL_STATIC` | on / off | NVIDIA and AMD | [DETAILS.md](DETAILS.md) |
@@ -362,7 +361,7 @@ Off unless you set them. The last column says where each one is described.
 | `STRATA_WATCHDOG_S` | number | NVIDIA and AMD, Intel Arc | [DETAILS.md](DETAILS.md) |
 | `STRATA_WDDM_BUDGET` | number | AMD, Intel Arc | [AMD_HIP.md](AMD_HIP.md) |
 
-## Switches that go back to earlier behaviour (111)
+## Switches that go back to earlier behaviour (112)
 
 These behaviours are on by default. Setting the switch returns the earlier behaviour; the notes in the register say which
 version made it the default.
@@ -436,6 +435,7 @@ version made it the default.
 | `STRATA_PIPELINE_ADAPT_ASYNC` | number | NVIDIA and AMD | v0.2.16 | - |
 | `STRATA_PLE_AUTO_MMAP` | number | NVIDIA and AMD, Intel Arc | v0.2.16 | [DETAILS.md](DETAILS.md) |
 | `STRATA_POLY_BELL` | on / off | NVIDIA | - | - |
+| `STRATA_POLY_EXPERT_TILES` | on / off | NVIDIA and AMD | - | [inkling.md](models/inkling.md) |
 | `STRATA_POLY_NV4_TILE` | on / off | NVIDIA and AMD | - | - |
 | `STRATA_PREFILL_CPU_SHARE_AUTO` | text | NVIDIA and AMD | v0.2.17 | [DETAILS.md](DETAILS.md) |
 | `STRATA_PREFILL_LOAN_WALK` | on / off | NVIDIA and AMD | v0.2.16 | - |

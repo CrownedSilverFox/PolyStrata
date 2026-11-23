@@ -1165,8 +1165,9 @@ protected:
     std::vector<Run> runs_;        ///< a layer's launches over cached experts whose slots lie one behind the other
     // A model's engine may have a prompt batch's cached experts multiplied in a launch for each class of rows, the
     // slots found by their offsets (Mmq::mul_at()), in place of a launch for each run of slots that lie one behind
-    // the other and each class (Inkling 2 on Turing: STRATA_POLY_EXPERT_TILES=1, not with --no-prompt-int8).  The int8
-    // products only, whose rows do not depend on the launch: the same numbers in fewer launches.
+    // the other and each class (Inkling 2 on Turing with --prompt-int8, by default; STRATA_POLY_EXPERT_TILES=0
+    // turns it off).  The int8 products only, whose rows do not depend on the launch: the same numbers in fewer
+    // launches.
     bool expert_tiles_ = false;
     int64_t *d_slot_at_ = nullptr, *h_slot_at_ = nullptr;   ///< the cached experts' offsets, VRAM and pinned
     std::vector<int32_t> chan_;    ///< a layer's cached experts in the order of their slots
