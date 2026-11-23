@@ -20,6 +20,11 @@ BY_DESIGN = {
 ENV_BY_DESIGN = {
 }
 
+#: Engine flags that the app's Loads add and `strata launch` does not, by design.
+ARGV_BY_DESIGN = {
+    "--prompt-cache-spread": "the Strata project's 0.2.20 (#6469): the packaged app turns the spread prompt-cache checkpoints on for Flash-Next and Gyro; the Terminal leaves them off",
+}
+
 #: Intended differences of the Models-screen Load alone.
 MODELS_SCREEN = {
     "drafting": "the Models screen's Load saves the person's Drafting choice ('auto' unless they changed it) into the model's settings; launch and the plain Load save none",

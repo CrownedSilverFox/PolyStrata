@@ -27,8 +27,11 @@ def flat(value, prefix=""):
 
 def comparable(rec: dict, allowed_cfg: set[str]) -> dict:
     cfg = {k: v for k, v in rec["config_file"].items() if k not in allowed_cfg}
+    if isinstance(cfg.get("args"), list):                # the flags the app adds by design are in the run config it writes too
+        cfg["args"] = [a for a in cfg["args"] if a not in allowlist.ARGV_BY_DESIGN]
     env = {k: v for k, v in rec["engine"]["env_set"].items() if k not in allowed_cfg and k not in allowlist.ENV_BY_DESIGN}
-    return {"config": flat(cfg), "argv": rec["engine"]["argv"], "env": env, "fetches": rec.get("fetches")}
+    argv = [a for a in rec["engine"]["argv"] if a not in allowlist.ARGV_BY_DESIGN]
+    return {"config": flat(cfg), "argv": argv, "env": env, "fetches": rec.get("fetches")}
 
 
 class EntryPointsAgree(unittest.TestCase):
