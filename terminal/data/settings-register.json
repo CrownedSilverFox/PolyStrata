@@ -16614,6 +16614,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_INK_KERNEL_TABLES",
+   "backends": [
+    "cuda"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/inkling2.cpp",
+     "line": 102,
+     "backend": "cuda",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/models/inkling.md:84"
+   ],
+   "first_commit": null,
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": null,
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "poly",
+   "note": "Inkling 2 on CUDA: in a prompt read of several calls, moe_rows() hands a call's row tables to the card by a kernel (copy2) that reads them from pinned memory, instead of a copy that waits behind the layer's expert uploads. Same bits, no extra VRAM. Default on; =0 keeps the copies, as before. A single-call read always keeps the copies. HIP and Metal never take it (engine/src/poly/inkling2.cpp, engine.cpp moe_rows())",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_INK_PROJECT_MIXED",
    "backends": [
     "cuda"

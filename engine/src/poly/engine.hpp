@@ -987,6 +987,11 @@ protected:
     /// a prompt batch's products go through guard_half_sums(): the model's activations can sum past a half's range
     /// in a block.  Off for the models whose sums stay in range: it cost LFM2.5 4% of a 30K prompt's read on a 5090.
     bool half_sum_guard_ = false;
+    /// In a read of several calls, moe_rows() hands the card a call's row tables by a kernel that reads them from
+    /// pinned memory (copy2()), not by a copy: the copies to the card go one after the other, and a call's tables
+    /// (about 100 KB) waited behind the layer's experts on their way to the staging buffer.  Inkling 2's on CUDA
+    /// unless STRATA_INK_KERNEL_TABLES=0, else off.
+    bool kernel_tables_ = false;
 
     std::vector<Layer> layers_;   ///< the model's, and after them the draft block
     Dev out_norm_, output_;

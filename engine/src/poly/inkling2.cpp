@@ -177,6 +177,15 @@ void Inkling2::load_geometry() {
     joined_scales_ = true;
     // the cached experts' IQ3_S / IQ3_XXS products through the kernels that keep all lanes busy (CUDA; the same bits)
     lane_slots_ = true;
+#if !defined(STRATA_GPU_METAL) && !defined(STRATA_USE_HIP)
+    // In a prompt's read of several calls, a call's row tables go to the card by a kernel, not behind the experts'
+    // copies (kernel_tables_).  The same tables reach the same buffers, so the results are the same.  Measured on
+    // CUDA only; STRATA_INK_KERNEL_TABLES=0 turns it off.
+    {
+        const char* v = std::getenv("STRATA_INK_KERNEL_TABLES");
+        kernel_tables_ = !(v && std::string(v) == "0");
+    }
+#endif
     clamp_exp_.assign((size_t) n_layer_ + 1, INFINITY);
     clamp_shexp_ = clamp_exp_;
     // --attn-requant: the attention's six matrices quantized again to that type at load (kGuessMat), fewer bytes a
