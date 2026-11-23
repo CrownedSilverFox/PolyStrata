@@ -212,7 +212,7 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
 bool gemm_iq_i8_takes(int ty, int K);
 /// The int8 kernel on Turing (sm_75) too, from now on in this process, by m8n8k16 MMAs: the same sums as on Ampere.
 /// Off by default, where Turing's products are the halves' (mmq_own.cu); a model's engine turns it on (Inkling 2
-/// does unless --no-prompt-int8).
+/// with --prompt-int8).
 void gemm_iq_i8_turing(bool on);
 /// The int8 kernel also takes type ty, from now on in this process (on false: no longer), for a type it takes only when
 /// asked: IQ1_S (19) and MXFP4 (39).  A model's engine asks for them at load (Inkling 2: IQ1_S with
