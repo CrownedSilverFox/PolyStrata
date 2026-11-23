@@ -34084,6 +34084,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_POLY_HIP_GROUPED",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/mmq_own.cu",
+     "line": 133,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "poly",
+   "note": "[reviewed] strata-poly's prompt expert products on AMD's matrix cores (gemm_iq_f16_grouped). Unset: on for gfx11 (RDNA3), off for gfx12 (RDNA4); 1/true/yes/on: on for both (gfx12's opt-in); any other value (0, off, ...): off for both (the per-expert rocBLAS loop) (engine/src/poly/mmq_own.cu:133)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_POLY_MIRROR",
    "backends": [
     "cuda"
@@ -34187,7 +34220,7 @@
    "last_date": "2026-11-20",
    "status": "research",
    "owner": "poly",
-   "note": "[reviewed] =1: every prompt product by the BLAS path, as on Turing and in a HIP build, to check that path on a card that has the tiles (engine/src/poly/mmq_own.cu:109)",
+   "note": "[reviewed] =1: every prompt product by the BLAS path, as on Turing and on an AMD card without the matrix cores, to check that path on a card that has the tiles (on RDNA3/RDNA4: the products as before the matrix-core tiles) (engine/src/poly/mmq_own.cu:179)",
    "retire_after": "",
    "retired_in": ""
   },

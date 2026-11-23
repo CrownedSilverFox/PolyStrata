@@ -16,8 +16,13 @@
 //   - a row's product does not depend on the launch it is in (split_exact()): each output value is its own sum
 //     over the row's tiles in their order.
 //
-// Where that kernel has no tile (a card before Volta, Turing's 64 KiB of shared memory a block, a HIP build, a
-// matrix whose rows are not whole tiles of 128), each matrix of a launch is dequantized to halves
+// In a HIP build that kernel runs on RDNA3/RDNA4's matrix cores (the same FP16 operands and FP32 sums, in the
+// hardware's own order within a 16 x 16 x 16 step), with the tiles that fit their 64 KiB of LDS a block: those of
+// 128 values a row, which there take IQ4_NL, NVFP4, Q2_0 and Q8_0 matrices of rows of any whole 128s (Inkling 2
+// Mini's experts: IQ4_NL or Q8_0, rows of 2,304 and 1,152).
+//
+// Where that kernel has no tile (a card before Volta, Turing's 64 KiB of shared memory a block, an AMD card
+// without the matrix cores or a tile past its LDS, a matrix whose rows are not whole tiles of 128), each matrix of a launch is dequantized to halves
 // (iq_dequant_f16) and multiplied with the same halves of the rows by cuBLAS (hipBLAS / rocBLAS through
 // hip_compat), FP32 sums: the rows of a matrix take its bounds as the host keeps them (mirror()).  A row's product
 // there depends on how many rows the library multiplies at once (split_exact() is false).  F32 matrices are not
@@ -33,11 +38,15 @@
 #endif
 
 #include "strata/kernels/iq_kernels.hpp"
+#if defined(GGML_USE_HIP) || defined(STRATA_USE_HIP) || defined(__HIPCC__)
+#include "strata/kernels/gfx_arch.hpp"
+#endif
 
 #include <cublas_v2.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
+#include <cctype>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -89,6 +98,7 @@ bool nv4_off() {
     return off;
 }
 
+#ifndef STRATA_MMQ_OWN_HIP
 bool whole_tiles(int t, int64_t cols) {
     if (t == 40 && cols % 256 != 0 && nv4_off()) return false;
     if (t == 42 || ((t == 20 || t == 40) && cols % 256 != 0)) return cols % 128 == 0;
@@ -100,6 +110,36 @@ size_t tile_bytes(int t, int64_t cols) {
     const int wk = (t == 42 || ((t == 20 || t == 40) && cols % 256 != 0)) ? 128 : 256;
     return (size_t) kTileRows * (wk + 8) * 2 + (size_t) 64 * (128 + 8) * 2;
 }
+#else
+// RDNA: Q2_0, IQ4_NL, NVFP4 and Q8_0 in the 128-value tiles whatever the row length (gemm_iq_f16_grouped's HIP lanes);
+// the other types' 256-value tiles need more LDS than a block has
+bool lane128(int t) { return t == 42 || t == 20 || t == 40 || t == 8; }
+bool whole_tiles(int t, int64_t cols) {
+    if (t == 40 && cols % 256 != 0 && nv4_off()) return false;
+    return lane128(t) ? cols % 128 == 0 : cols % 256 == 0;
+}
+size_t tile_bytes(int t, int64_t cols) {
+    (void) cols;
+    return (size_t) kTileRows * ((lane128(t) ? 128 : 256) + 8) * 2 + (size_t) 64 * (128 + 8) * 2;
+}
+#endif
+
+#ifdef STRATA_MMQ_OWN_HIP
+// STRATA_POLY_HIP_GROUPED: the tiles on AMD's matrix cores.  Unset: on for gfx11 (RDNA3), off for gfx12 (RDNA4);
+// 1 / true / yes / on: on for both; any other value (0, off, ...): off for both (the BLAS loop).  RX 7900 XTX, Inkling 2 Mini IQ4_NL, every expert in VRAM:
+// prompts 39-65% faster.  RX 9070 XT (2,240 of 3,072 experts in VRAM, a noisy node): no clear gain, so gfx12 stays
+// opt-in until a clean run; rocBLAS there hands these GEMMs to hipBLASLt.
+bool hip_grouped(bool gfx12) {
+    static const int v = [] {
+        const char* e = std::getenv("STRATA_POLY_HIP_GROUPED");
+        if (!e || !*e) return -1;
+        std::string v(e);
+        for (char& ch : v) ch = (char) std::tolower((unsigned char) ch);
+        return v == "1" || v == "true" || v == "yes" || v == "on" ? 1 : 0;
+    }();
+    return v < 0 ? !gfx12 : v == 1;
+}
+#endif
 
 struct Card {
     int major = 0;
@@ -117,6 +157,14 @@ Card card() {
 #ifndef STRATA_MMQ_OWN_HIP
         if (cudaDeviceGetAttribute(&v, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess) c.major = v;
         if (cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) == cudaSuccess) c.shared = (size_t) v;
+#else
+        // an AMD card with the matrix cores the kernel library's tiles are built for, where they are on
+        // (hip_grouped()): its LDS a block (major stays 0)
+        cudaDeviceProp p;
+        if (cudaGetDeviceProperties(&p, dev) == cudaSuccess &&
+            ((kernels::gfx_arch_is_gfx11_wmma(p.gcnArchName) && hip_grouped(false)) ||
+             (kernels::gfx_arch_is_gfx12_wmma(p.gcnArchName) && hip_grouped(true))))
+            c.shared = (size_t) p.sharedMemPerBlock;
 #endif
         (void) v;
         known[dev] = c;
@@ -125,7 +173,7 @@ Card card() {
     return known[dev];
 }
 
-// STRATA_POLY_PROMPT_BLAS=1: every product by the BLAS path, as on Turing and in a HIP build: how that path is
+// STRATA_POLY_PROMPT_BLAS=1: every product by the BLAS path, as on Turing and on an AMD card without the tiles: how that path is
 // checked on a card that has the tiles
 bool blas_only() {
     static const bool on = [] {
@@ -137,11 +185,11 @@ bool blas_only() {
 
 // gemm_iq_f16_grouped has a tile for the matrix on this card
 bool grouped(int t, int64_t rows, int64_t cols) {
-#ifdef STRATA_MMQ_OWN_HIP
-    (void) t, (void) rows, (void) cols;
-    return false;
-#else
     const Card c = card();
+#ifdef STRATA_MMQ_OWN_HIP
+    return !blas_only() && c.shared > 0 && dequantized(t) && rows % kTileRows == 0 && whole_tiles(t, cols) &&
+           tile_bytes(t, cols) <= c.shared;
+#else
     return !blas_only() && c.major >= 7 && dequantized(t) && rows % kTileRows == 0 && whole_tiles(t, cols) &&
            tile_bytes(t, cols) <= c.shared;
 #endif
