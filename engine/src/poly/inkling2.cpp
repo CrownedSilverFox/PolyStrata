@@ -114,6 +114,13 @@ void Inkling2::load_geometry() {
         const char* v = std::getenv("STRATA_PREFILL_IQ1S");
         kernels::gemm_iq_i8_allow(19, v && std::string(v) == "int8");
     }
+    // MXFP4 (UD-Q2_K_XL's down in one layer) on the int8 prompt kernel, as the file's other types already are on
+    // Ampere and newer (i8_mma.cuh: activations int8 a 32 values); STRATA_PREFILL_MXFP4=fp16 keeps it on the FP16
+    // kernel.  Other models never ask, so their MXFP4 products stay on the FP16 kernel.
+    {
+        const char* v = std::getenv("STRATA_PREFILL_MXFP4");
+        kernels::gemm_iq_i8_allow(39, !(v && std::string(v) == "fp16"));
+    }
 #endif
     // --kv fp8: the attention caches in FP8 E4M3 with a scale a row's head, about half the bytes of fp16, as Strata
     // v0.2.19's Inkling engine has them on small cards (ink_cuda_backend.cu): at 32K tokens the eight full-attention

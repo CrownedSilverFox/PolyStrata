@@ -28,9 +28,9 @@ namespace {
 #include "i8_expert.cuh"
 #include "i8_mma.cuh"
 
-// The types this kernel takes only once a model's engine has asked for them (gemm_iq_i8_allow()): IQ1_S, whose
-// prompt products went to the FP16 kernel before, so that another model's stay as they were
-constexpr bool i8m_asked_type(int t) { return t == 19; }
+// The types this kernel takes only once a model's engine has asked for them (gemm_iq_i8_allow()): IQ1_S and MXFP4,
+// whose prompt products went to the FP16 kernel before, so that another model's stay as they were
+constexpr bool i8m_asked_type(int t) { return t == 19 || t == 39; }
 std::atomic<uint64_t> i8m_allowed{0};   // bit t: type t asked for
 
 void check(const char* what) {
@@ -40,10 +40,11 @@ void check(const char* what) {
 }  // namespace
 
 // K whole stages of 256, or for a type of 32-value blocks whole blocks: the kernel leaves out what lies past K in its
-// last stage (Gemma 4 26B's down, K = 704: Q8_0, Q5_1, IQ4_NL, Q4_0)
+// last stage (Gemma 4 26B's down, K = 704: Q8_0, Q5_1, IQ4_NL, Q4_0; Inkling 2 Mini's, K = 1,152: MXFP4)
 bool gemm_iq_i8_takes(int ty, int K) {
     if (i8m_asked_type(ty) && !((i8m_allowed.load(std::memory_order_relaxed) >> ty) & 1u)) return false;
-    return i8m_type(ty) && K > 0 && K % (i8_block_vals(ty) == 32 ? 32 : 256) == 0 && i8m_card().on;
+    const int step = ty == 39 || i8_block_vals(ty) == 32 ? 32 : 256;
+    return i8m_type(ty) && K > 0 && K % step == 0 && i8m_card().on;
 }
 
 void gemm_iq_i8_turing(bool on) { i8m_turing.store(on, std::memory_order_relaxed); }

@@ -35808,6 +35808,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_PREFILL_MXFP4",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/inkling2.cpp",
+     "line": 110,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/models/inkling.md:42"
+   ],
+   "first_commit": "930a9a83b4",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "930a9a83b4",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "poly",
+   "note": "[reviewed] Inkling 2 on CUDA sm_80+: its MXFP4 experts' prompt products (UD-Q2_K_XL's down in one layer, K = 1,152) run on the int8 tensor-core kernel by default (i8_mma.cuh, activations int8 with a scale per 32 values, as for the file's other types); =fp16 keeps the FP16 kernel, as before (engine/src/poly/inkling2.cpp)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_PREFILL_NVFP4",
    "backends": [
     "cuda-hip",

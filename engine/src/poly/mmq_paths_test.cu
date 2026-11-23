@@ -10,7 +10,7 @@
 // rows by index (Mmq::reads_by_index()), the experts' product from rows quantized once and read by index is the one
 // from the same rows gathered by ids, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
 // (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.
-// IQ1_S takes the int8 tiles only where an engine asks for them (gemm_iq_i8_allow(), as Inkling 2 does), so the test
+// IQ1_S and MXFP4 take the int8 tiles only where an engine asks for them (gemm_iq_i8_allow(), as Inkling 2 does), so the test
 // asks; where it then takes them, its product is also made on the FP16 kernel (the path it had before) and the two
 // are compared.  STRATA_MMQ_TEST_BLOCKS=DIR: a type's weights are the bytes of DIR/<type name>.bin where that file is
 // long enough (whole blocks cut from a model's tensor), in place of ggml's quantization of random weights.
@@ -78,9 +78,9 @@ int main(int argc, char** argv) {
     }
     const char* forced = std::getenv("STRATA_POLY_PROMPT_BLAS");
     std::printf("path: %s\n", forced && forced[0] == '1' ? "BLAS (STRATA_POLY_PROMPT_BLAS=1)" : "the card's");
-    // the 32-value types, the K-quants, the i-quants, NVFP4
-    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 29, 40};
-    const int asked[] = {19};   // the types the int8 tiles take only when asked
+    // the 32-value types, the K-quants, the i-quants, MXFP4, NVFP4
+    const int types[] = {2, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 29, 39, 40};
+    const int asked[] = {19, 39};   // the types the int8 tiles take only when asked
     for (int t : asked) strata::kernels::gemm_iq_i8_allow(t, true);
     const char* blocks_dir = std::getenv("STRATA_MMQ_TEST_BLOCKS");
     constexpr int64_t kOut = 512, kIn = 2048, kTokens = 256, kExperts = 4;
