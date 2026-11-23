@@ -6762,7 +6762,7 @@ void Engine::run(const int32_t* tokens, int n) {
         else layer_head(L, il, m);
         if (!L.moe || batched(L, m)) return;
         ck(cudaEventRecord((cudaEvent_t) ev_, cs(st_)), "router");
-        if (replay) replayed(L.shared, rec, [&] { moe_shared(L, il, m); });
+        if (replay && shared_recorded()) replayed(L.shared, rec, [&] { moe_shared(L, il, m); });
         else moe_shared(L, il, m);
     };
     const auto tail = [&](int il, int m, size_t rec) {
@@ -7183,7 +7183,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
                 head_half(J, j, k);
                 if (!J.moe) continue;
                 ck(cudaEventRecord((cudaEvent_t) ev_, cs(st_)), "router");
-                if (replay) replayed(J.shared, rk, [&] { moe_shared(J, j, m); });
+                if (replay && shared_recorded()) replayed(J.shared, rk, [&] { moe_shared(J, j, m); });
                 else moe_shared(J, j, m);
                 break;
             }
@@ -7270,7 +7270,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
             moe_rows(L, il, R);
         } else {
             ck(cudaEventRecord((cudaEvent_t) ev_, cs(st_)), "router");
-            if (replay) replayed(L.shared, rec, [&] { moe_shared(L, il, R); });
+            if (replay && shared_recorded()) replayed(L.shared, rec, [&] { moe_shared(L, il, R); });
             else moe_shared(L, il, R);
             if (card && L.card == 1 && replay) {
                 replayed(L.card_moe, rec, [&] { moe_card(L, il, R); });
