@@ -164,6 +164,9 @@ struct MmvqSlots {
     const void* w[kMmvqSlotsMax];
     const void* x[kMmvqSlotsMax];
     float* y[kMmvqSlotsMax];
+    /// the launch may take kernels that keep more lanes busy, with the same bits: today IQ3_S and IQ3_XXS on CUDA
+    /// (iq_kernels.cu).  Set by Inkling 2 only (Engine::lane_slots_).
+    bool lanes = false;
 };
 bool native_mmvq_slots(int ggml_type, const MmvqSlots& slots, int count, int n_in, int n_out, void* stream);
 // Whether the slots launches take a warp per row group where a row's blocks fit one warp (an expert's IQ4_XS down
@@ -184,6 +187,7 @@ struct MmvqIds {
     int x_every;
     float* y;
     std::size_t y_stride;
+    bool lanes = false;   ///< as MmvqSlots::lanes
 };
 bool native_mmvq_ids_supported(int ggml_type);
 bool native_mmvq_ids(int ggml_type, const MmvqIds& ids, int count, int n_in, int n_out, void* stream);

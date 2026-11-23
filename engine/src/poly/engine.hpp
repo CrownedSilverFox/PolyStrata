@@ -969,6 +969,9 @@ protected:
     /// the file's ffn_gate_up_exps.scale is each expert's scale of its joined gate and up product, whatever the
     /// experts' type, and ffn_down_exps.scale of its down product (load_moe())
     bool joined_scales_ = false;
+    /// the cached experts' slots launches may take the kernels that keep more lanes busy (kernels::MmvqSlots::lanes):
+    /// the same bits.  Inkling 2 only, where they were measured.
+    bool lane_slots_ = false;
     std::vector<float> clamp_exp_, clamp_shexp_;   ///< a layer's SwiGLU limits: the routed experts', the shared one's
     /// a prompt batch's products go through guard_half_sums(): the model's activations can sum past a half's range
     /// in a block.  Off for the models whose sums stay in range: it cost LFM2.5 4% of a 30K prompt's read on a 5090.

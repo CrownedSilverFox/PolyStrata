@@ -395,6 +395,15 @@ if(STRATA_BUILD_POLY AND STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA
                                                       ${_strata_gpu_include_directories})
     target_link_libraries(poly_mxfp4_test PRIVATE strata_kernels ggml-base ${_strata_gpu_runtime_target})
   endif()
+  # Inkling 2's cached IQ3_S / IQ3_XXS slots launches with MmvqSlots::lanes against the same launches without it and
+  # native_mmvq(), bit for bit, on random blocks (no model); CUDA only, needs a card
+  if(STRATA_ENABLE_CUDA)
+    add_executable(poly_iq3_lanes_test src/poly/iq3_lanes_test.cu)
+    target_include_directories(poly_iq3_lanes_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})
+    target_link_libraries(poly_iq3_lanes_test PRIVATE strata_kernels ${_strata_gpu_runtime_target})
+    add_test(NAME poly_iq3_lanes_test COMMAND poly_iq3_lanes_test)
+    set_tests_properties(poly_iq3_lanes_test PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
   # the Q8_0 KV cache kernels (store_q8 / store_q8_at) against a host reference (GPU, synthetic, no model)
   if(STRATA_BUILD_TESTS)
     add_executable(poly_kv_q8_test src/poly/kv_q8_test.cpp src/poly/kernels.cu)

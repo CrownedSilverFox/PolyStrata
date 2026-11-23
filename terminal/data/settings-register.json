@@ -17366,6 +17366,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_IQ3_LANES",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/kernels/cuda/iq_kernels.cu",
+     "line": 5557,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "6e32ef1aac",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "6e32ef1aac",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "kernels/cuda",
+   "note": "0: Inkling 2's IQ3_S/IQ3_XXS decode products go back to mmvq_slots_kernel instead of mmvq_slots_iq3_kernel (same bits)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_IQ4XS512_MIN",
    "backends": [
     "cpu"
