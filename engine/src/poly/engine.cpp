@@ -2275,9 +2275,14 @@ void Engine::fill_expert_cache() {
         for (const Seq& q : seqs_)
             for (const Kv& k : q.kv) kv_total += k.reserved;
         const size_t limit = all + 256 + kv_total + (size_t(512) << 20);
+        // The card's free VRAM bounds the budget's claim too.  Under Windows on an RTX 4070 Laptop (8,188 MiB) the
+        // budget's usage did not grow while the handles were created, and the pool took 13,204 MiB with 4,760 free:
+        // the expert cache filled all of it, and every prompt past a few dozen words then failed with "no VRAM for
+        // the prompt products' work memory".
+        const size_t cap = std::min(free_b > reserve ? free_b - reserve : (size_t) 0, limit);
         size_t by_budget = 0;
-        const bool budgeted = vpool_claim_to_budget(reserve, limit, by_budget);
-        if (!budgeted) vpool_claim(std::min(free_b > reserve ? free_b - reserve : (size_t) 0, limit));
+        const bool budgeted = vpool_claim_to_budget(reserve, cap, by_budget);
+        if (!budgeted) vpool_claim(cap);
         pool_claimed_ = vpool_bytes() > 0;   // a card with nothing to spare keeps the maps that create their handles
         std::fprintf(stderr, "strata-poly: VRAM pool: %zu MiB claimed for the run (the card had %zu MiB free; margin left "
                              "outside it %d MiB, %s; the most the model can use: %zu MiB)\n",

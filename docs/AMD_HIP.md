@@ -543,7 +543,9 @@ before it installs a model.
   to 6,956 MiB while 3.4 GiB were claimed), and memory past it is moved out to system RAM: sized from the card's free
   VRAM, a margin of 256 MiB left the process 150 MiB over its budget and 2.4 GB were moved out (decode 6 tokens/s).
   The pool is capped at what the model can use (every expert slot, the caches' whole address range and 512 MiB), so a
-  card that holds the model keeps the rest. Measured on that RX 5700 XT (Ryzen 5 3600X, 32 GB, Windows 11), Tiel
+  card that holds the model keeps the rest, and at the card's free VRAM less the margin: on an RTX 4070 Laptop
+  (8 GB, Windows 11) the budget's usage did not grow while the pool was claimed, the pool took 13,204 MiB with
+  4,760 MiB free, and every prompt past a few dozen words failed with "no VRAM for the prompt products' work memory". Measured on that RX 5700 XT (Ryzen 5 3600X, 32 GB, Windows 11), Tiel
   Coder 35B-A3B UD-Q4_K_XL, `--max-context 262144 --kv q8_0`, a 34K-token prompt between short chats:
   `--vram-reserve-mib 2048` without the pool held 1,172 experts and wrote 40 to 46 tokens/s after the prompt;
   `--vram-pool` with a margin of 256 MiB held 1,882 and wrote 50 to 53, with the same 648 MiB of shared GPU memory and
