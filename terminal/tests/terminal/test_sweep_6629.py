@@ -27,6 +27,8 @@ class PrunedComponentPathTests(unittest.TestCase):
         eng_dir.mkdir(parents=True)
         (eng_dir / "strata.exe").write_bytes(b"MZ" + b"\x00" * 64)
         (eng_dir / "strata-vision.exe").write_bytes(b"MZ" + b"\x00" * 64)
+        for exe in ("strata.exe", "strata-vision.exe"):         # (Linux: the doctor checks that an engine can be run)
+            (eng_dir / exe).chmod(0o755)
         (eng_dir / "BUILD.json").write_text(json.dumps({"version": "0.1.65"}), encoding="utf-8")
         (comp_root / "engine" / "active.json").write_text(
             json.dumps({"version": "0.1.65-windows-x86_64-cuda-cuda13"}), encoding="utf-8"
