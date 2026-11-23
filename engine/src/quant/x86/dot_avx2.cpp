@@ -4,6 +4,8 @@
 // src/quant/x86/dot_avx2.cpp - the Avx2 contract: ggml-cpu's dot products + bit-exact optimized AVX2 kernels for
 // Q4_K, Q5_K, Q6_K, Q8_0, IQ4_XS, IQ3_XXS (dual accumulators, unrolled shifts, bit-3 sign LUT, L1 prefetching,
 // and 4-row shared-activation AVX2 dot_x4 kernels). Strictly AVX2+FMA+F16C only: 0 EVEX/ZMM instructions.
+// (PolyStrata) Types ggml has no SIMD branch for (Q2_0) take the Generic code's bits under this contract
+// (dot_q2_0_q8_0 below gives them in AVX2).
 #include "tier_common.hpp"
 
 #include "../generic.hpp"
@@ -15,6 +17,53 @@ namespace avx2 {
 
 #include "x86_helpers.inc"
 #include "x86_dots.inc"
+
+// ---- Q2_0 x Q8_0 in AVX2 (ported from the Inkling 2 engine of PR #200, src/poly/cpu_lowbit.cpp) ----
+
+// One Q8_0 block's sum of (code - 1) * q, an exact integer, the block's 32 codes in the 8 bytes at `codes` (value
+// 4i + m in byte i, bits 2m).  The activation's bytes go to "plane" order inside each 128-bit half (dword m holds
+// values 4i + m, i = 0..3: one pshufb), where the codes of a plane are a byte shifted by 2m and masked: no
+// interleave.  sum (c - 1) q = sum c q - sum q, both in int16 pairs (|pair| <= 6 * 127), then madd and a sum.
+static inline int q2_0_block_sum(const uint8_t* STRATA_RESTRICT codes, const int8_t* STRATA_RESTRICT q) {
+    const __m256i plane = _mm256_setr_epi8(0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15,
+                                           0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15);
+    const __m256i qp = _mm256_shuffle_epi8(_mm256_loadu_si256((const __m256i*) q), plane);
+    uint64_t c8;
+    std::memcpy(&c8, codes, 8);
+    const __m256i cb = _mm256_permutevar8x32_epi32(_mm256_castsi128_si256(_mm_cvtsi64_si128((long long) c8)),
+                                                   _mm256_setr_epi32(0, 0, 0, 0, 1, 1, 1, 1));
+    const __m256i c = _mm256_and_si256(_mm256_srlv_epi32(cb, _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6)), _mm256_set1_epi8(3));
+    const __m256i cq = _mm256_maddubs_epi16(c, qp);
+    const __m256i sq = _mm256_maddubs_epi16(_mm256_set1_epi8(1), qp);
+    return hsum_i32_8(_mm256_madd_epi16(_mm256_sub_epi16(cq, sq), _mm256_set1_epi16(1)));
+}
+
+// generic::dot_q2_0_q8_0_generic with the integer sums in AVX2: the same integers, and the float steps the generic
+// code's, in its order and unfused (dot_generic.cpp is -ffp-contract=off), so the result is its bits.
+void dot_q2_0_q8_0(int n, float* STRATA_RESTRICT s, const void* STRATA_RESTRICT vx, const void* STRATA_RESTRICT vy) {
+    assert(n % QK2_0 == 0);
+    const block_q2_0* STRATA_RESTRICT x = (const block_q2_0*) vx;
+    const block_q8_0* STRATA_RESTRICT y = (const block_q8_0*) vy;
+    const int nb = n / QK2_0;
+    float sumf = 0.0f;
+    for (int i = 0; i < nb; ++i) {
+        const float d0 = fp16_to_fp32(x[i].d);
+        const int s0 = q2_0_block_sum(x[i].qs, y[2 * i].qs);
+        const int s1 = q2_0_block_sum(x[i].qs + 8, y[2 * i + 1].qs);
+        float sumi = 0.0f;
+        float t0 = fp16_to_fp32(y[2 * i].d) * (float) s0;
+        STRATA_NOFUSE(t0);
+        sumi += t0;
+        float t1 = fp16_to_fp32(y[2 * i + 1].d) * (float) s1;
+        STRATA_NOFUSE(t1);
+        sumi += t1;
+        float t = d0 * sumi;
+        STRATA_NOFUSE(t);
+        sumf += t;
+    }
+    *s = sumf;
+}
+
 
 // dot_iq3_xxs_q8_K for R activation rows at once.  A block's grid values, signs and scales are looked up once for
 // all of them, and each row's terms, integer sums and float sums are the one-row function's in the same order, so
@@ -843,6 +892,8 @@ DotRowsFn avx2_dot_rows(Type w) noexcept {
 }
 
 namespace {
+// A type with two kernels of one ISA lists the one dot_kernel() picks first; the other stays listed so quant_bench and quant_selftest compare
+// the two (Q2_0: the generic kernel, whose bits the AVX2 one gives).
 #define ENTRY(T, ACT, NAME)     {avx2::dot_##NAME,         Type::T, Type::ACT, Arith::Avx2, Isa::Avx2, "avx2_" #NAME}
 #define ENTRY_OPT(T, ACT, NAME) {avx2::dot_##NAME##_opt,   Type::T, Type::ACT, Arith::Avx2, Isa::Avx2, "avx2_" #NAME}
 #define ENTRY_X4(T, ACT, NAME)  {avx2::dot_##NAME##_x4_avx2, Type::T, Type::ACT, Arith::Avx2, Isa::Avx2, "avx2_" #NAME "_x4"}
@@ -853,6 +904,7 @@ const DotKernel kTable[] = {
     ENTRY_OPT(Q6_K, Q8_K, q6_K_q8_K), ENTRY(IQ1_S, Q8_K, iq1_s_q8_K), ENTRY(IQ1_M, Q8_K, iq1_m_q8_K), ENTRY(IQ2_XXS, Q8_K, iq2_xxs_q8_K),
     ENTRY(IQ2_XS, Q8_K, iq2_xs_q8_K), ENTRY(IQ2_S, Q8_K, iq2_s_q8_K), ENTRY_OPT(IQ3_XXS, Q8_K, iq3_xxs_q8_K), ENTRY(IQ3_S, Q8_K, iq3_s_q8_K),
     ENTRY_OPT(IQ4_XS, Q8_K, iq4_xs_q8_K),
+    ENTRY(Q2_0, Q8_0, q2_0_q8_0),
     {generic::dot_q2_0_q8_0_generic, Type::Q2_0, Type::Q8_0, Arith::Avx2, Isa::Scalar, "avx2_q2_0_generic"},
 };
 const DotX4Kernel kX4Table[] = {
