@@ -361,7 +361,7 @@ Off unless you set them. The last column says where each one is described.
 | `STRATA_WATCHDOG_S` | number | NVIDIA and AMD, Intel Arc | [DETAILS.md](DETAILS.md) |
 | `STRATA_WDDM_BUDGET` | number | AMD, Intel Arc | [AMD_HIP.md](AMD_HIP.md) |
 
-## Switches that go back to earlier behaviour (110)
+## Switches that go back to earlier behaviour (111)
 
 These behaviours are on by default. Setting the switch returns the earlier behaviour; the notes in the register say which
 version made it the default.
@@ -374,6 +374,7 @@ version made it the default.
 | `STRATA_BATCH_GROUPS_NV_SERIAL` | text | NVIDIA and AMD | v0.2.16 | [BATCHING.md](BATCHING.md), [release-notes-0.2.1.md](release-notes-0.2.1.md), [release-notes-0.2.7.md](release-notes-0.2.7.md) |
 | `STRATA_BATCH_MTP_SERIAL` | on / off | NVIDIA and AMD | v0.2.16 | [BATCHING.md](BATCHING.md) |
 | `STRATA_CONVERT_THREADS` | number | NVIDIA and AMD | v0.2.17 | - |
+| `STRATA_CPU_IQ3S` | on / off | NVIDIA and AMD | - | - |
 | `STRATA_DEFAULTS` | on / off | NVIDIA and AMD | v0.2.16 | [AMD_HIP.md](AMD_HIP.md), [BATCHING.md](BATCHING.md), [DETAILS.md](DETAILS.md) |
 | `STRATA_DEQUANT_WIDE` | number | NVIDIA and AMD | v0.2.16 | [DETAILS.md](DETAILS.md), [OLDER_GPUS.md](OLDER_GPUS.md), [release-notes-0.2.7.md](release-notes-0.2.7.md) |
 | `STRATA_DF2_ATTN_TC` | on / off | NVIDIA and AMD | v0.2.19 | - |

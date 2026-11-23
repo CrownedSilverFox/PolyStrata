@@ -26,6 +26,9 @@ struct DotKernel {
     Arith arith = Arith::Generic;
     Isa isa = Isa::Scalar;
     const char* name = "";
+    /// Null for a port of ggml-cpu's kernel.  The layer's own kernels (the same bits, other instructions) can be turned off at run
+    /// time: dot_kernel() and checked_dot_kernel() skip one whose `on` returns false, and take the next of the contract.
+    bool (*on)() = nullptr;
 };
 
 struct DotX4Kernel {
@@ -37,7 +40,11 @@ struct DotX4Kernel {
     const char* name = "";
 };
 
-/// The best kernel of contract `a` for weight type `w` that runs on a CPU of level `max_isa` (the second form: this CPU), or nullptr.
+/// False for an own kernel turned off by its switch (DotKernel::on).
+inline bool dot_kernel_on(const DotKernel& k) noexcept { return k.on == nullptr || k.on(); }
+
+/// The best kernel of contract `a` for weight type `w` that runs on a CPU of level `max_isa` (the second form: this CPU), and is not
+/// switched off (dot_kernel_on), or nullptr.
 const DotKernel* dot_kernel(Type w, Arith a, Isa max_isa) noexcept;
 const DotKernel* dot_kernel(Type w, Arith a) noexcept;
 
@@ -45,7 +52,8 @@ const DotKernel* dot_kernel(Type w, Arith a) noexcept;
 const DotX4Kernel* dot_x4_kernel(Type w, Arith a, Isa max_isa) noexcept;
 const DotX4Kernel* dot_x4_kernel(Type w, Arith a) noexcept;
 
-/// Every kernel the layer has for (w, a), best first, whether or not this CPU can run it (tests, benches, the oracle tool).
+/// Every kernel the layer has for (w, a), best first, whether or not this CPU can run it or it is switched off (tests, benches, the
+/// oracle tool).
 int dot_kernels(Type w, Arith a, const DotKernel** out, int cap) noexcept;
 
 /// The Generic scalar reference.  Aborts for a type without one.

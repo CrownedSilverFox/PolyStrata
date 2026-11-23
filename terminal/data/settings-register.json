@@ -4546,6 +4546,39 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_CPU_IQ3S",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/quant/dispatch.cpp",
+     "line": 62,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "first_commit": "11bda78db1",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "f90554f5f2",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "kernels/cpu",
+   "note": "0 (only the exact value 0): the quant layer's IQ3_S dot product on an AVX2 CPU goes back to ggml's port avx2_iq3_s_q8_K instead of avx2_iq3_s_q8_K_words (the same bits, slower)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_CPU_IQ_ALL_EXACT1",
    "backends": [
     "cpu"

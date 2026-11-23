@@ -22,6 +22,10 @@ struct ActTable {
 DotTable generic_dot_table() noexcept;   // dot_generic.cpp
 ActTable generic_act_table() noexcept;   // act_ref.cpp
 
+/// DotKernel::on of the layer's own IQ3_S kernels (dispatch.cpp): false with STRATA_CPU_IQ3S=0 in the environment (only the exact value 0),
+/// which keeps the ggml ports (the same bits, slower).  Read once.
+bool iq3s_own_on() noexcept;
+
 #ifdef STRATA_QUANT_X86_TIERS
 DotTable avx_dot_table() noexcept;       // x86/dot_avx.cpp      (Arith::Avx, Isa::Avx1)
 DotTable avx2_dot_table() noexcept;      // x86/dot_avx2.cpp     (Arith::Avx2, Isa::Avx2)
