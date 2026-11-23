@@ -97,6 +97,88 @@ the 4,526-token prompt:
 
 On the laptop `--expert-swaps 0` writes faster, but it moves the answers more, so setup leaves it out.
 
+### Setup's four settings, one at a time
+
+Three of them change only how numbers are rounded. `--tail-skip 4` is different: it leaves experts out. For each
+token, an expert that is not on the card and that the router ranks fifth or lower of the token's eight is not
+computed at all.
+
+| Setting | What it does | Kind |
+| --- | --- | --- |
+| `--attn-requant q5_0` | the attention's matrices in 5 bits instead of 8: fewer bytes a token, and more VRAM for experts | rounding |
+| `--loop-bf16` | the loop controllers in BF16 instead of F32 | rounding |
+| `--expert-swaps 0` | no expert moves into VRAM while an answer is written (default 64 on their way at a time) | rounding: the same experts, but more of them on the CPU, which rounds a little differently |
+| `--tail-skip 4` | a token's experts ranked 5th to 8th that are not on the card are left out | **skips computation** |
+
+Measured on main d1f711e11, one setting at a time and all four, with ggml-org's IQ4_NL file and with UD-Q2_K_XL
+(Unsloth's tensors byte for byte, in the `inkling2_loop` layout). 256 tokens written greedily at a 32K context with
+an FP16 KV cache; each number is the median of two runs, in tokens/s:
+
+| Card | Settings | Experts on the card | Writes after 302 tokens | Writes after 8,192 | Reads 2,048 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| RTX 4060 Ti 16 GB, Threadripper 2950X | none | 2,619 of 3,072 | 49.0 | 44.6 | 997 |
+| | `--expert-swaps 0` | 2,619 | 41.3 | 42.8 | 965 |
+| | `--loop-bf16` | 2,632 | 49.9 | 45.5 | 1,040 |
+| | `--attn-requant q5_0` | 2,666 | **54.8** | 49.4 | 1,040 |
+| | `--tail-skip 4` | 2,619 | 50.9 | 46.2 | 1,011 |
+| | all four | 2,678 | 53.9 | **52.5** | 1,019 |
+| Quadro RTX 4000 8 GB, Ryzen 5 5600X | none | 998 of 3,072 | 30.9 | 21.7 | 341 |
+| | `--expert-swaps 0` | 998 | 23.8 | 22.8 | 338 |
+| | `--loop-bf16` | 1,008 | 29.6 | 20.2 | 346 |
+| | `--attn-requant q5_0` | 1,045 | 30.9 | 19.6 | 355 |
+| | `--tail-skip 4` | 998 | 31.0 | 19.9 | 352 |
+| | all four | 1,055 | 30.9 | 18.3 | 358 |
+| RTX 2070 Super 8 GB, Ryzen 5 3600XT, UD-Q2_K_XL | none | 1,986 of 3,072 | 39.3 | 32.7 | 515 |
+| | `--expert-swaps 0` | 1,986 | 32.3 | 32.9 | 512 |
+| | `--loop-bf16` | 2,008 | 40.0 | 33.4 | 515 |
+| | `--attn-requant q5_0` | 2,039 | 43.6 | 34.8 | 517 |
+| | `--tail-skip 4` | 1,986 | **43.7** | 37.4 | 516 |
+| | all four | 2,061 | 43.0 | **40.5** | 515 |
+
+On the 16 GB card `--attn-requant q5_0` brings most of the gain; with UD-Q2_K_XL on the RTX 2070 Super,
+`--tail-skip 4` and `--attn-requant q5_0` bring it about equally. `--expert-swaps 0` costs speed on every card
+after a short prompt: the experts the answer needs stay on the CPU (it computes 7.9 instead of 1.6 ms of experts a
+token on the 16 GB card, 23 instead of 6.6 on the Quadro). After a long prompt it costs less: the cache also
+moves while a prompt is read, with it or without it. On the Quadro no setting is faster than none beyond the run-to-run
+spread, which is wide there (none: 29.5-32.2 tokens/s after 302 tokens, 19.1-24.3 after 8,192).
+
+How much each one changes the answers, written after the greedy answer without any of them to four prompts (302,
+112, 2,048 tokens and a short chat; 896 steps). "Again" is a second and a third run without them, the spread of
+two runs of the same settings:
+
+| Card, file | Settings | Same most likely token | Mean KL of the top 20 |
+| --- | --- | ---: | ---: |
+| RTX 4060 Ti 16 GB, IQ4_NL (2,619 experts on the card) | again | 98.2%, 99.0% | 0.002, 0.002 |
+| | `--expert-swaps 0` | 98.1% | 0.011 |
+| | `--loop-bf16` | 98.1% | 0.004 |
+| | `--attn-requant q5_0` | 95.6% | 0.032 |
+| | `--tail-skip 4` | 97.9% | 0.025 |
+| | all four | 95.0% | 0.022 |
+| RTX 2080 Ti 11 GB, IQ4_NL (1,582 experts on the card) | again | 98.4%, 98.9% | 0.001, 0.002 |
+| | `--expert-swaps 0` | 98.9% | 0.002 |
+| | `--loop-bf16` | 98.4% | 0.002 |
+| | `--attn-requant q5_0` | 97.0% | 0.014 |
+| | `--tail-skip 4` | 96.4% | 0.010 |
+| | all four | 94.3% | 0.034 |
+| Both cards, UD-Q2_K_XL (the whole file on the card) | `--attn-requant q5_0` | 94.6%, 97.0% | 0.014, 0.023 |
+
+`--loop-bf16` and `--expert-swaps 0` stay within the spread of two runs (one step of `--expert-swaps 0` on the
+16 GB card moved more, which lifts its mean). `--attn-requant q5_0` moves the answers most of the three rounding
+settings. With the whole file on the card, `--tail-skip 4` and `--expert-swaps 0` change nothing.
+
+`--tail-skip 4` leaves out more the fewer experts the card holds. With it, the engine's "experts from VRAM" count
+also takes the left-out experts as found in VRAM, so it reads high; the engine counts them only with the doorbell off
+(`STRATA_POLY_BELL=0`). Counted that way, of a token's 384 expert picks (8 in each of 48 layer runs):
+
+| Card (IQ4_NL unless named) | `--tail-skip 4` alone | All four (no swaps, so more misses) |
+| --- | ---: | ---: |
+| RTX 4060 Ti 16 GB | 3.3 left out (0.9%) | 10.4 (2.7%) |
+| Quadro RTX 4000 8 GB | 30.8 (8.0%) | 94.1 (24.5%) |
+| RTX 2070 Super 8 GB, UD-Q2_K_XL | 9.4 (2.4%) | 35.8 (9.3%) |
+
+The answers above were measured where it leaves out few. On an 8 GB card, where it leaves out up to a quarter of
+the picks with the other three settings, they were not measured.
+
 A prompt is read a group of calls at a time through each layer run, so the experts that are not on the card cross
 the bus once for the group instead of once for every call and every pass of the looped layers.
 
