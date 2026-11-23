@@ -9,7 +9,7 @@ Image generation (optional, when the config has an "images" section): POST /v1/i
 plus seed and steps) runs stable-diffusion.cpp's sd-cli for Qwen-Image-2.1-Turbo, one job at a time on the GPU the
 text engine uses (serve/images.py).
 Tools from MCP servers (serve/mcp.py, `"mcp_servers"` in the config or --mcp-config) are offered only to requests that
-ask for them with `"strata_mcp": true` - the web app does; other clients see exactly the API they always saw.
+ask for them with `"strata_mcp": true`; other clients see exactly the API they always saw.
 Images (optional, when the config has a "vision" entry): OpenAI image_url parts and Anthropic image blocks (base64
 data, http(s) URLs or local file paths) go through `strata-vision` (the model's mmproj file) and reach the engine as
 embeddings (`GENI`).  JPEG/PNG/BMP/GIF go straight in; WebP, TIFF, AVIF, ... (agents like omp send WebP) are
@@ -4273,7 +4273,7 @@ class Service:
         self.codex_thread_titles = False              # #923 (opt-in): answer Codex's thread-title turns without the engine
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
         self.model_arch = None                        # the config's family ("qwen4exp", "qwen35moe"): None = no model-card defaults
-        self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
+        self.shared = {}                              # sampling defaults for every client (POST /settings)
         self.shared_path = None                       # where they are kept between starts (next to the config)
         self.config_effort = None                     # #1641: the config's "reasoning_effort": the level for requests with none
         self.keep_awake = None                        # #1727 (opt-in): serve.keepawake.KeepAwake, the config's "prevent_sleep"
@@ -7207,7 +7207,7 @@ def prompt_progress(svc: Service):
 
 def openai_chunks(svc: Service, req: dict, ids, thinking, tools, max_new, cancel, run=None, force=None):
     """`run`: the events to send instead of Service.run's (run_with_mcp); its ("mcp", {...}) items become chunks with
-    an empty delta and a `strata_mcp` field, which only the web app reads.  `force`: see Service.run."""
+    an empty delta and a `strata_mcp` field, which a client that asked for the tools reads.  `force`: see Service.run."""
     cid, created = "chatcmpl-" + uuid.uuid4().hex[:24], int(time.time())
     model = svc.model_for(req)
     # llama.cpp's flag, and its default: a client that wants prompt progress asks for it, and nothing changes for one
@@ -7783,9 +7783,9 @@ def make_handler(svc: Service):
                 self.wfile.write(body)
                 return
             sub = web_subtree_file(path)
-            if path.startswith(("/web/locales/", "/web/vendor/")):
-                # the page's translations (serve/web/locales/<lang>.json) and the vendored KaTeX (serve/web/vendor):
-                # only whitelisted names and types, never a path out of those folders
+            if path.startswith("/web/locales/"):
+                # the page's translations (serve/web/locales/<lang>.json): only whitelisted names, never a path out of
+                # that folder
                 if sub is None:
                     self._json(404, {"error": {"message": "not found"}})
                     return
@@ -8040,7 +8040,7 @@ def make_handler(svc: Service):
                     self._config_get()
                 return
             if path == "/mcp":
-                # the MCP servers, their state and tools (the web app's switch and Monitor card)
+                # the MCP servers, their state and tools (the web page's Monitor card)
                 if self._authorized():
                     self._json(200, svc.mcp.status() if svc.mcp else {"servers": [], "tools": 0})
                 return
@@ -8049,9 +8049,7 @@ def make_handler(svc: Service):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 if not path:
-                    # the chat's svg/html preview is a sandboxed frame; this keeps it from navigating away to a web page
-                    # (a link or <meta refresh> inside a model's html), which no sandbox flag does (serve/web/preview.js)
-                    self.send_header("Content-Security-Policy", PAGE_CSP)
+                    self.send_header("Content-Security-Policy", PAGE_CSP)     # the page has no frames
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -8701,7 +8699,7 @@ def make_handler(svc: Service):
                     raise ValueError(f"allowed_token_ids: {bad[0]} is outside the vocabulary "
                                      f"(0..{n_vocab - 1})")
             bias_api.validate_request(req, svc.engine, len(getattr(svc.tok, "tokens", ())) or None)
-            use_mcp = req.get("strata_mcp") is True and svc.mcp is not None      # the web app's opt-in (serve/mcp.py)
+            use_mcp = req.get("strata_mcp") is True and svc.mcp is not None      # the request's opt-in (serve/mcp.py)
             own = {t.get("name") for t in tools or [] if isinstance(t, dict)}   # #592: a second line of defence
             if use_mcp:
                 if not self._own_page("MCP tools can be used"):   # tools run with the user's rights on this PC
@@ -9773,7 +9771,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
                     help="serve on the network without an API key (anyone who can reach the port can use the model; "
                          "also \"api_key\": \"none\" in the config). Warns once, never refuses")
     ap.add_argument("--mcp-config", help="a JSON file with MCP servers in Claude Desktop's format ({\"mcpServers\": "
-                                         "{...}}); the web app's chat can use their tools (also \"mcp_servers\" in "
+                                         "{...}}); a request with \"strata_mcp\": true can use their tools (also \"mcp_servers\" in "
                                          "the config)")
     ap.add_argument("--lazy", action="store_true", help="start the API unloaded (the engine and the vision encoder start with the first request)")
     ap.add_argument("--api-monitor", action="store_true",
@@ -10167,8 +10165,8 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
         hub.settings["image_results"] = resolve_image_results(hub.settings, svc.has_vision())
         if hub.settings["image_results"]:
             hub.media_dir = Path(a.config).with_suffix(".tool-media") if a.config else Path.cwd() / ".tool-media"
-        print(f"[strata] starting {len(hub.servers)} MCP server{'s' * (len(hub.servers) != 1)} for the web app's "
-              f"chat: {', '.join(hub.servers)}", flush=True)
+        print(f"[strata] starting {len(hub.servers)} MCP server{'s' * (len(hub.servers) != 1)} for requests with "
+              f"\"strata_mcp\": true: {', '.join(hub.servers)}", flush=True)
         hub.start()
         atexit.register(hub.close)                      # the servers PolyStrata started end with it
     svc.apply_settings(settings)                        # #37: the model's own settings last, as a switch to it applies them
@@ -10181,7 +10179,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
     print(f"ready: http://{here}:{bound_port}/v1  (OpenAI: /v1/chat/completions, Anthropic: /v1/messages, "
           f"context {engine.max_context} tokens{', images on' if svc.has_vision() else ''}"
           f"{', API key required' if svc.api_key else ''})", flush=True)
-    print(f"       open http://{here}:{bound_port}/ in a browser to chat; close this window to stop the model", flush=True)
+    print(f"       Monitor: http://{here}:{bound_port}/ in a browser; close this window to stop the model", flush=True)
     if a.host not in ("127.0.0.1", "localhost", "::1"):
         # issue #26: reachable from other devices - say at which address, and what can still block it
         ips = [f"[{a.host}]"] if ":" in a.host and a.host != "::" else [] if a.host == "::" else lan_addresses()

@@ -44,7 +44,7 @@ EDITABLE = [
     ("api_monitor", "bool", "Keep the last 100 requests' prompts and answers in memory for /api-monitor"),
     ("switch_on_request", "bool", "List every installed model in /v1/models and load the one a request names "
                                   "(#38; read from the config the server starts with)"),
-    ("open_browser", "bool", "Open the chat page in the browser when the model is ready"),
+    ("open_browser", "bool", "Open the Monitor page in the browser when the model is ready"),
     ("vram_reserve_mib", ("arg", "--vram-reserve-mib"),
      "VRAM in MiB the engine leaves free for other programs (engine default 700)"),
 ]
