@@ -115,11 +115,19 @@ the 4,526-token prompt:
 
 On the laptop `--expert-swaps 0` writes faster, but it moves the answers more, so setup leaves it out.
 
+For answers closer to the model without them (a high-accuracy mode), `./setup.sh --family inkling
+--inkling-small-card off` leaves the three settings out; a later setup run keeps that (`"small_card": "off"` in the
+run config, also on a card that holds every expert) until `--inkling-small-card on`. With two cards it applies to the
+one card Inkling 2 runs on. An existing run config can also be overridden by adding
+`--attn-requant off --no-loop-bf16 --tail-skip 0` at the end of its arguments (the last of each flag counts;
+`STRATA_ROUTE_TAIL_SKIP`, the app's "Skip rarely used parts of the model" switch, overrides `--tail-skip`). Writing
+is slower on an 8 GB card this way (see the table above).
+
 ### Setup's four settings, one at a time
 
 These settings make the answers worse to make them faster. Setup adds three of them by itself, without asking,
 whenever the card cannot hold every expert of the size: `--attn-requant q5_0`, `--loop-bf16` and `--tail-skip 4`.
-It no longer adds `--expert-swaps 0` (measured below because setup used to); setup has no option that leaves the
+It no longer adds `--expert-swaps 0` (measured below because setup used to); `--inkling-small-card off` (above) leaves the
 three out. `--attn-requant q5_0` stores the attention's matrices in fewer bits and `--loop-bf16` the loop
 controllers: lossy rounding. `--tail-skip 4` does not compute some of a token's experts at all: on the 8 GB cards
 below, with the other three settings, 9% to 27% of a token's expert picks. The answers differ measurably from the model's without them
