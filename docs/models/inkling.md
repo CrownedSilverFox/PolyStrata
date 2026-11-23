@@ -72,6 +72,13 @@ at 560 of the 576 steps (97.2%). Prompt speed on that card, three runs each:
 | **UD-Q2_K_XL** | 2,048 tokens | 361-363 tokens/s | 434-439 tokens/s |
 | | 8,192 tokens | 347-348 tokens/s | 411-412 tokens/s |
 
+With `--prompt-int8`, an RTX 20 card also multiplies a prompt batch's experts in VRAM in one launch for each
+class of rows (up to 32, up to 128, more) over all of that class's experts, wherever their slots are, in place of a
+launch for each run of slots that lie one behind the other. The int8 kernel sums each output in the same order
+whatever its launch, so the answers are the same to the bit. It was measured +1.8% to +2.5% on prompts on an RTX 2080
+Ti (22 GB, every expert in VRAM) and no change on an RTX 2070 (8 GB). `STRATA_POLY_EXPERT_TILES=0` goes back to a
+launch for each run.
+
 On an RTX 30 card or newer, most of a prompt's products run on the int8 tensor cores, with the prompt's numbers
 rounded to 8 bits. UD-Q2_K_XL's IQ1_S experts (the gate and up of 6 layers) are the exception: they stay on halves
 unless `STRATA_PREFILL_IQ1S=int8` is set. On an RTX 3090 that setting reads a 2,048-token prompt 7.7% faster (2,159

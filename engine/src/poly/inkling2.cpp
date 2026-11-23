@@ -125,6 +125,16 @@ void Inkling2::load_geometry() {
         const char* v = std::getenv("STRATA_PREFILL_MXFP4");
         kernels::gemm_iq_i8_allow(39, !(v && std::string(v) == "fp16"));
     }
+    // On Turing, int8 products on (--prompt-int8): a prompt batch's cached experts in a launch a class of rows
+    // (Engine::expert_tiles_), the same numbers in fewer launches; STRATA_POLY_EXPERT_TILES=0: a launch a run of slots
+    // again.  Not from Ampere on, where the runs' launches were not measured slower.
+    if (const char* v = std::getenv("STRATA_POLY_EXPERT_TILES"); !(v && v[0] == '0') && opt_.prompt_int8 == 1) {
+        int dev = 0, major = 0, minor = 0;
+        if (cudaGetDevice(&dev) == cudaSuccess &&
+            cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess &&
+            cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev) == cudaSuccess)
+            expert_tiles_ = major == 7 && minor >= 5;
+    }
 #endif
     // --kv fp8: the attention caches in FP8 E4M3 with a scale a row's head, about half the bytes of fp16, as Strata
     // v0.2.19's Inkling engine has them on small cards (ink_cuda_backend.cu): at 32K tokens the eight full-attention

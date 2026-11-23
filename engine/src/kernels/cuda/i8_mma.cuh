@@ -416,7 +416,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
                                                     const uint8_t* __restrict__ X, const float* __restrict__ XD,
                                                     const float* __restrict__ XS, const int32_t* __restrict__ bounds, int ch_per_e,
                                                     const int32_t* __restrict__ ids, const int32_t* __restrict__ from,
-                                                    float* __restrict__ Y, long long ldy) {
+                                                    const long long* __restrict__ at, float* __restrict__ Y, long long ldy) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750   // (a pass for an older card compiles this empty: the host asks i8m_arch_kernel first)
     using SM = I8mSmem<T, NJ, WR, RAW>;
     constexpr int MT = SM::MT, LDS = SM::LDS, LDB = SM::LDB, XQ = SM::XQ, XSTR = SM::XSTR;
@@ -448,6 +448,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
     const int ntok = min(MT, r1 - c0);
     const int n0 = blockIdx.x * WR;
     const int tid = threadIdx.x;
+    const uint8_t* const mat = W + (at ? (size_t) at[e] : (size_t) e * mat_bytes);   // matrix e
 
     const uint32_t* grid_rd = i8_grid_src<T>();
     if constexpr (SM::GW > 0) {
@@ -481,7 +482,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
     // this thread's weight sub-blocks: row wr of the tile, its sub-blocks r0, r0 + RT, ... of a stage's 8
     const int wr = tid / RT, r0 = tid % RT;
     const bool w_in = n0 + wr < n_out;
-    I8P const blob = I8_GPTR(W + (size_t) e * mat_bytes + (size_t) n0 * row_bytes);
+    I8P const blob = I8_GPTR(mat + (size_t) n0 * row_bytes);
     const uint32_t row_off = (uint32_t) ((size_t) wr * row_bytes);
     // its tensor-core tiles: weight rows i0 + 16 a + g and 8 more, activation rows j0 + g as columns, j0 = 8 (CG n + jp)
     const int warp = tid >> 5, g = (tid & 31) >> 2, tg = tid & 3;
@@ -522,7 +523,6 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
     const auto fetch = [&](int S) {
         if constexpr (RAW) {   // the pieces of each row's stage, 16 bytes at a time: consecutive threads, consecutive pieces
             constexpr int RB = i8m_raw_bytes(T), NP = SM::RW / 4;
-            const uint8_t* const mat = W + (size_t) e * mat_bytes;
             if constexpr (RB % 16 == 0) {
                 const uint8_t* const src = mat + (size_t) n0 * row_bytes + (size_t) S * RB;
                 for (int i = tid; i < WR * NP; i += NT) {
@@ -579,7 +579,7 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
     };
     const auto put = [&](int S) {
         if constexpr (RAW) {   // this thread's sub-blocks out of the raw stage, read as fetch() reads the card's memory
-            const uintptr_t at = (uintptr_t) (W + (size_t) e * mat_bytes + (size_t) (n0 + wr) * row_bytes + (size_t) S * i8m_raw_bytes(T));
+            const uintptr_t at = (uintptr_t) (mat + (size_t) (n0 + wr) * row_bytes + (size_t) S * i8m_raw_bytes(T));
             I8P const rb = I8_GPTR((const uint8_t*) (s_raw + wr * SM::RW) + (at & 15) - (size_t) S * i8m_raw_bytes(T));
 #pragma unroll
             for (int part = 0; part < PER; ++part) {
@@ -869,7 +869,7 @@ I8mCard i8m_card() {
 template <int T, int NJ, int WR, bool RAW>
 bool i8m_launch(int dev, dim3 grid, cudaStream_t s, const uint8_t* W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
                 const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int ch, const int32_t* ids,
-                const int32_t* from, float* Y, long long ldy) {
+                const int32_t* from, const long long* at, float* Y, long long ldy) {
     constexpr size_t bytes = I8mSmem<T, NJ, WR, RAW>::bytes;
     static bool attr[64];   // the attribute belongs to a card (see gemm_iq_f16_grouped)
     if (!attr[dev]) {
@@ -877,7 +877,7 @@ bool i8m_launch(int dev, dim3 grid, cudaStream_t s, const uint8_t* W, size_t mat
         attr[dev] = true;
     }
     i8m_kernel<T, NJ, WR, RAW><<<grid, i8m_threads(T, NJ, WR), bytes, s>>>(W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, ch,
-                                                                       ids, from, Y, ldy);
+                                                                       ids, from, at, Y, ldy);
     return cudaGetLastError() == cudaSuccess;
 }
 
@@ -898,7 +898,7 @@ size_t i8m_tile_bytes(int nj, int wr, bool raw) {
 template <int T>
 bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t* W, size_t mat_bytes, size_t row_bytes, int n_out, int K,
                      const uint8_t* X, const float* XD, const float* XS, const int32_t* bounds, int n_mats, int max_rows,
-                     const int32_t* ids, const int32_t* from, float* Y, long long ldy) {
+                     const int32_t* ids, const int32_t* from, const long long* at, float* Y, long long ldy) {
     int nj = max_rows <= 16 ? 1 : max_rows <= 32 ? 2 : max_rows <= 64 ? 4 : 8;
     const int wr = i8m_rows(T, nj) == 128 && n_out >= 128 && i8m_tile_bytes<T>(8, 128, false) <= card.shared ? 128 : 64;
     // The raw stage: whole stages, no piece before the matrices' start, rows of whole pieces for a type read so; and as
@@ -919,9 +919,9 @@ bool i8m_launch_type(const I8mCard& card, int dev, cudaStream_t s, const uint8_t
 #define STRATA_I8M_GO(NJ_, WR_) \
     if (nj == NJ_ && wr == WR_) \
         return raw ? i8m_launch<T, NJ_, WR_, i8m_raw_type(T)>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, \
-                                                                     bounds, (int) ch, ids, from, Y, ldy) \
+                                                                     bounds, (int) ch, ids, from, at, Y, ldy) \
                    : i8m_launch<T, NJ_, WR_, false>(dev, grid, s, W, mat_bytes, row_bytes, n_out, K, X, XD, XS, bounds, (int) ch, \
-                                                    ids, from, Y, ldy);
+                                                    ids, from, at, Y, ldy);
     STRATA_I8M_TILES(STRATA_I8M_GO)
 #undef STRATA_I8M_GO
     return false;

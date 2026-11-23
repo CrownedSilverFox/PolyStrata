@@ -8,7 +8,8 @@
 // only the float rounding of its sums may differ.  Then the same products with the memory Mmq::work() asks for given
 // beforehand (Mmq::give(), as Engine::alloc() does): the same numbers, made in those buffers.  Where the path reads
 // rows by index (Mmq::reads_by_index()), the experts' product from rows quantized once and read by index is the one
-// from the same rows gathered by ids, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
+// from the same rows gathered by ids, bit for bit; and for the int8 path the experts stored in another order and found
+// by their offsets (Mmq::mul_at()) give mul()'s products, bit for bit.  On an RTX 50 card NVFP4 takes the two-term FP4 products
 // (nvfp4_x2.hpp) unless STRATA_PREFILL_NVFP4 names another mode: run it with STRATA_PREFILL_NVFP4=fp16 too.
 // IQ1_S and MXFP4 take the int8 tiles only where an engine asks for them (gemm_iq_i8_allow(), as Inkling 2 does), so the test
 // asks; where it then takes them, its product is also made on the FP16 kernel (the path it had before) and the two
@@ -186,11 +187,32 @@ int main(int argc, char** argv) {
                 if (int8) reference(r, e, true, &ref8[(size_t) (r * kOut)]);
                 std::copy_n(&y[(size_t) perm[(size_t) r] * kOut], kOut, &back[(size_t) (r * kOut)]);
             }
+        bool at_same = true;
+        if (int8) {   // the same experts stored in the other order and found by their offsets (mul_at()): mul()'s bits
+            std::vector<uint8_t> rev(wq.size());
+            std::vector<int64_t> at((size_t) kExperts);
+            for (int e = 0; e < kExperts; ++e) {
+                at[(size_t) e] = (int64_t) ((kExperts - 1 - e) * mat);
+                std::memcpy(&rev[(size_t) at[(size_t) e]], &wq[(size_t) e * mat], mat);
+            }
+            uint8_t* drev = upload(rev);
+            int64_t* dat = upload(at);
+            if (!drev || !dat) return 1;
+            std::vector<float> y_at(y.size());
+            cudaMemset(dy, 0, y.size() * sizeof(float));
+            mmq.mul_at(drev, dat, t, kOut, kIn, kExperts, xq, dbounds, dperm, kTokens, 149, dy, kOut, nullptr);
+            if (!ok(cudaMemcpy(y_at.data(), dy, y_at.size() * sizeof(float), cudaMemcpyDeviceToHost), "offsets' product"))
+                return 1;
+            at_same = std::memcmp(y_at.data(), y.data(), y.size() * sizeof(float)) == 0;
+            std::printf("%-8s matrices by offset: %s\n", ggml_type_name(ty), at_same ? "same products" : "OTHER PRODUCTS");
+            cudaFree(drev);
+            cudaFree(dat);
+        }
         const Err experts = compare(back, ref, kTokens, kOut, kOut);
         const Err experts8 = int8 ? compare(back, ref8, kTokens, kOut, kOut) : Err{};
         // The int8 path against its own numbers: a weight decoded wrong anywhere shows as an error of 1e-3 or more of
         // the products' size; the float rounding of the sums is about 1e-7
-        bool fine = dense.rms < 0.02 && experts.rms < 0.02 && dense8.rms < 1e-5 && experts8.rms < 1e-5;
+        bool fine = at_same && dense.rms < 0.02 && experts.rms < 0.02 && dense8.rms < 1e-5 && experts8.rms < 1e-5;
         std::printf("%-8s dense: RMS error %.2e, largest %.2e   experts: RMS error %.2e, largest %.2e", ggml_type_name(ty),
                     dense.rms, dense.top, experts.rms, experts.top);
         if (int8)

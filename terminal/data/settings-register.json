@@ -34041,6 +34041,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_POLY_EXPERT_TILES",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/inkling2.cpp",
+     "line": 111,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": "on",
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/models/inkling.md:72"
+   ],
+   "first_commit": "09e2e8e340",
+   "first_date": "2026-11-23",
+   "since": null,
+   "last_commit": "09e2e8e340",
+   "last_date": "2026-11-23",
+   "status": "rollback",
+   "owner": "poly",
+   "note": "0: Inkling 2 on Turing (sm_75) goes back to an int8 launch a run of slots for its cached prompt experts instead of one launch a class of rows (same bits either way)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_POLY_MIRROR",
    "backends": [
     "cuda"

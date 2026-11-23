@@ -364,7 +364,7 @@ Off unless you set them. The last column says where each one is described.
 | `STRATA_WATCHDOG_S` | number | NVIDIA and AMD, Intel Arc | [DETAILS.md](DETAILS.md) |
 | `STRATA_WDDM_BUDGET` | number | AMD, Intel Arc | [AMD_HIP.md](AMD_HIP.md) |
 
-## Switches that go back to earlier behaviour (114)
+## Switches that go back to earlier behaviour (115)
 
 These behaviours are on by default. Setting the switch returns the earlier behaviour; the notes in the register say which
 version made it the default.
@@ -440,6 +440,7 @@ version made it the default.
 | `STRATA_PIPELINE_ADAPT_ASYNC` | number | NVIDIA and AMD | v0.2.16 | - |
 | `STRATA_PLE_AUTO_MMAP` | number | NVIDIA and AMD, Intel Arc | v0.2.16 | [DETAILS.md](DETAILS.md) |
 | `STRATA_POLY_BELL` | on / off | NVIDIA | - | - |
+| `STRATA_POLY_EXPERT_TILES` | on / off | NVIDIA and AMD | - | [inkling.md](models/inkling.md) |
 | `STRATA_POLY_NV4_TILE` | on / off | NVIDIA and AMD | - | - |
 | `STRATA_PREFILL_CPU_SHARE_AUTO` | text | NVIDIA and AMD | v0.2.17 | [DETAILS.md](DETAILS.md) |
 | `STRATA_PREFILL_LOAN_WALK` | on / off | NVIDIA and AMD | v0.2.16 | - |
