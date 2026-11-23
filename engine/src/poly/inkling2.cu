@@ -591,6 +591,57 @@ __global__ void __launch_bounds__(kDownThreads) ink_ctrl_down_kernel(CtrlDown d,
     }
 }
 
+// STRATA_INK_FAST_CTRL=1 (opt-in, other bits): ink_ctrl_down_kernel in one pass over cur and msg.  An output's block
+// of kFastDownThreads takes, in one read of the two rows, the down row's products with cur and with msg and the two
+// rows' squares, and scales the products by the norms after the sums: down . [cur * ia, msg * ib] as
+// (down_l . cur) * ia + (down_r . msg) * ib.  The same values up to rounding (where the norm's scale is applied, and
+// the sums' order); half the threads of a block, and cur and msg are read once a block instead of twice.  From our
+// earlier Inkling engine's ctrl_down_kernel (PR 200), written anew on this kernel's arguments.
+constexpr int kFastDownThreads = 256;
+template <typename W>
+__global__ void __launch_bounds__(kFastDownThreads) ink_ctrl_down_fast_kernel(CtrlDown d, int n_embd, int rank) {
+    pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
+    pdl_wait();
+    __shared__ float part[kFastDownThreads / WARP][4];
+    const int j = blockIdx.x / rank, o = blockIdx.x % rank, tid = threadIdx.x;
+    const size_t row = size_t(blockIdx.y) * n_embd;
+    const float* __restrict__ cur = d.cur[j] + row;
+    const float* __restrict__ msg = d.msg[j] + row;
+    const W* __restrict__ wl = static_cast<const W*>(d.w[j]) + size_t(o) * 2 * n_embd;
+    const W* __restrict__ wr = wl + n_embd;
+    float dl = 0.0f, dr = 0.0f, cc = 0.0f, mm = 0.0f;
+    for (int i = tid; i < n_embd; i += kFastDownThreads) {
+        const float c = cur[i], m = msg[i];
+        dl += wval(wl, i) * c;
+        dr += wval(wr, i) * m;
+        cc += c * c;
+        mm += m * m;
+    }
+    dl = warp_sum(dl), dr = warp_sum(dr), cc = warp_sum(cc), mm = warp_sum(mm);
+    if ((tid & 31) == 0) part[tid >> 5][0] = dl, part[tid >> 5][1] = dr, part[tid >> 5][2] = cc, part[tid >> 5][3] = mm;
+    __syncthreads();
+    if (tid == 0) {
+        float v[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        for (int w = 0; w < kFastDownThreads / WARP; ++w)
+#pragma unroll
+            for (int k = 0; k < 4; ++k) v[k] += part[w][k];
+        d.y[j][size_t(blockIdx.y) * rank + o] = v[0] * cat_scale(v[2], n_embd) + v[1] * cat_scale(v[3], n_embd);
+    }
+}
+
+int g_fast_ctrl = -1;   // -1: STRATA_INK_FAST_CTRL decides (ink_set_fast_ctrl() for the kernel test)
+bool fast_ctrl_on() {
+#if defined(__HIPCC__)
+    return false;   // CUDA only: not measured on AMD cards yet
+#else
+    if (g_fast_ctrl < 0) {
+        const char* v = std::getenv("STRATA_INK_FAST_CTRL");
+        g_fast_ctrl = v != nullptr && v[0] == '1';
+    }
+    return g_fast_ctrl == 1;
+#endif
+}
+
 struct GateSet {
     const float* cur[kSet];
     const float* msg[kSet];
@@ -903,67 +954,109 @@ __device__ __forceinline__ void lane_halves(const __half* head, int lane, int n,
     }
 }
 
-// The scores of a token's heads on one key head (blockIdx.x) against a block of keys (blockIdx.y).  A warp has
-// kScoreKeys keys, one at a time: its lanes read the key side by side, once for all of the group's heads, and
-// their products with the queries are summed across the warp.  The bias's products are the first n_rel lanes'.
-// t0 is the launch's first token among the call's, nk_max the scores a head has room for.
-template <bool KV8>
-__global__ void ink_score_kernel(InkAttn a, int t0, int nk_max) {
+// The scores of a token's heads on one key head (blockIdx.x) against a block of keys (blockIdx.y).  A key's score
+// is the sum of 32 shares, share j the bias's product for relative value j (0 from n_rel on) plus the dot of the
+// query's values LH * j .. LH * j + LH - 1 with the key's, and it is added up as a butterfly over 32 lanes adds:
+// j with j + 16, then 8 apart, 4, 2, 1.  A lane takes the four shares of one key that sum first (j, j + 8, j + 16,
+// j + 24, for j its lane in the key's 8), so a warp makes four keys' scores at once with three shuffles a head, and
+// takes kScoreSteps such steps (the block's warps in turn).  Every product and sum is the one a lane of a 32-lane
+// warp a key made before, in its order (pinned with __fmul_rn / __fmaf_rn as NVVM contracted that code), so the
+// scores are the same bits.  A step whose keys are all past the bias's extent (most of a long context) reads no
+// bias weights: theirs are 0, so is their product.  t0 is the launch's first token among the call's, nk_max the
+// scores a head has room for.
+constexpr int kScoreLanes = 32 / kScoreKeys;     // a key's lanes
+constexpr int kScoreShares = 32 / kScoreLanes;   // a lane's shares of a score
+constexpr int kScoreSteps = 8;                   // a warp's steps of kScoreKeys keys
+constexpr int kScoreBlockKeys = kScoreWarps * kScoreKeys * kScoreSteps;
+static_assert(kScoreShares == 4, "a lane adds the butterfly's first two rounds itself");
+
+template <bool KV8, int LH>
+__global__ void __launch_bounds__(kScoreWarps * 32) ink_score_kernel(InkAttn a, int t0, int nk_max) {
     pdl_trigger();   // PDL (pdl.hpp): the launch after this one may start
     pdl_wait();
-    __shared__ float qs[kMaxPer * 128];
+    __shared__ __align__(16) float qs[kMaxPer * 128];
     __shared__ float rs[kMaxPer * 32];
     __shared__ float sinks[kMaxPer];
-    const int per = a.n_head / a.n_kv, lh = a.dim / 32;
+    const int per = a.n_head / a.n_kv;
     const int tt = blockIdx.x / a.n_kv, g = blockIdx.x % a.n_kv, t = t0 + tt;
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    const int sub = lane % kScoreLanes, mine = lane / kScoreLanes;   // this lane's key of a step, and its 8th of it
     const long long p = a.at ? a.at[2 * t] : a.pos + t;
     const long long lo = a.window > 0 ? (p - a.window + 1 > 0 ? p - a.window + 1 : 0) : 0;
     const int nk = (int) (p - lo + 1);
-    if ((int) (blockIdx.y * kScoreWarps * kScoreKeys) >= nk) return;   // (the whole block)
-    const size_t head0 = size_t(t) * a.n_head + size_t(g) * per;       // the group's heads lie together
+    const int jb = blockIdx.y * kScoreBlockKeys;
+    if (jb >= nk) return;   // (the whole block)
+    const size_t head0 = size_t(t) * a.n_head + size_t(g) * per;   // the group's heads lie together
     for (int i = tid; i < per * a.dim; i += blockDim.x) qs[i] = a.q[head0 * a.dim + i] * a.scale;
     for (int i = tid; i < per * a.n_rel; i += blockDim.x) rs[i] = a.r[head0 * a.n_rel + i];
     if (tid < per) sinks[tid] = a.sink[head0 + tid];
     __syncthreads();
-    const int j0 = (blockIdx.y * kScoreWarps + warp) * kScoreKeys, j1 = j0 + kScoreKeys < nk ? j0 + kScoreKeys : nk;
-    if (j0 >= nk) return;   // (a whole warp)
-    float q[kMaxPer][kLaneHalves], r[kMaxPer];
+    // share j's relative-position weight of each head: 0 from n_rel on, as a lane past n_rel had
+    float rr[kMaxPer][kScoreShares];
 #pragma unroll
-    for (int hp = 0; hp < kMaxPer; ++hp) {
+    for (int hp = 0; hp < kMaxPer; ++hp)
 #pragma unroll
-        for (int c = 0; c < kLaneHalves; ++c) q[hp][c] = hp < per && c < lh ? qs[hp * a.dim + lane * lh + c] : 0.0f;
-        r[hp] = hp < per && lane < a.n_rel ? rs[hp * a.n_rel + lane] : 0.0f;
-    }
-    float* s = a.score + (size_t(tt) * a.n_head + size_t(g) * per) * nk_max;
-    // the warp's keys and their bias values first, so that their reads are on their way together (the scores'
-    // stores between them could be to the same memory, as far as the compiler knows)
-    float k[kScoreKeys][kLaneHalves], rb[kScoreKeys];
-    long long row = a.ring > 0 ? (lo + j0) % a.ring : lo + j0;
-#pragma unroll
-    for (int u = 0; u < kScoreKeys; ++u) {
-        if (j0 + u < j1) {
-            if (KV8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, lane, lh, k[u]);
-            else lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, lane, lh, k[u]);
-            const long long dist = p - (lo + j0 + u);
-            rb[u] = lane < a.n_rel && dist < a.extent ? a.rel_bias[size_t(dist) * a.n_rel + lane] : 0.0f;
-            if (++row == a.ring) row = 0;
+        for (int k = 0; k < kScoreShares; ++k) {
+            const int vl = sub + kScoreLanes * k;
+            rr[hp][k] = hp < per && vl < a.n_rel ? rs[hp * a.n_rel + vl] : 0.0f;
         }
-    }
+    float* s = a.score + (size_t(tt) * a.n_head + size_t(g) * per) * nk_max;
+    // the warp's first key and its cache row; a ring's row is advanced, not divided for, from step to step
+    int j = jb + warp * kScoreKeys + mine;
+    long long row = a.ring > 0 ? (lo + j) % a.ring : lo + j;
+    for (int st = 0; st < kScoreSteps; ++st) {
+        const int jw = j - mine;   // the step's first key
+        if (jw >= nk) break;       // (a whole warp)
+        const bool here = j < nk;
+        const long long dist = p - (lo + j);
+        const bool far = p - (lo + jw + kScoreKeys - 1) >= a.extent;   // (the whole warp)
+        // this lane's four shares of key j: its values and bias weights first, so that their reads are on their way
+        float kx[kScoreShares][kLaneHalves], rb[kScoreShares];
 #pragma unroll
-    for (int u = 0; u < kScoreKeys; ++u) {
-        if (j0 + u < j1) {
+        for (int k = 0; k < kScoreShares; ++k) {
+            const int vl = sub + kScoreLanes * k;
+            if (here) {
+                if (KV8) lane_fp8(a.keys, row, a.n_kv, a.dim, g, vl, LH, kx[k]);
+                else lane_halves((const __half*) a.keys + (size_t(row) * a.n_kv + g) * a.dim, vl, LH, kx[k]);
+            } else {
 #pragma unroll
-            for (int hp = 0; hp < kMaxPer; ++hp) {
-                if (hp < per) {
-                    float d = rb[u] * r[hp];
+                for (int c = 0; c < kLaneHalves; ++c) kx[k][c] = 0.0f;
+            }
+            rb[k] = !far && here && vl < a.n_rel && dist < a.extent ? a.rel_bias[size_t(dist) * a.n_rel + vl] : 0.0f;
+        }
 #pragma unroll
-                    for (int c = 0; c < kLaneHalves; ++c) d += q[hp][c] * k[u][c];
-                    d = warp_sum(d);
-                    if (lane == 0) s[size_t(hp) * nk_max + j0 + u] = d - sinks[hp];
+        for (int hp = 0; hp < kMaxPer; ++hp) {
+            if (hp < per) {
+                float sh[kScoreShares];
+#pragma unroll
+                for (int k = 0; k < kScoreShares; ++k) {
+                    const int vl = sub + kScoreLanes * k;
+                    float q[kLaneHalves];
+                    if (LH == 4) {
+                        const float4 v = *reinterpret_cast<const float4*>(&qs[hp * a.dim + vl * 4]);
+                        q[0] = v.x, q[1] = v.y, q[2] = v.z, q[3] = v.w;
+                    } else {
+#pragma unroll
+                        for (int c = 0; c < kLaneHalves; ++c) q[c] = c < LH ? qs[hp * a.dim + vl * LH + c] : 0.0f;
+                    }
+                    // the old lane's share as NVVM contracted it: q0 k0, the bias's product added by an fma, then
+                    // the other values' products in their order
+                    float d = __fmaf_rn(rb[k], rr[hp][k], __fmul_rn(q[0], kx[k][0]));
+#pragma unroll
+                    for (int c = 1; c < kLaneHalves; ++c) d = __fmaf_rn(q[c], kx[k][c], d);
+                    sh[k] = d;
                 }
+                // shares j and j + 16, j + 8 and j + 24, then those two; then the key's other lanes
+                float v = __fadd_rn(__fadd_rn(sh[0], sh[2]), __fadd_rn(sh[1], sh[3]));
+#pragma unroll
+                for (int o = kScoreLanes / 2; o > 0; o >>= 1) v = __fadd_rn(v, __shfl_xor_sync(0xffffffff, v, o, WARP));
+                if (sub == 0 && here) s[size_t(hp) * nk_max + j] = v - sinks[hp];
             }
         }
+        j += kScoreWarps * kScoreKeys;
+        row += kScoreWarps * kScoreKeys;
+        if (a.ring > 0)
+            while (row >= a.ring) row -= a.ring;
     }
 }
 
@@ -1737,6 +1830,8 @@ void ink_cat_norm(const float* cur, const float* msg, float* out, int n_embd, in
     ink_cat_norm_set(&cur, &msg, &out, 1, n_embd, rows, stream);
 }
 
+void ink_set_fast_ctrl(bool on) { g_fast_ctrl = on ? 1 : 0; }
+
 bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void* const* down, float* const* ch,
                    int count, int n_embd, int rank, int rows, void* stream, bool bf16) {
     if (count < 1 || count > kSet) throw std::invalid_argument("ink_ctrl_down: 1 to 3 controllers");
@@ -1748,6 +1843,16 @@ bool ink_ctrl_down(const float* const* cur, const float* const* msg, const void*
         d.msg[j] = msg[j];
         d.w[j] = down[j];
         d.y[j] = ch[j];
+    }
+    if (fast_ctrl_on()) {
+        if (bf16)
+            launch_pdl(ink_ctrl_down_fast_kernel<uint16_t>, dim3(count * rank, rows), dim3(kFastDownThreads), 0,
+                       cs(stream), d, n_embd, rank);
+        else
+            launch_pdl(ink_ctrl_down_fast_kernel<float>, dim3(count * rank, rows), dim3(kFastDownThreads), 0,
+                       cs(stream), d, n_embd, rank);
+        launched("ink_ctrl_down_fast");
+        return true;
     }
     if (bf16)
         launch_pdl(ink_ctrl_down_kernel<uint16_t>, dim3(count * rank, rows), dim3(kDownThreads), 0, cs(stream), d,
@@ -1890,6 +1995,12 @@ static int value_warps(int n_head, int n_kv, int dim) {
     return (int) std::min<size_t>(32, kValueShared / ((size_t) (n_head / n_kv) * dim * sizeof(float)));
 }
 
+// ink_score_kernel() for a call's caches and heads
+template <int LH> static auto score_kernel_lh(const InkAttn& a) {
+    return a.kv8 ? ink_score_kernel<true, LH> : ink_score_kernel<false, LH>;
+}
+static auto score_kernel(const InkAttn& a) { return a.dim == 128 ? score_kernel_lh<4>(a) : score_kernel_lh<2>(a); }
+
 size_t ink_attend_floats(int n_head, int n_kv, int dim, int64_t keys) {
     // a head's scores, its softmax's norm, and its values' sums a block of the value kernel
     const int64_t block = (int64_t) value_warps(n_head, n_kv, dim) * kValueKeys;
@@ -1908,7 +2019,7 @@ void ink_attend(const InkAttn& a, void* stream) {
     const int nk_max = (int) (a.window > 0 ? std::min<int64_t>(a.window, last) : last);
     const int group = a.n_head / a.n_kv, warps = value_warps(a.n_head, a.n_kv, a.dim);
     const int n_parts = (nk_max + warps * kValueKeys - 1) / (warps * kValueKeys);
-    const int score_blocks = (nk_max + kScoreWarps * kScoreKeys - 1) / (kScoreWarps * kScoreKeys);
+    const int score_blocks = (nk_max + kScoreBlockKeys - 1) / kScoreBlockKeys;
     const size_t per = ink_attend_floats(a.n_head, a.n_kv, a.dim, nk_max);
     if (a.score_n < per) throw std::logic_error("ink_attend: the scores of one token do not fit the scratch");
     const int chunk = (int) std::min<size_t>(a.score_n / per, (size_t) a.rows);
@@ -1916,7 +2027,7 @@ void ink_attend(const InkAttn& a, void* stream) {
     float* parts = norm + (size_t) chunk * a.n_head;
     for (int t0 = 0; t0 < a.rows; t0 += chunk) {
         const int m = std::min(chunk, a.rows - t0);
-        launch_pdl(a.kv8 ? ink_score_kernel<true> : ink_score_kernel<false>, dim3(m * a.n_kv, score_blocks),
+        launch_pdl(score_kernel(a), dim3(m * a.n_kv, score_blocks),
                    dim3(kScoreWarps * 32), 0, cs(stream), a, t0, nk_max);
         launched("ink_score");
         launch_pdl(ink_softmax_kernel, dim3(m * a.n_head), dim3(kAttnThreads), 0, cs(stream), a, t0, nk_max, norm);
