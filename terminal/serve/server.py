@@ -5077,6 +5077,8 @@ class Service:
         asked_l = asked_s.lower()
         if asked_l in {n.strip().lower() for n in names if n}:
             return None
+        if any(n.strip().lower().startswith(asked_l + "-") for n in names if n):   # a family name ("hy4-flash") of the loaded size
+            return None
         is_strata_id = any(asked_l.startswith(p) for p in self._STRATA_MODEL_PREFIXES)
         if not self.strict_model and not is_strata_id:
             return None
