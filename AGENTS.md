@@ -43,6 +43,9 @@ backend compatible.
   Mac (Metal): [docs/MAC.md](docs/MAC.md).
 - Text taken from the Strata project names that project. After merging from it,
   `python terminal/tools/polystrata_names.py` writes PolyStrata again; its first lines say what it leaves alone.
+- Every merge from the Strata project drops its desktop app (`app/`) and the web page's Chat (`chats-ui.js`, `chatstore.js`,
+  `history.js`, `preview.js`, `math.js`, `math-adapter.js`, `ime.js`, `web/vendor/`) again. `tools/test_dropped_paths.py`
+  lists them and fails while one is back (`python tools/check --only py-tools`).
 - Tests: the Terminal and Control tests are in `terminal/tests/terminal` (`python -m pytest terminal/tests/terminal`).
   Setup's own tests run without a GPU or downloads:
   `python terminal/tools/test_setup_<name>.py` (for example `terminal/tools/test_setup_amd.py`, `terminal/tools/test_setup_choices.py`).
