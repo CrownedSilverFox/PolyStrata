@@ -17475,13 +17475,13 @@
   {
    "name": "STRATA_IQ3_LANES",
    "backends": [
-    "cuda-hip"
+    "cuda"
    ],
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 5557,
-     "backend": "cuda-hip",
+     "line": 5847,
+     "backend": "cuda",
      "fn": "getenv"
     }
    ],
@@ -17816,13 +17816,13 @@
   {
    "name": "STRATA_IQ_SLOT_LANES",
    "backends": [
-    "cuda-hip"
+    "cuda"
    ],
    "reads": [
     {
      "file": "engine/src/kernels/cuda/iq_kernels.cu",
-     "line": 5857,
-     "backend": "cuda-hip",
+     "line": 5970,
+     "backend": "cuda",
      "fn": "getenv"
     }
    ],
@@ -17842,7 +17842,7 @@
    "last_date": "2026-11-23",
    "status": "rollback",
    "owner": "kernels/cuda",
-   "note": "0: Inkling 2's cached IQ1_S/IQ1_M/IQ2_XXS/IQ2_XS/IQ2_S decode products go back to mmvq_slots_kernel instead of mmvq_slots_staged_kernel (same bits)",
+   "note": "0: Inkling 2's cached IQ1_S/IQ1_M/IQ2_XXS/IQ2_XS/IQ2_S decode products go back to mmvq_slots_kernel instead of mmvq_slots_staged_kernel (same bits); unset: the staged kernel on sm_75 only (slot_lanes_on(), the card checked), 1: on every card; CUDA only",
    "retire_after": "",
    "retired_in": ""
   },

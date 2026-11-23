@@ -251,6 +251,13 @@ int main(int argc, char** argv) {
     cudaDeviceProp p{};
     ck(cudaGetDeviceProperties(&p, 0), "props");
     std::printf("%s (sm_%d%d)\n", p.name, p.major, p.minor);
+    // unset, the lane kernel runs on sm_75 only (iq_kernels.cu: slot_lanes_on()); STRATA_IQ_SLOT_LANES=1 checks it on
+    // another card
+    if (const char* v = std::getenv("STRATA_IQ_SLOT_LANES"); !(v && *v) && !(p.major == 7 && p.minor == 5)) {
+        std::printf("sm_%d%d: the lane kernel is off by default here (STRATA_IQ_SLOT_LANES=1 checks it): skipped\n",
+                    p.major, p.minor);
+        return 77;
+    }
     for (const Fmt& f : kFmts) {
         for (const int count : {1, 2, 3, 5, 7, 8, 32}) test(f, 2304, 2304, count);   // Inkling 2 Mini's gate|up
         test(f, 2304, 2304, 8, 64, 8);   // moe_card: 8 tokens' 8 experts through the picks

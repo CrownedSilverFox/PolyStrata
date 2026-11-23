@@ -5943,7 +5943,7 @@ __global__ void __launch_bounds__(128) mmvq_slots_iq3_kernel(S slots, size_t row
 // kLaneRows rows, so the copy is paid for 32 rows.  A row is row_dot_multi's for one column, which is row_dot's
 // arithmetic in its order (the same calls, lane-strided the same way, the same warp_sum), and the staged words are the
 // table's: mmvq_slots_kernel's bits.  STRATA_IQ_SLOT_LANES=0, STRATA_OLD_IQ_MMVQ=1 or STRATA_IQ_STAGE_GRID=0 keep
-// mmvq_slots_kernel.  Ported from our PR 200's a4fa51021 / 2b5363d88.
+// mmvq_slots_kernel (and so do the cards slot_lanes_on() has not been checked on).  Ported from our PR 200's a4fa51021 / 2b5363d88.
 constexpr int kLaneRows = 8;
 template<int TY, typename S>
 __global__ void __launch_bounds__(128) mmvq_slots_staged_kernel(S slots, size_t row_bytes, int n_in, int n_out) {
@@ -5961,10 +5961,22 @@ __global__ void __launch_bounds__(128) mmvq_slots_staged_kernel(S slots, size_t 
         if (lane == 0) at.y[row] = s[0];
     }
 }
-const bool g_slot_lanes = [] {
-    const char* v = std::getenv("STRATA_IQ_SLOT_LANES");
-    return v == nullptr || v[0] != '0';
-}();
+// The same bits are shown on sm_75 (Turing; poly_iq_slot_lanes_test), so unset it is on there only, and the other
+// cards keep mmvq_slots_kernel until they are checked, as iq3_lanes_on() does for the IQ3 kernels.
+// STRATA_IQ_SLOT_LANES=0 keeps mmvq_slots_kernel on every card, =1 takes the lane kernel on every card.
+// Decided once a process, by the card current at the first launch.
+bool slot_lanes_on() {
+    static const bool on = [] {
+        if (const char* v = std::getenv("STRATA_IQ_SLOT_LANES"); v && *v) return v[0] != '0';
+        int dev = 0, major = 0, minor = 0;
+        if (cudaGetDevice(&dev) != cudaSuccess ||
+            cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) != cudaSuccess ||
+            cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev) != cudaSuccess)
+            return false;
+        return major == 7 && minor == 5;
+    }();
+    return on;
+}
 #endif
 
 template<typename S>
@@ -5982,8 +5994,8 @@ void slots_of(int t, const S& slots, int count, int n_in, int n_out, void* strea
     }
 #endif
 #if !defined(__HIPCC__)
-    if ((t == 16 || t == 17 || t == 22 || t == 29 || t == 19) && slots.lanes && g_slot_lanes && !g_old_kernels &&
-        g_stage_grid) {
+    if ((t == 16 || t == 17 || t == 22 || t == 29 || t == 19) && slots.lanes && !g_old_kernels && g_stage_grid &&
+        slot_lanes_on()) {
         const dim3 g8((unsigned) ((n_out + 4 * kLaneRows - 1) / (4 * kLaneRows)), (unsigned) count);
         const cudaStream_t s = (cudaStream_t) stream;
         switch (t) {
