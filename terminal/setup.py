@@ -3005,10 +3005,6 @@ def offer_together(cfg_path: Path, cfg: dict, yes: bool) -> dict:
     saved in its config)."""
     if isinstance(cfg.get("gpu"), list) or cfg.get("gpus_asked"):
         return cfg
-    # a family whose engine has no layer split (Inkling 2: "Inkling 2 runs on one card") never gets the pair, or
-    # the engine would exit the moment it starts
-    if FAMILIES.get(choices_from_config(cfg_path)["family"], {}).get("one_card"):
-        return cfg
     found = gpus()
     can = together_ok(found)
     if not can:
