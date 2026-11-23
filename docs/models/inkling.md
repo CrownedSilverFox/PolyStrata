@@ -79,17 +79,22 @@ each matrix than the other experts' int8 products do, so it is opt-in until more
 
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
-gives Inkling 2 Mini four settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
-matrices in 5 bits instead of 8), `--loop-bf16` (the loop controllers in BF16 instead of F32), `--tail-skip 4` and
-`--expert-swaps 0`. A card that holds the whole model gets none of them. The fastest of three runs of the README's
-benchmark:
+gives Inkling 2 Mini three settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
+matrices in 5 bits instead of 8), `--loop-bf16` (the loop controllers in BF16 instead of F32) and `--tail-skip 4`.
+A card that holds the whole model gets none of them. Expert swaps stay on: with `--expert-swaps 0` the experts the
+card holds stay the ones it loaded, fewer of a token's experts are found there, and the CPU computes more of them
+(16-23% slower writing after a 302-token prompt on an RTX 4060 Ti 16 GB, a Quadro RTX 4000 8 GB and an RTX 2070
+Super 8 GB, about the same after 8,192). On the laptop, the fastest of three runs, 256 tokens written each; the last
+column is how often the most likely token is the same as without the settings, written after their greedy answer to
+the 4,526-token prompt:
 
-| UD-Q3_K_XL | Writes in a short chat | Reads a 30,902-token prompt | Writes after it |
+| UD-Q3_K_XL | Writes after a 25-token prompt | Writes after a 4,526-token prompt | Same most likely token |
 | --- | ---: | ---: | ---: |
-| Setup's settings | 56 tokens/s | 887 tokens/s | 42 tokens/s |
+| None of the settings | 37.8 tokens/s | 41.8 tokens/s | 99.6% (run again) |
+| Setup's three settings | 47.7 tokens/s | 50.0 tokens/s | 98.0% |
+| The three and `--expert-swaps 0` | 53.6 tokens/s | 52.7 tokens/s | 95.7% |
 
-Written after the greedy answers without them to five prompts of 19 to 5,761 tokens, 256 tokens each, setup's
-settings give the same most likely token at 96.7% of the steps; a second run without them gives 98.3%.
+On the laptop `--expert-swaps 0` writes faster, but it moves the answers more, so setup leaves it out.
 
 A prompt is read a group of calls at a time through each layer run, so the experts that are not on the card cross
 the bus once for the group instead of once for every call and every pass of the looped layers.
