@@ -208,8 +208,13 @@ or `terminal/run-<model>.sh` start the model directly. The options are the same 
 `--model Q2_0 --yes`, `--gguf-dir /data/Q2_0`). Terminal chat: `terminal/.venv/bin/python terminal/tools/chat.py`. Building from git and trying a pull
 request: [SOURCE_INSTALL.md](SOURCE_INSTALL.md#build-from-git-on-linux-to-try-a-pull-request-or-change-the-code).
 
-- **Updating:** `./setup.sh --update` (it runs `git pull` first), or `git pull` and then `./setup.sh`. It compiles the
-  engine again when its source changed. If the compile fails, it says so and starts the engine you had.
+- **Ready-made engine:** on an x86-64 PC with an NVIDIA card, setup downloads the release's Linux engine (strata-poly and
+  the picture reader, CUDA 13) with NVIDIA's CUDA libraries from pip, as on Windows. It needs glibc 2.34 and GCC 12's
+  libstdc++ or newer (Ubuntu 22.04, Debian 12 and later). When the release has none for your checkout's source or
+  card, or it does not start on your system, setup compiles the engine instead (`--build` always compiles).
+- **Updating:** `./setup.sh --update` (it runs `git pull` first), or `git pull` and then `./setup.sh`. When the engine's
+  source changed it takes the release's ready-made engine of that source, or compiles it when there is none. If the
+  compile fails, it says so and starts the engine you had.
 - **Other distributions** (Arch, Fedora and others): install the C++ compiler and the CUDA Toolkit 13 with your package
   manager first (Arch: `sudo pacman -S base-devel cuda`). Setup finds `nvcc` on `PATH`, in `/usr/local/cuda*` and in
   `/opt/cuda*`.

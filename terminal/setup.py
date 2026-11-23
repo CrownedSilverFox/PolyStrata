@@ -1389,8 +1389,9 @@ VISION = {"gpu": {"max_tokens": 1024, "reserve_mib": 700},
 EXE = "strata.exe" if WIN else "strata"
 VEXE = "strata-vision.exe" if WIN else "strata-vision"
 # The engine of GLM 5.3 Flash and of the models that are read from one GGUF (docs/BACKENDS.md), in a folder of its
-# own like the CUDA 12 engine's, so the ready-made engine beside it stays as it was downloaded.  On Windows it comes
-# ready-made when the latest release was built from this checkout's engine source, and is compiled here otherwise.
+# own like the CUDA 12 engine's, so the ready-made engine beside it stays as it was downloaded.  On Windows and x86-64
+# Linux it comes ready-made when the latest release was built from this checkout's engine source, and is compiled here
+# otherwise.
 # It was called strata-glm, after its first model, and an install from then has that name and folder in its run
 # config (poly_config(), update_poly_engine()).
 POLY_EXE = "strata-poly.exe" if WIN else "strata-poly"
@@ -1399,7 +1400,9 @@ POLY_EXE = "strata-poly.exe" if WIN else "strata-poly"
 # another folder, a local one too.
 POLY_PREBUILT_URL = os.environ.get("STRATA_POLY_PREBUILT_URL",
                                    "https://github.com/simplexai-labs/PolyStrata/releases/latest/download/")
-POLY_ASSET = "strata-poly-windows-x64-{src}.zip"
+# Linux (#181): the tarball the release makes on Linux (strata-poly and strata-vision with CUDA 13.0 for the same cards;
+# glibc 2.34 and GCC 12's libstdc++ or newer), its <src> the source_hash() a Linux checkout computes
+POLY_ASSET = "strata-poly-windows-x64-{src}.zip" if WIN else "strata-poly-linux-x64-cuda13-{src}.tar.gz"
 # A model of strata-poly that reads pictures has its image encoder on the GPU from this much VRAM (GiB), and on the
 # CPU below it: the encoder holds 1.6 to 2.4 GB there, which a smaller card needs for the model
 POLY_VISION_GPU_GB = 15.5
@@ -10187,11 +10190,29 @@ def poly_asset() -> str:
     return POLY_ASSET.format(src=source_hash(ENGINE_SOURCES + VISION_SOURCES))
 
 
+def poly_will_not_start(folder: Path) -> str:
+    """#181: "" when the ready-made Linux strata-poly and strata-vision in `folder` start here with pip's CUDA 13
+    libraries, else what the dynamic loader said (glibc older than 2.34, a libstdc++ older than GCC 12's, a library
+    that is not there).  strata-poly --help prints its usage and exits 2, strata-vision --version exits 0; neither
+    touches the GPU."""
+    lib = os.pathsep.join([*cuda_lib_dirs(13), os.environ.get("LD_LIBRARY_PATH", "")]).rstrip(os.pathsep)
+    for exe, flag in ((POLY_EXE, "--help"), (VEXE, "--version")):
+        try:
+            r = subprocess.run([str(folder / exe), flag], capture_output=True, text=True, errors="replace",
+                               env={**os.environ, "LD_LIBRARY_PATH": lib}, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"{exe}: {e}"
+        if r.returncode not in (0, 2):
+            return " ".join(r.stderr.split())[-300:] or f"{exe} ended with status {r.returncode}"
+    return ""
+
+
 def get_poly_prebuilt(gpu) -> bool:
     """The ready-made strata-poly and image encoder of this checkout's source in engine-poly/, with NVIDIA's CUDA 13
-    libraries from pip.  False when the release has none for this source or this GPU, off Windows, with a driver
-    older than CUDA 13's or a CPU without AVX2.  An engine already there for this source and GPU is kept, ready-made
-    or compiled, unless it was compiled with CUDA 12."""
+    libraries from pip: on Windows the release's zip, on x86-64 Linux its tarball (#181).  False when the release has
+    none for this source or this GPU, on another system, with a driver older than CUDA 13's, a CPU without AVX2, or a
+    Linux the tarball's programs do not start on.  An engine already there for this source and GPU is kept,
+    ready-made or compiled, unless it was compiled with CUDA 12."""
     eng = ROOT / ENGINE_POLY_DIR
     stamp = eng / "BUILD.json"
     meta = json.loads(stamp.read_text()) if stamp.exists() else {}
@@ -10201,7 +10222,8 @@ def get_poly_prebuilt(gpu) -> bool:
     if meta.get("src") == src and (eng / POLY_EXE).exists() and cards <= {int(x) for x in meta.get("archs", [])} \
             and (meta.get("source") != "release" or meta.get("vision_src") == vsrc) and meta.get("toolkit", 13) == 13:
         return True
-    if not WIN or not POLY_PREBUILT_URL or driver_major(gpu) < MIN_DRIVER or cpu_floor(cpu_info()[1]):
+    linux_x64 = sys.platform.startswith("linux") and not is_arm64()
+    if not (WIN or linux_x64) or not POLY_PREBUILT_URL or driver_major(gpu) < MIN_DRIVER or cpu_floor(cpu_info()[1]):
         return False
     base = POLY_PREBUILT_URL if POLY_PREBUILT_URL.endswith(("/", "\\")) else POLY_PREBUILT_URL + "/"
     asset = poly_asset()
@@ -10227,8 +10249,13 @@ def get_poly_prebuilt(gpu) -> bool:
     tmp = eng / "_unpack"
     shutil.rmtree(tmp, ignore_errors=True)
     try:
-        with zipfile.ZipFile(z) as f:
-            f.extractall(tmp)
+        if WIN:
+            with zipfile.ZipFile(z) as f:
+                f.extractall(tmp)
+        else:                                          # the Linux tarball keeps the programs' execute bits
+            import tarfile
+            with tarfile.open(z) as f:
+                f.extractall(tmp, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
     finally:
         drop_archive(z)
     new = json.loads((tmp / "BUILD.json").read_text(encoding="utf-8"))
@@ -10239,6 +10266,11 @@ def get_poly_prebuilt(gpu) -> bool:
         shutil.rmtree(tmp, ignore_errors=True)
         return False
     pip_cuda_libs(13)                                  # before the engine there is replaced, should pip fail
+    why = "" if WIN else poly_will_not_start(tmp)
+    if why:
+        warn(f"the ready-made strata-poly does not start on this Linux ({why}): it is compiled here instead")
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False
     for p in tmp.iterdir():
         p.replace(eng / p.name)
     shutil.rmtree(tmp, ignore_errors=True)
@@ -10466,7 +10498,7 @@ def update_poly_engine(cfg: dict, yes=False, cfg_path: Path | None = None) -> No
             # one compiled here (--build, a CPU without AVX2) stays so
             if meta.get("source") == "release" and not get_poly_prebuilt(gpu) and fits:
                 warn("the latest release has no ready-made strata-poly of this source: the one installed starts "
-                     "(START-HERE.bat --setup --build compiles this source)")
+                     f"({'START-HERE.bat' if WIN else './setup.sh'} --setup --build compiles this source)")
                 return
             build_engine_poly(gpu, yes, get_llama_cpp(), vision, int(meta.get("toolkit", 13)),
                               bool(meta.get("portable")))
