@@ -103,7 +103,7 @@ void* random_q8_1(int n_in, int rows, cudaStream_t st) {
     for (float& v : h) v = nd(rng);
     float* x = up(h);
     void* q;
-    ck(cudaMalloc(&q, k::native_q8_1_bytes(n_in, rows)), "malloc");
+    ck(cudaMalloc(&q, k::native_q8_1_bytes(n_in) * rows), "malloc");   // (native_q8_1_bytes takes at most 8 columns)
     k::native_quantize_q8_1(x, q, n_in, rows, st);
     ck(cudaStreamSynchronize(st), "quantize");
     cudaFree(x);
@@ -232,6 +232,7 @@ void bench() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);   // the lines so far survive an abort
     int nd = 0;
     if (cudaGetDeviceCount(&nd) != cudaSuccess || nd == 0) {
         std::printf("no CUDA card: skipped\n");
