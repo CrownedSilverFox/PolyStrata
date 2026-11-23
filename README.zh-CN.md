@@ -194,7 +194,9 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 > 窗口里会显示 PolyStrata 正在做什么。
 
 **下次使用时**，再运行一次 `START-HERE.bat`（或 `./setup.sh`）。它会马上启动，已下载的东西不会重复下载。关闭它的窗口就能停止模型。
-`UPDATE.bat`（`./setup.sh --update`）只更新 PolyStrata，不启动。更新、多张显卡、文件存放位置以及所有选项：
+`UPDATE.bat`（`./setup.sh --update`）只更新 PolyStrata，不启动。
+从 0.1.45-poly.10 或更早版本更新的：setup 的文件已移到 `terminal/`（[要改什么](docs/INSTALL.md#coming-from-0145-poly10-or-older)）。
+更新、多张显卡、文件存放位置以及所有选项：
 [docs/INSTALL.md](docs/INSTALL.md)。
 
 **想知道在你电脑上快不快？** 运行 `tools/BENCH.bat`（`tools/bench.sh`）：大约 5 到 10 分钟，用你自己的设置测聊天、4K/16K 提示和一段代理式会话，并写出一份可以分享的报告（[怎么做](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)）。

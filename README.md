@@ -229,6 +229,7 @@ All fourteen are in the installer's list of models. `./setup.sh --family glm`, `
 
 **Next time**, run `START-HERE.bat` (or `./setup.sh`) again. It starts right away and downloads nothing twice. Close
 its window to stop the model. `UPDATE.bat` (`./setup.sh --update`) updates PolyStrata without starting it.
+Coming from 0.1.45-poly.10 or older: setup's files moved into `terminal/` ([what to change](docs/INSTALL.md#coming-from-0145-poly10-or-older)).
 Updating, several cards, where the files go and every option: [docs/INSTALL.md](docs/INSTALL.md).
 
 **Is it fast on your PC?** Run `tools/BENCH.bat` (`tools/bench.sh`): about 5-10 minutes, it measures chat, 4K/16K prompts and an agent-style session with your own settings and writes a report to share ([how](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)).

@@ -225,6 +225,7 @@ Os catorze estão na lista de modelos do instalador. `./setup.sh --family glm`, 
 
 **Da próxima vez**, rode `START-HERE.bat` (ou `./setup.sh`) de novo. Ele inicia na hora e não baixa nada duas
 vezes. Feche a janela para parar o modelo. `UPDATE.bat` (`./setup.sh --update`) atualiza o PolyStrata sem iniciá-lo.
+Vindo do 0.1.45-poly.10 ou anterior: os arquivos do setup agora ficam em `terminal/` ([o que mudar](docs/INSTALL.md#coming-from-0145-poly10-or-older)).
 Atualização, várias placas, onde ficam os arquivos e todas as opções: [docs/INSTALL.md](docs/INSTALL.md).
 
 **É rápido no seu PC?** Rode `tools/BENCH.bat` (`tools/bench.sh`): uns 5-10 minutos; ele mede o chat, prompts de 4K/16K e uma sessão no estilo agente com as suas próprias configurações e escreve um relatório para compartilhar ([como](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)).

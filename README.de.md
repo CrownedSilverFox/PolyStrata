@@ -231,7 +231,9 @@ Alle vierzehn stehen in der Modellliste des Installers. `./setup.sh --family glm
 
 **Beim nächsten Mal** startest du wieder `START-HERE.bat` (oder `./setup.sh`). Es startet sofort und lädt nichts
 doppelt herunter. Schließ das Fenster, um das Modell zu stoppen. `UPDATE.bat` (`./setup.sh --update`) aktualisiert
-PolyStrata, ohne es zu starten. Updates, mehrere Karten, wo die Dateien landen und alle Optionen:
+PolyStrata, ohne es zu starten.
+Kommst du von 0.1.45-poly.10 oder älter: Die Dateien von setup liegen jetzt in `terminal/` ([was du ändern musst](docs/INSTALL.md#coming-from-0145-poly10-or-older)).
+Updates, mehrere Karten, wo die Dateien landen und alle Optionen:
 [docs/INSTALL.md](docs/INSTALL.md).
 
 **Läuft es auf deinem PC schnell?** Starte `tools/BENCH.bat` (`tools/bench.sh`): etwa 5-10 Minuten; es misst Chat, 4K/16K-Prompts und eine Sitzung im Agenten-Stil mit deinen eigenen Einstellungen und schreibt einen Bericht zum Teilen ([wie](docs/COMMUNITY_BENCHMARKS.md#run-the-benchmark)).
