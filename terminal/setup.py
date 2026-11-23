@@ -930,8 +930,8 @@ FAMILIES = {
     # Inkling 2 Mini (llama.cpp's inkling2_loop): 24 layers of weights run as 48, the middle twelve three times, so a
     # context token is the rows of the eight full-attention applications ("row_bytes"); the forty window ones keep
     # rings.  The files are the repository's Mainline_Support ones, the layout llama.cpp runs: the repository names them
-    # .gguf_file ("remote_suffix") and its top-level files are another layout (architecture inkling2), which the
-    # engine refuses.  The engine keeps one sequence's state for it, so it answers one
+    # .gguf_file ("remote_suffix").  Its top-level files are Unsloth's layout (architecture inkling2), which the
+    # engine also reads: a --gguf-dir file of either is taken.  The engine keeps one sequence's state for it, so it answers one
     # request at a time ("one_request": setup writes "parallel": 1).  "vram_beside_gb" is the peak VRAM measured on an RTX 5090 with no expert on the card, a 10,081-token
     # prompt read 1,024 tokens at a time at a 32K context (2,916 MiB), plus the rows of the context's other tokens.
     "inkling": {"title": "Inkling 2 Mini", "by": "Thinking Machines; quantized by Unsloth",
@@ -4385,7 +4385,7 @@ def sha256_matches(s: Path, size: int, sha: str) -> bool:
 # code by; the families not listed are qwen35moe
 POLY_GGUF_ARCHS = {"glm": ("glm5-next", "glm5next"), "deepseek": ("deepseek4",), "lfm25": ("lfm2moe",),
                    "gemma4": ("gemma4",), "flint": ("flint",), "kolibri": ("kolibri1",), "clover": ("clover_moe",),
-                   "inkling": ("inkling2_loop",)}
+                   "inkling": ("inkling2_loop", "inkling2")}
 
 
 def gguf_arch(s: Path) -> str:

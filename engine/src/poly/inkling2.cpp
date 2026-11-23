@@ -24,7 +24,75 @@ namespace {
 constexpr size_t kScoreFloats = size_t(16) << 20;   // the attention's scores of the tokens it takes at a time
 const char* const kCtrlName[] = {"q", "k", "v", "ffn"};
 
+// Unsloth's top-level files (architecture "inkling2": unsloth/Inkling-2-Mini-GGUF outside its Mainline_Support folder)
+// name the loop's parts otherwise.  Byte for byte against the inkling2_loop files of the same weights: attn = q,
+// mlp = ffn, and the loop's keys are num_loops, loop.core_start and loop.core_end.
+const Names kUnslothTensors[] = {
+    {"loop_q_ctrl_down.weight", {"loop_attn_down.weight", nullptr}},
+    {"loop_q_ctrl_gain.weight", {"loop_attn_gain.weight", nullptr}},
+    {"loop_q_ctrl_forget.weight", {"loop_attn_forget.weight", nullptr}},
+    {"loop_k_ctrl_down.weight", {"loop_k_down.weight", nullptr}},
+    {"loop_k_ctrl_gain.weight", {"loop_k_gain.weight", nullptr}},
+    {"loop_k_ctrl_forget.weight", {"loop_k_forget.weight", nullptr}},
+    {"loop_v_ctrl_down.weight", {"loop_v_down.weight", nullptr}},
+    {"loop_v_ctrl_gain.weight", {"loop_v_gain.weight", nullptr}},
+    {"loop_v_ctrl_forget.weight", {"loop_v_forget.weight", nullptr}},
+    {"loop_ffn_ctrl_down.weight", {"loop_mlp_down.weight", nullptr}},
+    {"loop_ffn_ctrl_gain.weight", {"loop_mlp_gain.weight", nullptr}},
+    {"loop_ffn_ctrl_forget.weight", {"loop_mlp_forget.weight", nullptr}},
+};
+const Names kUnslothKeys[] = {
+    {"loop.start", {"loop.core_start", nullptr}},
+    {"loop.end", {"loop.core_end", nullptr}},
+    {"loop.count", {"num_loops", nullptr}},
+};
+
 }  // namespace
+
+const Names* Inkling2::tensor_alias(const char* name) const {
+    if (unsloth_)
+        for (const Names& n : kUnslothTensors)
+            if (std::strcmp(n.name, name) == 0) return &n;
+    return nullptr;
+}
+
+const Names* Inkling2::meta_alias(const char* key) const {
+    if (unsloth_)
+        for (const Names& n : kUnslothKeys)
+            if (std::strcmp(n.name, key) == 0) return &n;
+    return nullptr;
+}
+
+// A core layer's message queries, [n_embd, 4] for Q, K, V and the FFN.  An inkling2_loop file has them as the layer's
+// loop_msg_query; an Unsloth file has two tensors of the model, [n_embd, 2 * core] each: rows 2i and 2i + 1 of
+// loop_res_query are core layer start + i's Q and FFN queries, rows 2i and 2i + 1 of loop_kv_res_query its K and V
+// ones.  The four rows go to the dense arena as upload() puts a tensor there, counted on the first pass of the load.
+Dev Inkling2::msg_query(int il) {
+    const int64_t e = n_embd_;
+    if (!unsloth_) return upload(tensor(il, "loop_msg_query.weight"), blk(il, "loop_msg_query.weight"), e, kCtrl, kF32);
+    const TensorInfo* rq = gg_->find("loop_res_query.weight");
+    const TensorInfo* kq = gg_->find("loop_kv_res_query.weight");
+    const int64_t rows = 2 * (int64_t) (core_end_ - core_start_);
+    for (const TensorInfo* t : {rq, kq})
+        if (!t || t->type != kTypeF32 || t->shape.size() != 2 || (int64_t) t->shape[0] != e ||
+            (int64_t) t->shape[1] != rows)
+            throw std::runtime_error(std::string(t ? t->name + " is " + shape_of(*t) : "loop_res_query.weight or "
+                                                 "loop_kv_res_query.weight is missing") +
+                                     ", expected F32 [" + std::to_string(e) + ", " + std::to_string(rows) + "]");
+    const size_t bytes = (size_t) kCtrl * (size_t) e * sizeof(float);
+    const Dev d{dense_ ? dense_ + dense_at_ : nullptr, kTypeF32, (int) e, kCtrl};
+    dense_at_ += pad(bytes) + kTail;
+    if (!dense_) return d;
+    if (dense_at_ > dense_bytes_) throw std::logic_error("the dense arena is too small for " + blk(il, "loop_msg_query"));
+    const float* r = (const float*) home(*rq).data(*rq);
+    const float* k = (const float*) home(*kq).data(*kq);
+    const size_t i = (size_t) (il - core_start_), row = (size_t) e;
+    const float* from[kCtrl] = {r + 2 * i * row, k + 2 * i * row, k + (2 * i + 1) * row, r + (2 * i + 1) * row};
+    std::vector<float> q((size_t) kCtrl * row);
+    for (int c = 0; c < kCtrl; ++c) std::memcpy(q.data() + (size_t) c * row, from[c], row * sizeof(float));
+    h2d(d.p, q.data(), bytes);
+    return d;
+}
 
 void Inkling2::begin_pass() {
     blocks_.assign(layers_.size(), Block{});
@@ -43,7 +111,17 @@ void Inkling2::load_geometry() {
     need(opt_.batch == 0, "Inkling 2 runs one sequence (--batch is not supported for it yet)");
     need(opt_.layer_split.empty(), "Inkling 2 runs on one card (--layer-split is not supported for it yet)");
     need(opt_.kv_format == KvFmt::kFp16 || opt_.kv_format == KvFmt::kFp8, "Inkling 2's attention caches are fp16 or fp8");
+    unsloth_ = gg_->get("general.architecture")->s == "inkling2";
     load_shape();
+    if (unsloth_) {
+        // block_count counts the applications (48), the layers before the core, the core's passes and the layers
+        // after it; the file has tensors for the 24 layers of weights
+        const int passes = shape_i("loop.count"), core = shape_i("loop.end") - shape_i("loop.start");
+        need(passes >= 2 && core > 0 && n_layer_ > (passes - 1) * core, "bad loop");
+        n_layer_ -= (passes - 1) * core;
+        need(tensor(n_layer_ - 1, "ffn_norm.weight") && !tensor(n_layer_, "ffn_norm.weight"),
+             "an inkling2 file's layers are not block_count less the core's later passes");
+    }
     auto find = [&](const char* key) { return meta_in(*gg_, key); };
     auto first_u = [&](const char* key) {   // a number, or a list's first where every layer has the same
         const MetaValue* v = find(key);
@@ -152,7 +230,21 @@ void Inkling2::load_geometry() {
         for (int p = 0; p < (il >= core_start_ && il < core_end_ ? n_pass_ : 1); ++p)
             slots_[(size_t) slot_of(il, p)].il = il;
     swa_.assign((size_t) n_layer_, false);
-    for (int il = 0; il < n_layer_; ++il) swa_[(size_t) il] = pattern->items[(size_t) il].u != 0;
+    // an Unsloth file lists the applications (48 for Inkling 2 Mini), so a layer's value is its first application's;
+    // index il there would be right only while the pattern's period divides the loop's length
+    for (int il = 0; il < n_layer_; ++il) {
+        const size_t v = unsloth_ ? (size_t) visit_of(il, 0) : (size_t) il;
+        need(v < pattern->items.size(), "attention.sliding_window_pattern has no value for every layer");
+        swa_[(size_t) il] = pattern->items[v].u != 0;
+    }
+    // and every other application must be its layer's
+    if (unsloth_)
+        for (int il = 0; il < n_layer_; ++il)
+            for (int p = 0; p < (il >= core_start_ && il < core_end_ ? n_pass_ : 1); ++p) {
+                const size_t v = (size_t) visit_of(il, p);
+                need(v < pattern->items.size() && (pattern->items[v].u != 0) == swa_[(size_t) il],
+                     "attention.sliding_window_pattern differs between a layer's applications");
+            }
     if (!opt_.draft_model.empty()) ds_open();
     if (opt_.window == 0) opt_.window = ds_file_ ? ds_block_ : 1;
 }
@@ -540,7 +632,7 @@ void Inkling2::load_layer(int il) {
     B.ffn_query = f32("ffn_res_query.weight", e);
     B.ffn_norm = f32("ffn_norm.weight", e);
     if (il >= core_start_ && il < core_end_) {
-        B.msg_query = f32("loop_msg_query.weight", e, kCtrl);
+        B.msg_query = msg_query(il);
         // a `fix` takes upload() past the file's F32 to the matrices' BF16
         auto ctl = [&](const std::string& n, int64_t a, int64_t b) {
             return ctrl_bf16_ ? upload(tensor(il, n.c_str()), blk(il, n.c_str()), a, b, kFloatMat,
