@@ -37,7 +37,7 @@ answers, no questions), --setup (install another model / change settings instead
 --models-dir DIR, --gguf-dir DIR (use GGUF files you already have), --build (compile instead of the ready-made
 engine), --max-compatibility (with --build on Windows: an engine that also runs on other PCs), --check (only check
 this PC), --resident-budget-gib N (UD-Q4_K_XL's or UD-IQ4_XS's experts in RAM),
---kv-streaming on|off|auto.
+--kv-streaming on|off|auto, --inkling-small-card on|off.
 
 Setup recommends, it never forces: the recommended answers are the defaults (--yes, or Enter), and a bigger choice
 than it recommends - a longer context, more GPUs, a bigger RAM budget, a size it thinks will not fit - is kept, with
@@ -882,7 +882,7 @@ FAMILIES = {
     # for the family whose answers it moves no more than the Strata project's default moves its own (docs/BACKENDS.md).
     # "small_card_args": engine flags for a card that does not hold every expert of the size (poly_held_gb()), where a
     # token is bound by the bytes it reads from VRAM and by the experts the CPU computes; a card that holds them all
-    # runs as before.
+    # runs as before.  --inkling-small-card off leaves them out, and a later setup run keeps that (poly_small_card()).
     # "laptop_tps": tokens/s written after a prompt that fills each context on the 8 GB laptop, where the family's
     # differ from the others'.
     # "batch_gb": the VRAM the engine's prompt batch takes for a second 1,024 tokens, measured on the RTX 5090; a card
@@ -8278,7 +8278,7 @@ def write_config(path: Path, cfg: dict):
 # then applies the person's options over the generated ones
 SETUP_KEYS = frozenset({"exe", "args", "cwd", "tokenizer", "model_name", "log", "lib_dirs", "port", "backend", "env",
                         "gpu", "gpus_asked", "gpus_by", "layer_split", "host", "api_key", "draft_vocab", "vision", "args_written",
-                        "display_name", "cuda", "ui_budget_work_gib", "shape_title"})
+                        "display_name", "cuda", "ui_budget_work_gib", "shape_title", "small_card"})
 SETUP_ENV = frozenset({"STRATA_HIPBLASLT_TUNING", "STRATA_ROCBLAS_TUNING", "STRATA_RESIDENT_PIN", "STRATA_NO_ARENA_THP", "STRATA_MMQ_KQ", "STRATA_HC_Q8",
                        "STRATA_ROUTE_TAIL_SKIP"}) | frozenset(GFX1103_SWITCHES) | frozenset(GFX1150_SWITCHES)   # the "env" entries setup writes (the gfx1103 switches are setup's too: a re-run refreshes them, they do not linger)
 # 0.1.44 added these three, written for Unsloth's files only (unsloth_default_env).  In any other model's config they are the
@@ -10187,6 +10187,25 @@ def poly_saved_conv(paths) -> int | str | None:
     return None
 
 
+def poly_small_card(a, fam, d, vram, multi, paths) -> str | None:
+    """A family's "small_card_args" on one card that does not hold every expert of the size: "on" (the default) or
+    "off" (the high-accuracy mode: none of them).  --inkling-small-card says it, else the earlier run config of this
+    model (the first of `paths` there is) keeps its "small_card": "off".  None where they do not apply."""
+    if not fam.get("small_card_args") or multi or poly_held_gb(d, vram) >= d["arena_gb"]:
+        return None
+    if getattr(a, "inkling_small_card", None):
+        return a.inkling_small_card
+    for p in paths:
+        if p is None or not p.is_file():
+            continue
+        try:
+            saved = json.loads(p.read_text(encoding="utf-8-sig")).get("small_card")
+        except (OSError, ValueError, AttributeError):
+            continue
+        return "off" if saved == "off" else "on"
+    return "on"
+
+
 def poly_asset() -> str:
     """The ready-made strata-poly's asset for this checkout: the engine and the image encoder are both in it."""
     return POLY_ASSET.format(src=source_hash(ENGINE_SOURCES + VISION_SOURCES))
@@ -10584,6 +10603,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         ("--vision-tokens", not sees and a.vision_tokens is not None),
         ("--kv", a.kv and a.kv != "fp16" and family not in POLY_KV.get(a.kv, ())),
         ("--kv-streaming", a.kv_streaming != "auto" and family not in POLY_KV_STREAMING),
+        ("--inkling-small-card", getattr(a, "inkling_small_card", None) and not fam.get("small_card_args")),
         ("--rope-scaling", a.rope_scaling),
         ("--rope-scale", a.rope_scale is not None), ("--low-ram", a.low_ram != "auto"),
         ("--resident-budget-gib", a.resident_budget_gib is not None),
@@ -10868,10 +10888,15 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
            "that much less)")
     if fam.get("tail_skip"):
         args += ["--tail-skip", str(fam["tail_skip"])]
-    if fam.get("small_card_args") and not multi and poly_held_gb(d, vram) < d["arena_gb"]:
+    small = poly_small_card(a, fam, d, vram, multi,
+                            [cfg_path, adopted if adopted is not None and adopted.name == cfg_path.name else None])
+    if small == "on":
         args += fam["small_card_args"]
         ok(f"this card holds part of {model}'s experts: {' '.join(fam['small_card_args'])} (fewer bytes a token, "
-           "and the answers move a little)")
+           "and the answers move a little; --inkling-small-card off: the high-accuracy mode, without them)")
+    elif small == "off":
+        ok(f"this card holds part of {model}'s experts: high-accuracy mode, without the small-card settings "
+           "(--inkling-small-card off; slower here; --inkling-small-card on puts them back)")
     if kv:
         args += ["--kv", kv]
         ok(f"attention caches stored as {kv} (--kv in the config, docs/Q8_KV.md; --kv fp16 at setup takes it out)")
@@ -10901,6 +10926,8 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
            "model_name": base.lower() if base else f"{fam['name']}-{model.lower()}",
            "display_name": base if base else f"{title} {model}",
            "log": str(ROOT / f"strata-{tag.lower()}.log"), "lib_dirs": lib_dirs, "port": port}
+    if small == "off":
+        cfg["small_card"] = "off"                      # kept by a later setup run (poly_small_card)
     if fam.get("tool_call_recovery"):
         cfg["tool_call_recovery"] = True
         ok("its tool calls are JSON inside the wrapper: they are read with the recovery (tool_call_recovery in the "
@@ -12859,6 +12886,11 @@ def main() -> int:
     ap.add_argument("--kv-streaming", choices=["auto", "on", "off"], default="auto",
                     help="from a 64K context: keep the KV cache in RAM and only the attention's window in VRAM (more "
                          "experts fit on the GPU); auto: when the RAM has room for it")
+    ap.add_argument("--inkling-small-card", choices=["on", "off"],
+                    help="Inkling 2 Mini on a card that does not hold every expert of the size: on = the small-card "
+                         "settings (--attn-requant q5_0 --loop-bf16 --tail-skip 4: faster, the answers move a "
+                         "little; the default); off = the high-accuracy mode, without them. A later setup run keeps "
+                         "off (\"small_card\" in the run config) until --inkling-small-card on")
     ap.add_argument("--backend", choices=["cuda", "hip", "sycl"],
                     help="cuda = NVIDIA (default), hip = AMD RX 7900 / 7800 / 7700 XT, RX 9060 XT / 9070 / AI PRO R9700 on "
                          "Linux or Windows (chosen by itself when the PC has no NVIDIA card PolyStrata can use), "
