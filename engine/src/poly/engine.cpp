@@ -8444,7 +8444,11 @@ void Engine::window(const int32_t* tokens, int t) {
     // experts with the card's layer, and there is little of the CPU's left to overlap, while each half reads the
     // layer's weights again and guesses ahead for fewer tokens.  At 6 GB the tokens together wrote 181 tokens/s
     // where the timed choice wrote 172 (12 GB: 275 and 252), four runs each.
-    if (timed && !freeze_experts_) halves_ = ahead_slots_ == 0 && pick_way(t);
+    //
+    // The halves go through the layers one after the other in order, each at its own rows of r_ (run()), so not
+    // where the layers keep rows of their own or do not run in order (reads_by_layer()): Inkling 2's looped core
+    // ran once a token in halves, and its answers lost words.
+    if (timed && !freeze_experts_) halves_ = ahead_slots_ == 0 && reads_by_layer() && pick_way(t);
     const Clock::time_point t0 = Clock::now();
     windowed_ = true;
     snap_bits_ = snap_tokens(t);
