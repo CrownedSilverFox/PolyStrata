@@ -78,12 +78,13 @@ class Table(unittest.TestCase):
         self.assertNotIn("hy4-flash", setup.FAMILIES)
         self.assertNotIn("hy4-flash", setup.OWN_PATH_FAMILIES)
 
-    def test_an_8_gib_card_with_64_gib_is_offered_sq_64_with_ssd_reads_at_128k(self):
-        # HY4-CUDA: SQ-64 (56 GB of experts) + the 5.7 GB of host KV do not fit the 58 GB usable of a 64 GiB PC: about 3.0 GB are read from the SSD.  There is no SQ-32 any more
-        # (owner, 2026-11-20): SQ-64 stays the recommendation, still at 128K, with the "may run slower" words; Hy4-Flash is not hidden
+    def test_an_8_gib_card_with_64_gib_is_offered_sq_64_at_128k(self):
+        # The Strata project's 0.2.20 planner (4 tiers) fits SQ-64 on an 8 GiB card with 64 GiB at 128K in memory: 1.44 GB of experts in VRAM,
+        # 54.6 GB in RAM, none from the SSD (0.2.19 read about 3.0 GB from the SSD there).  There is no SQ-32 any more (owner, 2026-11-20):
+        # SQ-64 stays the recommendation; Hy4-Flash is not hidden
         lines = dict(setup.hy4_menu_lines(8, 64, False, 131072, True))
         self.assertEqual([b for b, t in setup.hy4_menu_lines(8, 64, False, 131072, True) if "(recommended)" in t], ["SQ-64"])
-        self.assertIn("a few experts are read from the SSD", lines["SQ-64"])
+        self.assertIn("fits in memory", lines["SQ-64"])
         self.assertNotIn("SQ-32", lines)
         self.assertEqual([b for b, t in setup.hy4_menu_lines(12, 64, False, 131072, True) if "(recommended)" in t], ["SQ-64"])
 
@@ -405,8 +406,8 @@ class Defaults0218(unittest.TestCase):
         self.assertEqual(cfg["drafting"], "dfly2")
         self.assertEqual(cfg["arch"], "hy4flash")
         self.assertEqual(cfg["exe"], "component:strata-hy4")
-        self.assertEqual(args[args.index("--vram-experts-gb") + 1], "2.50")               # 12 GiB at 128K (v0.2.18 Vt-free MLA + 0.03 GB wkv scratch): full KV stays on card, leaving 2.50 GB for VRAM experts
-        self.assertEqual(args[args.index("--ram-experts-gb") + 1], "53.54")
+        self.assertEqual(args[args.index("--vram-experts-gb") + 1], "5.22")               # 12 GiB at 128K (the 0.2.20 planner): 5.22 GB of experts in VRAM
+        self.assertEqual(args[args.index("--ram-experts-gb") + 1], "50.82")
         self.assertTrue(any(l.startswith("images: on") for l in lines), lines)
 
     def test_vision_no_leaves_the_shard_and_the_option_out(self):
@@ -426,8 +427,8 @@ class Defaults0218(unittest.TestCase):
     def test_the_planned_placement_on_an_8_gib_card_is_written_at_128k(self):
         cfg, _lines, _ = self.install(vram=8.0)                                          # the engine lanes deal with a cache that does not fit the card
         args = cfg["args"]
-        self.assertEqual(args[args.index("--vram-experts-gb") + 1], "0.01")
-        self.assertEqual(args[args.index("--ram-experts-gb") + 1], "54.59")        # 8 GiB + 64 GiB, SQ-64: ~1.44 GB of its experts are read from the SSD (the planner recommends SQ-64 there: there is no SQ-32)
+        self.assertEqual(args[args.index("--vram-experts-gb") + 1], "1.44")
+        self.assertEqual(args[args.index("--ram-experts-gb") + 1], "54.60")        # 8 GiB + 64 GiB, SQ-64: the 0.2.20 planner holds all of it in VRAM and RAM (there is no SQ-32)
 
 
 class Catalog(unittest.TestCase):
@@ -454,7 +455,7 @@ class Catalog(unittest.TestCase):
         self.assertTrue(by["SQ-64"]["images"])
         self.assertEqual({k: by[k]["on_this_pc"] for k in by}, {"SQ-64": "fits", "SQ-96": "may run slower", "SQ-128": "may run slower"})
         self.assertEqual([k for k in by if by[k]["hy4"]["recommended"]], ["SQ-64"])
-        self.assertEqual(by["SQ-64"]["hy4"]["placement"], {"vram_gb": 2.5, "ram_gb": 53.54, "ssd_gb": 0.0})             # at 128K on 12 GiB (v0.2.18 Vt-free MLA) full KV + 2.50 GB experts fit VRAM
+        self.assertEqual(by["SQ-64"]["hy4"]["placement"], {"vram_gb": 5.22, "ram_gb": 50.82, "ssd_gb": 0.0})            # at 128K on 12 GiB (the 0.2.20 planner): 5.22 GB of experts in VRAM
         self.assertIsNone(by["SQ-64"]["gpu_options"])
 
     def test_unified_memory(self):
