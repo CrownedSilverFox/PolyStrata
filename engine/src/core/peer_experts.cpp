@@ -46,23 +46,12 @@ struct Meta {                           // one block, uploaded with one copy per
     int32_t out_row[CAP];               // multi-GPU: compact row -> entry row in the host `out`
 };
 
-static thread_local int tl_active_device = 0;
-
-/// Switches the calling thread to `dev` and back without redundant cudaGetDevice queries.
+/// Switches the calling thread to `dev` and back.  It asks the runtime for the thread's device: a thread can be on
+/// any device here (STRATA_PRIMARY_DEVICE puts the engine's own thread on another one).
 struct On {
     int prev = 0;
-    explicit On(int dev) : prev(tl_active_device) {
-        if (tl_active_device != dev) {
-            cudaSetDevice(dev);
-            tl_active_device = dev;
-        }
-    }
-    ~On() {
-        if (tl_active_device != prev) {
-            cudaSetDevice(prev);
-            tl_active_device = prev;
-        }
-    }
+    explicit On(int dev) { cudaGetDevice(&prev); if (prev != dev) cudaSetDevice(dev); }
+    ~On() { int cur = 0; cudaGetDevice(&cur); if (cur != prev) cudaSetDevice(prev); }
 };
 
 /// #2666: `cudaDeviceCanAccessPeer` said yes and `cudaDeviceEnablePeerAccess` succeeded, and on a pair of GPUs behind a host bridge
