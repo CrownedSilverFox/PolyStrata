@@ -14,6 +14,7 @@
 // asks; where it then takes them, its product is also made on the FP16 kernel (the path it had before) and the two
 // are compared.  STRATA_MMQ_TEST_BLOCKS=DIR: a type's weights are the bytes of DIR/<type name>.bin where that file is
 // long enough (whole blocks cut from a model's tensor), in place of ggml's quantization of random weights.
+// With STRATA_PREFILL_NVFP4=w4a8 NVFP4 takes the int8 tiles where the card has them, and is checked as the int8 types are.
 //
 // usage: poly_mmq_paths_test [--turing-int8]   (--turing-int8: the int8 path on Turing too, gemm_iq_i8_turing(); exit 0: every product within 2% RMS of the reference, and an int8 product within
 // 1e-5 RMS of its own numbers; 77: no card)

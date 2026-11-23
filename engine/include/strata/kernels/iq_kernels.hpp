@@ -205,7 +205,7 @@ bool gemm_iq_f16_grouped(int ty, const void* W, size_t expert_bytes, int n_out, 
 /// The same products on the int8 tensor cores, for matrices of any number of rows (src/kernels/cuda/i8_mma.cuh):
 /// the weights decoded to int8 a tile at a time, the activations int8 with a scale per 32 values, FP32 sums.
 /// CUDA, Ampere and newer (Turing with gemm_iq_i8_turing()).  gemm_iq_i8_takes: the current card runs it for K columns of type ty (K a multiple of 256,
-/// or of 32 for a type of 32-value blocks, MXFP4's too; STRATA_PF_I8MMA=0 turns it off).  gemm_iq_i8_quantize: row i of xq = row ids[i] of x (row i without ids), ld
+/// or of 32 for a type of 32-value blocks, MXFP4's too, of 64 for NVFP4; STRATA_PF_I8MMA=0 turns it off).  gemm_iq_i8_quantize: row i of xq = row ids[i] of x (row i without ids), ld
 /// floats a row; xq holds rows * K * 5 / 4 bytes, 16-byte aligned.  gemm_iq_i8_grouped: matrix e (n_out rows,
 /// mat_bytes apart) times rows bounds[e]..bounds[e+1] of an xq of total_rows rows; row i's products go to row ids[i]
 /// of Y (row i without ids).  With `from`, row i is row from[i] of xq.  false: not launched.
