@@ -3,6 +3,7 @@ not think starting in its text block.
 
     python -m unittest serve.test_inkling
 """
+import json
 import sys
 import tempfile
 import threading
@@ -95,6 +96,18 @@ class Blocks(unittest.TestCase):
         evs = read(broken + TEXT, 3, tools=tools)
         self.assertFalse([e for e in evs if e.kind == "tool_call"])
         self.assertEqual(said(evs, "content"), broken[:-len(END)] + "Rome")
+
+    def test_an_escaped_quote_does_not_end_the_string_that_holds_the_tags(self):
+        # PR 211: \" inside the string, then both tags' text, then a second call right after the first
+        tools = [{"name": "python", "parameters": {"properties": {"code": {"type": "string"}}}}]
+        code = 'print("a \\"' + END + '<|message_model|>\\" b\\\\")'
+        call = ('<|message_model|>python<|content_invoke_tool_json|>'
+                + json.dumps({"name": "python", "args": {"code": code}}, ensure_ascii=False) + END)
+        for step in (1, 5, 10_000):
+            with self.subTest(step=step):
+                evs = read(call + call + TEXT + STOP, step, tools=tools)
+                self.assertEqual([e.call.arguments for e in evs if e.kind == "tool_call"], [{"code": code}] * 2)
+                self.assertEqual(said(evs, "content"), "Rome")
 
     def test_a_reply_whose_text_block_the_prompt_opened(self):
         evs = read("Rome" + END + STOP, 3, opened=True)
