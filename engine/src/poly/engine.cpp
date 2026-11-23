@@ -7338,6 +7338,7 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
 }
 
 int32_t Engine::picked(int i) const {
+    if (next_) return next_->picked(i);   // a layer split: the last card's pick, or its logits
     return picks_ ? h_picks_[i].token : most_likely(logits_of(i), n_vocab_);
 }
 

@@ -356,7 +356,11 @@ public:
     int32_t picked(int i) const;
     /// The same for the next eval() of one token with its logits: picked(0) is its most likely token, and logits()
     /// are not copied to the host (Inkling 2's 201,024 scores are 0.8 MB to copy and to search a token).
-    void eval_picks() { eval_picks_ = !next_; }
+    /// On a layer split the last card picks: it has the logits.
+    void eval_picks() {
+        if (next_) next_->eval_picks();
+        else eval_picks_ = true;
+    }
     void keep(int n);
 
     /// Some files carry a block that guesses ahead: one layer that takes a token and the model's output for the
