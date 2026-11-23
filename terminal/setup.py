@@ -10187,11 +10187,13 @@ def poly_saved_conv(paths) -> int | str | None:
     return None
 
 
-def poly_small_card(a, fam, d, vram, multi, paths) -> str | None:
-    """A family's "small_card_args" on one card that does not hold every expert of the size: "on" (the default) or
-    "off" (the high-accuracy mode: none of them).  --inkling-small-card says it, else the earlier run config of this
-    model (the first of `paths` there is) keeps its "small_card": "off".  None where they do not apply."""
-    if not fam.get("small_card_args") or multi or poly_held_gb(d, vram) >= d["arena_gb"]:
+def poly_small_card(a, fam, paths) -> str | None:
+    """A family's "small_card_args": "on" (the default) or "off" (the high-accuracy mode: none of them), as chosen
+    for this model whatever the card: --inkling-small-card says it, else the earlier run config of this model (the
+    first of `paths` there is) keeps its "small_card": "off", so an install moved from a card that holds every expert
+    back to a small one stays off.  None for a family without them.  Whether they are written depends on the card too
+    (poly_setup)."""
+    if not fam.get("small_card_args"):
         return None
     if getattr(a, "inkling_small_card", None):
         return a.inkling_small_card
@@ -10888,13 +10890,13 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
            "that much less)")
     if fam.get("tail_skip"):
         args += ["--tail-skip", str(fam["tail_skip"])]
-    small = poly_small_card(a, fam, d, vram, multi,
-                            [cfg_path, adopted if adopted is not None and adopted.name == cfg_path.name else None])
-    if small == "on":
+    small = poly_small_card(a, fam, [cfg_path, adopted if adopted is not None and adopted.name == cfg_path.name else None])
+    part = small is not None and not multi and poly_held_gb(d, vram) < d["arena_gb"]
+    if part and small == "on":
         args += fam["small_card_args"]
         ok(f"this card holds part of {model}'s experts: {' '.join(fam['small_card_args'])} (fewer bytes a token, "
            "and the answers move a little; --inkling-small-card off: the high-accuracy mode, without them)")
-    elif small == "off":
+    elif part:
         ok(f"this card holds part of {model}'s experts: high-accuracy mode, without the small-card settings "
            "(--inkling-small-card off; slower here; --inkling-small-card on puts them back)")
     if kv:
@@ -10927,7 +10929,7 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
            "display_name": base if base else f"{title} {model}",
            "log": str(ROOT / f"strata-{tag.lower()}.log"), "lib_dirs": lib_dirs, "port": port}
     if small == "off":
-        cfg["small_card"] = "off"                      # kept by a later setup run (poly_small_card)
+        cfg["small_card"] = "off"                      # kept by a later setup run, on any card (poly_small_card)
     if fam.get("tool_call_recovery"):
         cfg["tool_call_recovery"] = True
         ok("its tool calls are JSON inside the wrapper: they are read with the recovery (tool_call_recovery in the "

@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -1858,8 +1859,9 @@ int main(int argc, char** argv) {
         else if (a == "--route-top") o.route_top = std::atoi(val());
         else if (a == "--attn-requant") {
             // off / none: the file's types, so a flag appended to a run config can undo setup's q5_0
-            const std::string t = val();
-            o.attn_requant = (t == "off" || t == "none") ? std::string() : t;
+            std::string t = val(), low = t;
+            for (char& c : low) c = (char) std::tolower((unsigned char) c);
+            o.attn_requant = (low == "off" || low == "none") ? std::string() : t;
         }
         else if (a == "--loop-bf16") o.loop_bf16 = true;
         else if (a == "--no-loop-bf16") o.loop_bf16 = false;

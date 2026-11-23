@@ -122,15 +122,31 @@ class Main(unittest.TestCase):
         self.assert_on(args)
         self.assertIsNone(small)
 
-    def test_small_card_off_on_a_card_that_holds_every_expert(self):
-        # nothing to leave out there: the config is the same as without the option
+    def test_small_card_off_on_a_card_that_holds_every_expert_is_kept(self):
+        # nothing to leave out there, but the choice is written, so the install moved back to an 8 GB card stays off
         code, out, _ = self.main(("--inkling-small-card", "off"), family="inkling", model="UD-Q3_K_XL", ram=64.0,
                                  vram=32607 / 1024)
         self.assertEqual(code, 0, out)
         cfg = json.loads((self.t / self.CFG).read_text())
         for flag in self.SMALL:
             self.assertNotIn(flag, cfg["args"])
-        self.assertNotIn("small_card", cfg)
+        self.assertEqual(cfg["small_card"], "off")
+        code, out, _ = self.main(family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=32607 / 1024)   # again, 32 GB
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((self.t / self.CFG).read_text())["small_card"], "off")
+        args, small, _ = self.small()                                              # then an 8 GB card
+        for flag in self.SMALL:
+            self.assertNotIn(flag, args)
+        self.assertEqual(small, "off")
+
+    def test_small_card_off_with_two_cards(self):
+        # Inkling 2 runs on one of them (an 8 GB card here), so off applies there as on one card
+        code, out, cfg = self.main(("--gpus", "0,1", "--inkling-small-card", "off"), family="inkling",
+                                   model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024, n_gpus=2)
+        self.assertEqual(code, 0, out)
+        for flag in self.SMALL:
+            self.assertNotIn(flag, cfg["args"])
+        self.assertEqual(cfg["small_card"], "off")
 
     def test_small_card_option_of_another_family_is_not_used(self):
         code, out, _ = self.main(("--inkling-small-card", "off"))                 # GLM, the harness's family

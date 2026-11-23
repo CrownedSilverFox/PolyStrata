@@ -111,9 +111,11 @@ On the laptop `--expert-swaps 0` writes faster, but it moves the answers more, s
 
 For answers closer to the model without them (a high-accuracy mode), `./setup.sh --family inkling
 --inkling-small-card off` leaves the three settings out; a later setup run keeps that (`"small_card": "off"` in the
-run config) until `--inkling-small-card on`. An existing run config can also be overridden by adding
-`--attn-requant off --no-loop-bf16 --tail-skip 0` at the end of its arguments (the last of each counts). Writing is
-slower on an 8 GB card this way (see the table above).
+run config, also on a card that holds every expert) until `--inkling-small-card on`. With two cards it applies to the
+one card Inkling 2 runs on. An existing run config can also be overridden by adding
+`--attn-requant off --no-loop-bf16 --tail-skip 0` at the end of its arguments (the last of each flag counts;
+`STRATA_ROUTE_TAIL_SKIP`, the app's "Skip rarely used parts of the model" switch, overrides `--tail-skip`). Writing
+is slower on an 8 GB card this way (see the table above).
 
 ### Setup's four settings, one at a time
 
