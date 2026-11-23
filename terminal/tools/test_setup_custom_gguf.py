@@ -324,6 +324,30 @@ class InklingCustomGgufTests(unittest.TestCase):
         self.assertEqual((family, model), ("inkling", "UD-Q4_K_XL"))
         self.assertEqual(sorted(sizes), ["UD-Q2_K_XL", "UD-Q3_K_XL", "UD-Q4_K_XL"])
 
+    def test_a_name_inside_an_offered_one_is_its_own_size(self):
+        """Q2_K is not UD-Q2_K_XL (its letters are inside that name): a size of its own, from its header."""
+        family, model, sizes, _ = self._resolve("Inkling-2-Mini-Q2_K.gguf", "inkling2_loop", {"Q2_K": 7000000000})
+        self.assertEqual((family, model), ("inkling", "Q2_K"))
+        self.assertAlmostEqual(sizes["Q2_K"]["arena_gb"], 7.0)
+
+    def test_loop_rewrite_keeps_its_quant(self):
+        """A file rewritten to inkling2_loop and named ...UD-Q2_K_XL.loop.gguf is UD-Q2_K_XL."""
+        family, model, sizes, _ = self._resolve("Inkling-2-Mini-UD-Q2_K_XL.loop.gguf", "inkling2_loop",
+                                                {"IQ2_S": 2394095616})
+        self.assertEqual((family, model), ("inkling", "UD-Q2_K_XL"))
+        family, model, sizes, _ = self._resolve("Inkling-2-Mini-UD-IQ3_XXS.loop.gguf", "inkling2_loop", self.IQ4_NL)
+        self.assertEqual(model, "UD-IQ3_XXS")
+
+    def test_inspect_points_to_custom_gguf(self):
+        """--inspect's advice for an Inkling file is --custom-gguf (--gguf-dir takes only the offered sizes' names)."""
+        tools = str(Path(_ROOT) / "tools")
+        if tools not in sys.path:
+            sys.path.insert(0, tools)
+        import strata_inspect
+        kind, sentence = strata_inspect.verdict({"arch": "inkling2_loop"}, {})
+        self.assertEqual(kind, "family")
+        self.assertIn("--custom-gguf", sentence)
+
     def test_top_level_layout_is_taken(self):
         """Unsloth's top-level files (architecture inkling2), which the engine reads too: an offered size by its
         name, another quantization as a size of its own."""

@@ -12224,11 +12224,18 @@ def resolve_custom_gguf(path_str: str) -> tuple[str, str, list[Path]]:
             fail("cannot install this GGUF with --custom-gguf",
                  "use --inspect to read the full explanation, or give it to --gguf-dir")
         # derive the size from the filename's quant token (e.g. "Q4_K_M" in "...-Q4_K_M.gguf")
-        m_q = GGUF_QUANT.search(files[0].name)
-        quant = m_q.group(1) if m_q else Path(SHARD_NAME.sub("", files[0].name)).stem.rsplit("-", 1)[-1]
-        model = next((m for m in models_dict if quant.lower().replace("_", "") in m.replace("_", "").lower()
-                      or m.lower().endswith(quant.lower())), None)
-        if not model and FAMILIES.get(fam, {}).get("custom_sizes"):
+        own_sizes = FAMILIES.get(fam, {}).get("custom_sizes")
+        name = files[0].name
+        if own_sizes:                                  # a rewritten file's ".loop" before ".gguf": the quant is before it
+            name = re.sub(r"\.loop(?=(-\d{5}-of-\d{5})?\.gguf$)", "", name, flags=re.I)
+        m_q = GGUF_QUANT.search(name)
+        quant = m_q.group(1) if m_q else Path(SHARD_NAME.sub("", name)).stem.rsplit("-", 1)[-1]
+        if own_sizes:                                  # the whole name: Q2_K is not UD-Q2_K_XL
+            model = next((m for m in models_dict if m.lower() == quant.lower()), None)
+        else:
+            model = next((m for m in models_dict if quant.lower().replace("_", "") in m.replace("_", "").lower()
+                          or m.lower().endswith(quant.lower())), None)
+        if not model and own_sizes:
             # a quantization setup does not offer (Inkling 2 Mini's IQ4_NL, Q4_K_M, ...): a size of its own, its
             # estimates read from the file's header
             model = quant if m_q else "custom"

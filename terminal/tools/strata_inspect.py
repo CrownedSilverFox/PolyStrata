@@ -121,8 +121,10 @@ def verdict(fp: dict, table: dict) -> tuple[str, str]:
                           "installs it with --family qwen36-strata, and with --family qwen36 on the strata-poly "
                           "engine")
     if fp["arch"] in POLY_ARCHS:
+        how = ("install it with setup's --custom-gguf <file> (a size setup does not offer becomes a size of its own)"
+               if POLY_ARCHS[fp["arch"]] == "Inkling 2 Mini" else "give its folder with --gguf-dir")
         return "family", (f"{POLY_ARCHS[fp['arch']]} (architecture {fp['arch']!r}): PolyStrata runs it on the "
-                          "strata-poly engine; give its folder with --gguf-dir")
+                          f"strata-poly engine; {how}")
     if fp["arch"] != ARCH:
         return "no", f"not Qwen3.8-Flash-Next (architecture {fp['arch']!r}): PolyStrata runs only that model"
     exact = [k for k, v in known.items() if v["expert_bytes"] == fp["expert_bytes"] and v["bytes"] == fp["bytes"]
