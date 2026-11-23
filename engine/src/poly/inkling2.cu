@@ -1150,13 +1150,10 @@ template <int ahead> __device__ __forceinline__ void ink_cp_wait() {
 // only on the tiles a row's diagonal, window edge or end crosses, and leaves its output as it is when no row's top
 // moved.  None of that changes a bit: a tile no row sees would add weights of 0 and scale by 1, and every tile still
 // starts at a multiple of kFlashKeys.
-// INK_FLASH_TOKENS (a build's -D, for measuring only): tokens a launch block; 64, or 32 for 6 warps on 3 heads a key
-// head (12 warps of 384 threads get at most 168 registers each, and ink_flash_kernel<3> spills there).  Any of them
-// gives the same bits.
-#ifndef INK_FLASH_TOKENS
-#define INK_FLASH_TOKENS 64
-#endif
-constexpr int kFlashTokens = INK_FLASH_TOKENS, kFlashKeys = 64, kFlashRow = 128 + 8, kFlashRel = 16;
+// A launch block takes 32 tokens (6 warps on Inkling 2's 3 query heads a key head): with 64 its 12 warps of 384
+// threads get at most 168 registers each and ink_flash_kernel<3> spills.  The block size changes no bit either: a
+// row's tiles and the order of its sums are the same.
+constexpr int kFlashTokens = 32, kFlashKeys = 64, kFlashRow = 128 + 8, kFlashRel = 16;
 constexpr int kFlashSpan = kFlashTokens + kFlashKeys;   // a tile's distances (one more than it spans, for 16 bytes)
 constexpr size_t kFlashKv = size_t(4) * kFlashKeys * kFlashRow * sizeof(__half);
 // the shared memory of ink_flash_kernel<G>: keys and values, the table's columns (G < 4), r
