@@ -34046,6 +34046,41 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_POLY_WARMUP",
+   "backends": [
+    "hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/kernels.cu",
+     "line": 3432,
+     "backend": "hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [
+    "docs/AMD_HIP.md:524"
+   ],
+   "first_commit": null,
+   "first_date": null,
+   "since": null,
+   "last_commit": null,
+   "last_date": null,
+   "status": "rollback",
+   "owner": "poly",
+   "note": "[reviewed] HIP builds: at load, one small product of halves into floats and one of floats, so hipBLASLt loads those kernels before the first prompt (4 s on Windows, RX 9070 XT); on unless =0 (engine/src/poly/kernels.cu:3432, docs/AMD_HIP.md:524)",
+   "retire_after": "",
+   "retired_in": ""
+  },
+  {
    "name": "STRATA_POOL_CORES",
    "backends": [
     "cuda-hip",
