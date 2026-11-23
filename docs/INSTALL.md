@@ -39,7 +39,9 @@ the engine for your GPU (asks first; 20-40 minutes once). More: [details](DETAIL
 3. Answer a few questions - or just press Enter each time for the recommended choice ([the questions](#setups-questions)).
 
 Then it downloads everything (the model is ~70 GB, so the first time takes a while - you can stop and it picks up
-where it left off) and **starts the model**. Your browser opens the PolyStrata app at `http://127.0.0.1:8080`.
+where it left off) and **starts the model**. When it is ready, its API is at `http://127.0.0.1:8080/v1`. If you want an
+app to chat with it, we recommend [Linger](https://github.com/simplexai-labs/linger); any app that speaks the OpenAI or
+Anthropic API works too.
 
 > **While the model starts, your PC can be slow or stop responding for 1-3 minutes** (longest the first time): PolyStrata
 > loads 35-55 GB into your RAM and locks part of it for the graphics card. That's normal - wait, and don't close the
@@ -182,12 +184,9 @@ To go back to 0.1.45-poly.10 or older:
 
 ## Where things are stored
 
-- **Your chats: only in your browser.** The Chat tab keeps the conversation, its settings and the API key you typed
-  in the browser's local storage (`strata.*` keys) - not on the server and not in the PolyStrata folder. Pictures are not
-  kept, only their names. Another browser or a private window starts empty; clearing the site's data deletes them.
 - **How the model starts:** `strata-<model>.json` in the `terminal` folder of PolyStrata (context, GPUs, host, API key,
-  ...), written by setup; next to it `run-<model>.bat` / `.sh`, the log `strata-<model>.log` and, when you use "Use for
-  other apps too", `strata-<model>.shared-settings.json`. Running setup again for the same model (another context, say)
+  ...), written by setup; next to it `run-<model>.bat` / `.sh`, the log `strata-<model>.log` and, when shared settings
+  were saved (`POST /settings`), `strata-<model>.shared-settings.json`. Running setup again for the same model (another context, say)
   rewrites the keys setup writes (`exe`, `args`, `port`, `gpu`, `host`, `api_key`, `vision`, ...) and keeps the
   ones you added (`sampling`, `mcp_servers`, `mcp`, `cors_origins`, ...); the earlier file is kept as
   `strata-<model>.json.bak`. Engine options you added to `"args"` by hand are not carried over: setup names them, and
@@ -240,8 +239,8 @@ START-HERE.bat --port 8081                      another port
 START-HERE.bat --gpu 1                          another GPU, numbered as nvidia-smi does (asked when several can be used)
 START-HERE.bat --gpus 0,2                       several GPUs sharing the model
 START-HERE.bat --vram-reserve-mib 2048          leave 2 GB of VRAM free for other programs (remembered)
-START-HERE.bat --no-browser                     do not open the chat page when the model is ready (remembered;
-                                                --browser undoes it)
+START-HERE.bat --browser                        open the Monitor page in the browser when the model is ready (remembered;
+                                                --no-browser undoes it)
 START-HERE.bat --setup --backend hip            the AMD engine on a PC that also has an NVIDIA card
 START-HERE.bat --setup --host 0.0.0.0 --api-key <secret>     reachable from other devices, with a key
 START-HERE.bat --calibrate                      tune the engine for this PC (about 15-30 minutes, longer on a slow card), then start

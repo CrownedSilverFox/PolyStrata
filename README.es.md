@@ -214,8 +214,9 @@ Te hace unas pocas preguntas:
 
 Pulsa Enter cada vez para usar la respuesta recomendada. Después descarga el modelo (unos 70 GB para
 Qwen3.8-Flash-Next, de 79 a 114 GB para GLM 5.3 Flash, 91 GB para DeepSeek V4 Flash, de 29 a 48 GB para Kolibri 1, de 11 a 42 GB para los otros ocho) y lo arranca. Si la
-descarga se detiene, vuelve a ejecutarlo: sigue donde lo dejó. Tu navegador abre la aplicación de PolyStrata en
-`http://127.0.0.1:8080`.
+descarga se detiene, vuelve a ejecutarlo: sigue donde lo dejó. Cuando el modelo está listo,
+su API está en `http://127.0.0.1:8080/v1`. Si quieres una aplicación para chatear con él, te recomendamos
+[Linger](https://github.com/simplexai-labs/linger). También sirve cualquier aplicación que hable la API de OpenAI o de Anthropic.
 
 Los catorce están en la lista de modelos del instalador. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
 `gemma4`, `tiel`, `minicpmv`, `kolibri`, `groot` o `inkling` va directo a uno ([qué pregunta y qué escribe](docs/GLM.md#install), en inglés).
@@ -257,19 +258,19 @@ Qué es cada tamaño, su descarga, la RAM que necesita junto a otras tarjetas y 
 
 ## Cómo usarlo
 
-Los catorce modelos se usan igual: la misma aplicación, la misma API.
+Los catorce modelos se usan igual, con la misma API.
 
-<p align="center"><img src="docs/media/runpagoda.png" width="900" alt="La pestaña Monitor de la aplicación de PolyStrata junto a un agente de programación"><br>
-<sub>El <b>Monitor</b> de la aplicación de PolyStrata (izquierda) mientras un agente de programación escribe el jardín de la pagoda del vídeo (derecha). Una captura de <a href="https://github.com/Niko1221/Strata">Strata</a>.</sub></p>
+<p align="center"><a href="https://github.com/simplexai-labs/linger"><img src="docs/media/linger-desktop.jpg" width="900" alt="Linger en un Mac: una sala de chat donde los agentes informan de su trabajo, junto a las ventanas de Chrome en las que trabajan"></a><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a>: varios agentes comparten un ordenador y el navegador en el que ya has iniciado sesión. Una imagen del proyecto Linger.</sub></p>
 
-- **En el navegador:** abre `http://127.0.0.1:8080`. Tiene **Chat**, un **Monitor** en vivo del modelo y de tu
-  GPU/CPU/RAM, **Requests**, que abre el [monitor de peticiones de la API](docs/DETAILS.md#api-request-monitor) en una
-  pestaña propia una vez activado, y **About** con los ajustes y las direcciones. Con más de un modelo instalado, la lista
-  de arriba cambia entre ellos; el cambio empieza un chat nuevo, y **Undo** recupera el anterior.
+- **Como tu agente personal:** te recomendamos [Linger](https://github.com/simplexai-labs/linger). Descárgalo para Mac (Apple Silicon), Windows o Linux
+  desde [su última versión](https://github.com/simplexai-labs/linger/releases/latest).
 - **En una terminal:** `python polystrata.py --model <name>` en la carpeta de PolyStrata abre un chat con un modelo
   instalado, y `--list-models` los lista ([más](docs/INSTALL.md#the-terminal)).
-- **Como tu agente personal:** descarga [Linger](https://github.com/simplexai-labs/linger) para [Mac (Apple Silicon)](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-macos-arm64.dmg) ·
-  [Windows](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-windows-x64-setup.exe) · [Linux](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-linux-x64.tar.gz).
+- **En el navegador:** `http://127.0.0.1:8080` tiene un **Monitor** en vivo del modelo y de tu
+  GPU/CPU/RAM, **Requests**, que abre el [monitor de peticiones de la API](docs/DETAILS.md#api-request-monitor) en una
+  pestaña propia una vez activado, y **About** con los ajustes y las direcciones. Con más de un modelo instalado, la lista
+  de arriba cambia entre ellos.
 - **Tus aplicaciones y agentes de programación:** añade un proveedor "compatible con OpenAI" con la URL base
   **`http://127.0.0.1:8080/v1`**. Sirve cualquier clave de API y cualquier nombre de modelo.
   - Aplicaciones que usan la API de Anthropic: `http://127.0.0.1:8080/v1/messages` (Claude Code:
@@ -277,7 +278,7 @@ Los catorce modelos se usan igual: la misma aplicación, la misma API.
     ([por qué](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI y otras aplicaciones que usan la API Responses de OpenAI: `/v1/responses`
     ([configuración](docs/DETAILS.md#the-responses-api-and-codex-cli)).
-- **Razonamiento:** elige **off, low, medium o high** en el menú del chat o en el "reasoning effort" de tu aplicación.
+- **Razonamiento:** elige **off, low, medium o high** en el ajuste "reasoning effort" de tu aplicación.
   Off es lo más rápido. High es lo mejor para preguntas difíciles.
 - **Desde tu móvil u otro PC:** `START-HERE.bat --setup --host 0.0.0.0 --api-key <secret>`. Pon siempre una clave.
 
@@ -285,12 +286,12 @@ En qué se diferencian:
 
 | | Qwen3.8-Flash-Next | GLM 5.3 Flash | DeepSeek V4 Flash | LFM2.5-24B-A2B | Flint 40B-A2.5B | Kolibri 1 | Qwen3.6-35B-A3B, Clover-35B-A3B-Preview, Ornith 1.5, Gemma 4 26B-A4B, Tiel Coder 35B-A3B, MiniCPM-V 4.7 35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Imágenes** | Responde que sí a "Images?" en la instalación. Luego haz clic en **Picture** en el chat, o adjunta imágenes en tu aplicación. Con menos de 24 GB de memoria gráfica, el codificador de imágenes funciona en el procesador, tanto en NVIDIA como en AMD. | Todavía no. | Solo lee texto. | Solo lee texto. | Solo lee texto. | Solo lee texto. | Responde que sí a "Images?" en la instalación, y luego como con Qwen3.8-Flash-Next. En una tarjeta de menos de 16 GB el codificador de imágenes funciona en el procesador, y una imagen tarda unos segundos. Clover solo lee texto. |
+| **Imágenes** | Responde que sí a "Images?" en la instalación. Luego adjunta imágenes en tu aplicación. Con menos de 24 GB de memoria gráfica, el codificador de imágenes funciona en el procesador, tanto en NVIDIA como en AMD. | Todavía no. | Solo lee texto. | Solo lee texto. | Solo lee texto. | Solo lee texto. | Responde que sí a "Images?" en la instalación, y luego como con Qwen3.8-Flash-Next. En una tarjeta de menos de 16 GB el codificador de imágenes funciona en el procesador, y una imagen tarda unos segundos. Clover solo lee texto. |
 | **Una petición cada vez** | Por defecto PolyStrata responde una petición y las demás esperan. Para responder varias a la vez, pon `"parallel": 2` ([BATCHING.md](docs/BATCHING.md)). En una tarjeta de 12 GB, cada respuesta va más lenta. | Una cada vez, las demás esperan. | Una cada vez, las demás esperan. | Una cada vez, las demás esperan. | Una cada vez, las demás esperan. | Una cada vez, las demás esperan. | Una cada vez, las demás esperan. |
 | **Varias conversaciones** | Por defecto se guardan varias en RAM mientras haya sitio, así que los mensajes siguientes y los agentes que se turnan empiezan en segundos ([detalles](docs/DETAILS.md#conversation-cache)). | La última se conserva. La instalación pregunta si guardar varias en RAM, para que un agente y sus subagentes se turnen sin que se vuelvan a leer sus prompts ([cómo](docs/GLM.md#several-conversations-at-once)). | Como GLM 5.3 Flash. | Como GLM 5.3 Flash. | Como GLM 5.3 Flash. | Como GLM 5.3 Flash. | Como GLM 5.3 Flash. |
 | **Prompts largos** | PolyStrata lee entero el primer mensaje de un chat, más o menos 1 minuto por cada 30,000 tokens. Los mensajes siguientes empiezan en segundos. | El primer mensaje se lee entero, más o menos 40 segundos por cada 30,000 tokens. | El primer mensaje se lee entero, más o menos 29 segundos por cada 30,000 tokens. | El primer mensaje se lee entero: 30,000 tokens tardan de 1,3 a 1,5 segundos en la estación de trabajo y de 8 a 10 segundos en el portátil de 8 GB. | El primer mensaje se lee entero: 30,000 tokens tardan unos 2,3 segundos en la estación de trabajo y de 15 a 22 segundos en el portátil de 8 GB. | El primer mensaje se lee entero: 30,000 tokens tardan con Q2_K unos 6 segundos en la estación de trabajo y unos 40 segundos en el portátil de 8 GB. | El primer mensaje se lee entero: 30,000 tokens tardan de 4 a 5 segundos en la estación de trabajo y de 14 a 27 segundos en el portátil de 8 GB. |
 
-Más: [dónde se guardan tus chats](docs/INSTALL.md#where-things-are-stored), [la API](docs/DETAILS.md#using-it).
+Más: [dónde se guardan los archivos](docs/INSTALL.md#where-things-are-stored), [la API](docs/DETAILS.md#using-it).
 
 ### Opcional: más velocidad con una sola tarjeta cuando todo el modelo cabe en la RAM
 

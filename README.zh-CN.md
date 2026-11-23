@@ -184,7 +184,8 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 - 是否要识别图片（GLM 5.3 Flash、DeepSeek V4 Flash、LFM2.5、Flint、Clover 和 Kolibri 1 不支持）。
 
 每次直接按回车就是推荐选项。之后它会下载模型（Qwen3.8-Flash-Next 约 70 GB，GLM 5.3 Flash 79 到 114 GB，DeepSeek V4 Flash 91 GB，Kolibri 1 29 到 48 GB，另外八个 11 到 42 GB）并启动。
-如果下载中断了，再运行一次即可：它会从中断的地方继续。浏览器会打开 PolyStrata 应用，地址是 `http://127.0.0.1:8080`。
+如果下载中断了，再运行一次即可：它会从中断的地方继续。模型准备好后，API 地址是 `http://127.0.0.1:8080/v1`。
+想用一个应用和它聊天的话，我们推荐 [Linger](https://github.com/simplexai-labs/linger)；支持 OpenAI 或 Anthropic API 的应用也都能用。
 
 十四个模型都在安装程序的模型列表里。想直接装其中一个，运行 `./setup.sh --family glm`（或 `deepseek`、`lfm25`、`flint`、`qwen36`、`clover`、`ornith`、`gemma4`、`tiel`、`minicpmv`、`kolibri`、`groot`、`inkling`）
 （[它会问什么、写什么](docs/GLM.md#install)）。
@@ -227,18 +228,17 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 
 ## 使用方法
 
-十四个模型的用法一样：同一个应用，同一套 API。
+十四个模型的用法一样，都用同一套 API。
 
-<p align="center"><img src="docs/media/runpagoda.png" width="900" alt="应用的 Monitor 标签页，旁边是一个编程智能体"><br>
-<sub>应用的 <b>Monitor</b>（左），编程智能体正在写视频里的宝塔花园（右）。截图来自 <a href="https://github.com/Niko1221/Strata">Strata</a>。</sub></p>
+<p align="center"><a href="https://github.com/simplexai-labs/linger"><img src="docs/media/linger-desktop.jpg" width="900" alt="Mac 上的 Linger：聊天室里智能体汇报进度，旁边是它们正在操作的 Chrome 窗口"></a><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a>：多个智能体共用一台电脑，用的是你已经登录好的浏览器。图片来自 Linger 项目。</sub></p>
 
-- **在浏览器里：** 打开 `http://127.0.0.1:8080`。里面有 **Chat**（聊天）、实时 **Monitor**（监控模型和你的
-  GPU/CPU/内存）、**Requests**（打开 [API 请求监视器](docs/DETAILS.md#api-request-monitor)后，在单独的标签页里打开它），以及 **About**（设置和地址）。
-  装了不止一个模型时，可以用页面顶部的列表切换；切换后会开一个新对话，点 **Undo** 能回到原来的对话。
+- **作为你的个人智能体：** 我们推荐 [Linger](https://github.com/simplexai-labs/linger)。Mac（Apple 芯片）、Windows 和 Linux 版都在[它的最新版本](https://github.com/simplexai-labs/linger/releases/latest)里下载。
 - **在终端里：** 在 PolyStrata 文件夹里运行 `python polystrata.py --model <name>`，就能和装好的模型聊天；
   `--list-models` 列出所有模型（[更多](docs/INSTALL.md#the-terminal)）。
-- **作为你的个人智能体：** 下载 [Linger](https://github.com/simplexai-labs/linger)：[Mac（Apple 芯片）](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-macos-arm64.dmg) ·
-  [Windows](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-windows-x64-setup.exe) · [Linux](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-linux-x64.tar.gz)。
+- **在浏览器里：** `http://127.0.0.1:8080` 有实时 **Monitor**（监控模型和你的
+  GPU/CPU/内存）、**Requests**（打开 [API 请求监视器](docs/DETAILS.md#api-request-monitor)后，在单独的标签页里打开它），以及 **About**（设置和地址）。
+  装了不止一个模型时，可以用页面顶部的列表切换。
 - **你的应用和编程智能体：** 添加一个“OpenAI 兼容”的提供商，base URL 填 **`http://127.0.0.1:8080/v1`**。
   API key 和模型名随便填都行。
   - 使用 Anthropic API 的应用：`http://127.0.0.1:8080/v1/messages`（Claude Code：
@@ -246,7 +246,7 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
     （[原因](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps)））。
   - Codex CLI 和其他使用 OpenAI Responses API 的应用：`/v1/responses`
     （[设置方法](docs/DETAILS.md#the-responses-api-and-codex-cli)）。
-- **思考：** 在聊天菜单或应用的“reasoning effort”里选择 **off、low、medium 或 high**。off 最快，
+- **思考：** 在你的应用的“reasoning effort”设置里选择 **off、low、medium 或 high**。off 最快，
   high 最适合难题。
 - **从手机或另一台电脑访问：** `START-HERE.bat --setup --host 0.0.0.0 --api-key <secret>`。一定要设置 key。
 
@@ -254,12 +254,12 @@ PolyStrata 的 [MCP 服务器](docs/MCP_SERVER.md)来安装、启动和停止 Po
 
 | | Qwen3.8-Flash-Next | GLM 5.3 Flash | DeepSeek V4 Flash | LFM2.5-24B-A2B | Flint 40B-A2.5B | Kolibri 1 | Qwen3.6-35B-A3B、Clover-35B-A3B-Preview、Ornith 1.5、Gemma 4 26B-A4B、Tiel Coder 35B-A3B、MiniCPM-V 4.7 35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **图片** | 在安装时对“Images?”选是。然后在聊天里点 **Picture**，或在你的应用里附上图片。显存不到 24 GB 时，图片编码器在处理器上运行，NVIDIA 和 AMD 都一样。 | 暂时不支持。 | 只能处理文字。 | 只能处理文字。 | 只能处理文字。 | 只能处理文字。 | 在安装时对“Images?”选是，之后和 Qwen3.8-Flash-Next 一样。显存不到 16 GB 的卡上，图片编码器在处理器上跑，一张图片要几秒。Clover 只能处理文字。 |
+| **图片** | 在安装时对“Images?”选是。然后在你的应用里附上图片。显存不到 24 GB 时，图片编码器在处理器上运行，NVIDIA 和 AMD 都一样。 | 暂时不支持。 | 只能处理文字。 | 只能处理文字。 | 只能处理文字。 | 只能处理文字。 | 在安装时对“Images?”选是，之后和 Qwen3.8-Flash-Next 一样。显存不到 16 GB 的卡上，图片编码器在处理器上跑，一张图片要几秒。Clover 只能处理文字。 |
 | **多个请求** | 默认一次只回答一个，其他请求排队等待。设置 `"parallel": 2` 可以同时回答多个（[BATCHING.md](docs/BATCHING.md)）；在 12 GB 显卡上，这会让每个回答变慢。 | 一次只回答一个，其他请求排队等待。 | 一次只回答一个，其他请求排队等待。 | 一次只回答一个，其他请求排队等待。 | 一次只回答一个，其他请求排队等待。 | 一次只回答一个，其他请求排队等待。 | 一次只回答一个，其他请求排队等待。 |
 | **多个对话** | 内存够的话，默认在内存里保留多个对话，所以后续消息和轮流发言的智能体几秒内就开始回答（[详情](docs/DETAILS.md#conversation-cache)）。 | 保留最近的一个对话。安装程序会问要不要在内存里保留多个，这样智能体和子代理轮流请求时不用重读提示（[原理](docs/GLM.md#several-conversations-at-once)）。 | 和 GLM 5.3 Flash 一样。 | 和 GLM 5.3 Flash 一样。 | 和 GLM 5.3 Flash 一样。 | 和 GLM 5.3 Flash 一样。 | 和 GLM 5.3 Flash 一样。 |
 | **长提示** | 对话的第一条消息要完整读入，大约每 30,000 个 token 需要 1 分钟。 | 第一条消息要完整读入，大约每 30,000 个 token 需要 40 秒。 | 第一条消息要完整读入，大约每 30,000 个 token 需要 29 秒。 | 第一条消息要完整读入：30,000 个 token 在工作站上要 1.3 到 1.5 秒，在 8 GB 笔记本上要 8 到 10 秒。 | 第一条消息要完整读入：30,000 个 token 在工作站上约 2.3 秒，在 8 GB 笔记本上要 15 到 22 秒。 | 第一条消息要完整读入：30,000 个 token 用 Q2_K 在工作站上约 6 秒，在 8 GB 笔记本上约 40 秒。 | 第一条消息要完整读入：30,000 个 token，工作站要 4 到 5 秒，8 GB 显卡的笔记本要 14 到 27 秒。 |
 
-更多：[聊天记录存在哪里](docs/INSTALL.md#where-things-are-stored)、[API](docs/DETAILS.md#using-it)。
+更多：[文件存在哪里](docs/INSTALL.md#where-things-are-stored)、[API](docs/DETAILS.md#using-it)。
 
 ### 可选：整个模型都能放进内存时，单卡再提速
 

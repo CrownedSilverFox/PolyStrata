@@ -219,8 +219,9 @@ dafür ein. Er stellt dir ein paar Fragen:
 
 Drück jedes Mal Enter, um die empfohlene Antwort zu nehmen. Dann lädt er das Modell herunter (etwa 70 GB für
 Qwen3.8-Flash-Next, 79 bis 114 GB für GLM 5.3 Flash, 91 GB für DeepSeek V4 Flash, 29 bis 48 GB für Kolibri 1, 11 bis 42 GB für die anderen acht) und
-startet es. Bricht der Download ab, starte ihn einfach neu: Er macht dort weiter, wo er aufgehört hat. Dein Browser
-öffnet die PolyStrata-App unter `http://127.0.0.1:8080`.
+startet es. Bricht der Download ab, starte ihn einfach neu: Er macht dort weiter, wo er aufgehört hat. Sobald das Modell
+bereit ist, ist seine API unter `http://127.0.0.1:8080/v1` erreichbar. Wenn du eine App zum Chatten willst, empfehlen
+wir [Linger](https://github.com/simplexai-labs/linger). Jede App, die die API von OpenAI oder Anthropic spricht, geht auch.
 
 Alle vierzehn stehen in der Modellliste des Installers. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
 `gemma4`, `tiel`, `minicpmv`, `kolibri`, `groot` oder `inkling` führt direkt zu einem davon ([was er fragt und schreibt](docs/GLM.md#install), englisch).
@@ -264,19 +265,19 @@ Was jede Größe ist, ihr Download, der RAM neben anderen Karten und wie nah sie
 
 ## So benutzt du es
 
-Alle vierzehn Modelle benutzt du gleich: dieselbe App, dieselbe API.
+Alle vierzehn Modelle benutzt du gleich, über dieselbe API.
 
-<p align="center"><img src="docs/media/runpagoda.png" width="900" alt="Der Monitor-Tab der PolyStrata-App neben einem Coding-Agent"><br>
-<sub>Der <b>Monitor</b> der PolyStrata-App (links), während ein Coding-Agent den Pagodengarten aus dem Video schreibt (rechts). Ein Screenshot aus <a href="https://github.com/Niko1221/Strata">Strata</a>.</sub></p>
+<p align="center"><a href="https://github.com/simplexai-labs/linger"><img src="docs/media/linger-desktop.jpg" width="900" alt="Linger auf einem Mac: ein Chatraum, in dem Agents von ihrer Arbeit berichten, daneben die Chrome-Fenster, in denen sie arbeiten"></a><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a>: Mehrere Agents teilen sich einen Computer und den Browser, in dem du schon angemeldet bist. Ein Bild aus dem Linger-Projekt.</sub></p>
 
-- **Im Browser:** Öffne `http://127.0.0.1:8080`. Dort gibt es **Chat**, einen Live-**Monitor** für das Modell und
-  deine GPU/CPU/RAM, **Requests**, das den [API-Anfragemonitor](docs/DETAILS.md#api-request-monitor) in einem eigenen Tab
-  öffnet, sobald er eingeschaltet ist, und **About** mit den Einstellungen und Adressen. Mit mehr als einem installierten
-  Modell wechselt die Liste oben zwischen ihnen; ein Wechsel beginnt einen neuen Chat, und **Undo** holt den alten zurück.
+- **Als persönlicher Agent:** Wir empfehlen [Linger](https://github.com/simplexai-labs/linger). Lade es für Mac (Apple Silicon), Windows oder Linux aus
+  [dem neuesten Release](https://github.com/simplexai-labs/linger/releases/latest) herunter.
 - **Im Terminal:** `python polystrata.py --model <name>` im PolyStrata-Ordner chattet mit einem installierten Modell,
   `--list-models` listet sie auf ([mehr](docs/INSTALL.md#the-terminal)).
-- **Als persönlicher Agent:** Lade [Linger](https://github.com/simplexai-labs/linger) für [Mac (Apple Silicon)](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-macos-arm64.dmg) ·
-  [Windows](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-windows-x64-setup.exe) · [Linux](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-linux-x64.tar.gz) herunter.
+- **Im Browser:** `http://127.0.0.1:8080` hat einen Live-**Monitor** für das Modell und
+  deine GPU/CPU/RAM, **Requests**, das den [API-Anfragemonitor](docs/DETAILS.md#api-request-monitor) in einem eigenen Tab
+  öffnet, sobald er eingeschaltet ist, und **About** mit den Einstellungen und Adressen. Mit mehr als einem installierten
+  Modell wechselt die Liste oben zwischen ihnen.
 - **Deine Apps und Coding-Agents:** Füge einen „OpenAI-kompatiblen“ Anbieter mit der Basis-URL
   **`http://127.0.0.1:8080/v1`** hinzu. Jeder API-Key und jeder Modellname funktioniert.
   - Apps, die die API von Anthropic nutzen: `http://127.0.0.1:8080/v1/messages` (Claude Code:
@@ -284,7 +285,7 @@ Alle vierzehn Modelle benutzt du gleich: dieselbe App, dieselbe API.
     ([warum](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI und andere Apps, die die OpenAI Responses API nutzen: `/v1/responses`
     ([Einrichtung](docs/DETAILS.md#the-responses-api-and-codex-cli)).
-- **Nachdenken:** Wähle **aus, niedrig, mittel oder hoch** im Chat-Menü oder unter „Reasoning Effort“ in deiner
+- **Nachdenken:** Wähle **aus, niedrig, mittel oder hoch** unter „Reasoning Effort“ in deiner
   App. Aus ist am schnellsten. Hoch ist am besten für schwierige Fragen.
 - **Vom Handy oder einem anderen PC:** `START-HERE.bat --setup --host 0.0.0.0 --api-key <secret>`. Setz immer einen
   Key.
@@ -293,12 +294,12 @@ Wo sie sich unterscheiden:
 
 | | Qwen3.8-Flash-Next | GLM 5.3 Flash | DeepSeek V4 Flash | LFM2.5-24B-A2B | Flint 40B-A2.5B | Kolibri 1 | Qwen3.6-35B-A3B, Clover-35B-A3B-Preview, Ornith 1.5, Gemma 4 26B-A4B, Tiel Coder 35B-A3B, MiniCPM-V 4.7 35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Bilder** | Antworte im Setup mit Ja auf „Images?“. Klick dann im Chat auf **Picture** oder hänge Bilder in deiner App an. Mit weniger als 24 GB Grafikspeicher läuft der Bild-Encoder auf dem Prozessor, bei NVIDIA wie bei AMD. | Noch nicht. | Es liest nur Text. | Es liest nur Text. | Es liest nur Text. | Es liest nur Text. | Antworte im Setup mit Ja auf „Images?“, dann wie bei Qwen3.8-Flash-Next. Auf einer Karte mit weniger als 16 GB läuft der Bild-Encoder auf dem Prozessor, und ein Bild dauert ein paar Sekunden. Clover liest nur Text. |
+| **Bilder** | Antworte im Setup mit Ja auf „Images?“. Häng dann Bilder in deiner App an. Mit weniger als 24 GB Grafikspeicher läuft der Bild-Encoder auf dem Prozessor, bei NVIDIA wie bei AMD. | Noch nicht. | Es liest nur Text. | Es liest nur Text. | Es liest nur Text. | Es liest nur Text. | Antworte im Setup mit Ja auf „Images?“, dann wie bei Qwen3.8-Flash-Next. Auf einer Karte mit weniger als 16 GB läuft der Bild-Encoder auf dem Prozessor, und ein Bild dauert ein paar Sekunden. Clover liest nur Text. |
 | **Eine Anfrage nach der anderen** | Standardmäßig beantwortet PolyStrata eine Anfrage, die anderen warten. Um mehrere gleichzeitig zu beantworten, setz `"parallel": 2` ([BATCHING.md](docs/BATCHING.md)). Auf einer 12-GB-Karte wird dadurch jede Antwort langsamer. | Eine nach der anderen, die anderen warten. | Eine nach der anderen, die anderen warten. | Eine nach der anderen, die anderen warten. | Eine nach der anderen, die anderen warten. | Eine nach der anderen, die anderen warten. | Eine nach der anderen, die anderen warten. |
 | **Mehrere Unterhaltungen** | Standardmäßig bleiben mehrere im RAM, soweit Platz ist; Folgenachrichten und Agenten, die sich abwechseln, starten also in Sekunden ([Details](docs/DETAILS.md#conversation-cache)). | Die letzte bleibt erhalten. Das Setup fragt, ob mehrere im RAM bleiben sollen, damit ein Agent und seine Subagenten sich abwechseln, ohne dass ihre Prompts neu gelesen werden ([wie](docs/GLM.md#several-conversations-at-once)). | Wie GLM 5.3 Flash. | Wie GLM 5.3 Flash. | Wie GLM 5.3 Flash. | Wie GLM 5.3 Flash. | Wie GLM 5.3 Flash. |
 | **Lange Prompts** | PolyStrata liest die erste Nachricht eines Chats komplett, etwa 1 Minute pro 30,000 Tokens. Folgenachrichten starten in Sekunden. | Die erste Nachricht wird komplett gelesen, etwa 40 Sekunden pro 30,000 Tokens. | Die erste Nachricht wird komplett gelesen, etwa 29 Sekunden pro 30,000 Tokens. | Die erste Nachricht wird komplett gelesen: 30,000 Tokens brauchen 1,3 bis 1,5 Sekunden auf der Workstation und 8 bis 10 Sekunden auf dem 8-GB-Laptop. | Die erste Nachricht wird komplett gelesen: 30,000 Tokens brauchen etwa 2,3 Sekunden auf der Workstation und 15 bis 22 Sekunden auf dem 8-GB-Laptop. | Die erste Nachricht wird komplett gelesen: 30,000 Tokens brauchen mit Q2_K auf der Workstation etwa 6 Sekunden und auf dem 8-GB-Laptop etwa 40 Sekunden. | Die erste Nachricht wird ganz gelesen: 30,000 Tokens dauern auf der Workstation 4 bis 5 Sekunden und auf dem 8-GB-Laptop 14 bis 27 Sekunden. |
 
-Mehr: [wo deine Chats gespeichert werden](docs/INSTALL.md#where-things-are-stored), [die API](docs/DETAILS.md#using-it).
+Mehr: [wo was gespeichert wird](docs/INSTALL.md#where-things-are-stored), [die API](docs/DETAILS.md#using-it).
 
 ### Optional: mehr Tempo mit einer Grafikkarte, wenn das ganze Modell in den RAM passt
 

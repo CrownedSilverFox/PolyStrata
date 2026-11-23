@@ -267,8 +267,8 @@ strata launch --family hy4-flash --model SQ-64
 starts one directly. `--inspect <folder or .gguf>` shows what files you already have hold, and `--custom-gguf` installs
 them ([INSTALL.md](INSTALL.md#options-without-questions)).
 
-Once a model runs, the chat page's model list switches to another installed model without a restart, and each model
-runs with its own settings ([DETAILS.md](DETAILS.md#the-web-page-chat-images-monitor-requests-about)). With
+Once a model runs, the web page's model list switches to another installed model without a restart, and each model
+runs with its own settings ([DETAILS.md](DETAILS.md#the-web-page-monitor-requests-images-experts-about)). With
 `"switch_on_request": true` in the config it starts with, API clients see every installed model in `/v1/models` too,
 and a request that names one loads it ([DETAILS.md](DETAILS.md#connecting-apps)). From a terminal,
 `python polystrata.py --model <name>` does the same ([BACKENDS.md](BACKENDS.md#changing-the-model)).

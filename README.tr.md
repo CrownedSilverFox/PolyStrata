@@ -229,7 +229,9 @@ Yükleyici kartını bulur ve ona uygun motoru kurar. Sana birkaç soru sorar:
 
 Önerilen yanıt için her seferinde Enter'a bas. Ardından modeli indirir (Qwen3.8-Flash-Next için yaklaşık 70 GB,
 GLM 5.3 Flash için 79 ila 114 GB, DeepSeek V4 Flash için 91 GB, Kolibri 1 için 29 ila 48 GB, diğer sekizi için 11 ila 42 GB) ve başlatır. İndirme yarıda kalırsa yeniden çalıştır:
-kaldığı yerden devam eder. Tarayıcın PolyStrata uygulamasını `http://127.0.0.1:8080` adresinde açar.
+kaldığı yerden devam eder. Model hazır olduğunda API'si
+`http://127.0.0.1:8080/v1` adresindedir. Onunla sohbet etmek için bir uygulama istersen [Linger](https://github.com/simplexai-labs/linger)'i öneririz;
+OpenAI ya da Anthropic API'sini konuşan her uygulama da çalışır.
 
 On dördünün hepsi yükleyicinin model listesinde. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
 `gemma4`, `tiel`, `minicpmv`, `kolibri`, `groot` veya `inkling` doğrudan o modele gider ([ne sorduğu ve ne yazdığı](docs/GLM.md#install)).
@@ -273,19 +275,19 @@ Her boyutun ne olduğu, indirme bilgisi, başka kartların yanında ne kadar RAM
 
 ## Kullanım
 
-On dört modelin hepsi aynı şekilde kullanılır: aynı uygulama, aynı API.
+On dört modelin hepsi aynı şekilde, aynı API ile kullanılır.
 
-<p align="center"><img src="docs/media/runpagoda.png" width="900" alt="Uygulamanın Monitor sekmesi, bir kodlama ajanının yanında"><br>
-<sub>Bir kodlama ajanı videodaki pagoda bahçesini yazarken (sağda) uygulamanın <b>Monitor</b> sekmesi (solda). Ekran görüntüsü <a href="https://github.com/Niko1221/Strata">Strata</a> projesinden.</sub></p>
+<p align="center"><a href="https://github.com/simplexai-labs/linger"><img src="docs/media/linger-desktop.jpg" width="900" alt="Mac'te Linger: ajanların işlerini bildirdiği bir sohbet odası ve yanında çalıştıkları Chrome pencereleri"></a><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a>: birden fazla ajan tek bir bilgisayarı ve zaten oturum açmış olduğun tarayıcıyı paylaşır. Görsel Linger projesinden.</sub></p>
 
-- **Tarayıcıda:** `http://127.0.0.1:8080` adresini aç. Uygulamada **Chat**, modeli ve GPU/CPU/RAM kullanımını canlı
-  gösteren **Monitor**, açıldıktan sonra [API istek izleyicisini](docs/DETAILS.md#api-request-monitor) kendi sekmesinde
-  açan **Requests** ve ayarlarla adresleri gösteren **About** sekmeleri var. Birden fazla model kuruluysa sayfanın
-  üstündeki liste aralarında geçiş yapar; geçiş yeni bir sohbet başlatır, **Undo** eskisini geri getirir.
+- **Kişisel ajan olarak:** [Linger](https://github.com/simplexai-labs/linger)'i öneririz. Mac (Apple Silicon), Windows ya da Linux sürümünü
+  [son sürümünden](https://github.com/simplexai-labs/linger/releases/latest) indir.
 - **Terminalde:** PolyStrata klasöründe `python polystrata.py --model <name>` kurulu bir modelle sohbet açar,
   `--list-models` hepsini listeler ([daha fazlası](docs/INSTALL.md#the-terminal)).
-- **Kişisel ajan olarak:** [Linger](https://github.com/simplexai-labs/linger)'i indir: [Mac (Apple Silicon)](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-macos-arm64.dmg) ·
-  [Windows](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-windows-x64-setup.exe) · [Linux](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-linux-x64.tar.gz).
+- **Tarayıcıda:** `http://127.0.0.1:8080` adresinde modeli ve GPU/CPU/RAM kullanımını canlı
+  gösteren **Monitor**, açıldıktan sonra [API istek izleyicisini](docs/DETAILS.md#api-request-monitor) kendi sekmesinde
+  açan **Requests** ve ayarlarla adresleri gösteren **About** sekmeleri var. Birden fazla model kuruluysa sayfanın
+  üstündeki liste aralarında geçiş yapar.
 - **Uygulamaların ve kodlama ajanların:** temel URL'si **`http://127.0.0.1:8080/v1`** olan "OpenAI-compatible" bir
   sağlayıcı ekle. Herhangi bir API anahtarı ve herhangi bir model adı çalışır.
   - Anthropic'in API'sini kullanan uygulamalar: `http://127.0.0.1:8080/v1/messages` (Claude Code:
@@ -293,7 +295,7 @@ On dört modelin hepsi aynı şekilde kullanılır: aynı uygulama, aynı API.
     ([neden](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI ve OpenAI Responses API'yi kullanan diğer uygulamalar: `/v1/responses`
     ([kurulum](docs/DETAILS.md#the-responses-api-and-codex-cli)).
-- **Düşünme:** sohbet menüsünde ya da uygulamanın "reasoning effort" ayarında **off, low, medium veya high** (kapalı,
+- **Düşünme:** uygulamanın "reasoning effort" ayarında **off, low, medium veya high** (kapalı,
   düşük, orta, yüksek) seç. Off en hızlısıdır. High zor sorular için en iyisidir.
 - **Telefonundan ya da başka bir bilgisayardan:** `START-HERE.bat --setup --host 0.0.0.0 --api-key <gizli-anahtar>`.
   Her zaman bir anahtar belirle.
@@ -302,12 +304,12 @@ Farklı oldukları yerler:
 
 | | Qwen3.8-Flash-Next | GLM 5.3 Flash | DeepSeek V4 Flash | LFM2.5-24B-A2B | Flint 40B-A2.5B | Kolibri 1 | Qwen3.6-35B-A3B, Clover-35B-A3B-Preview, Ornith 1.5, Gemma 4 26B-A4B, Tiel Coder 35B-A3B, MiniCPM-V 4.7 35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Resimler** | Kurulumda "Images?" sorusuna evet de. Sonra sohbette **Picture** düğmesine tıkla ya da uygulamanda resim ekle. Ekran kartı belleği 24 GB'tan azsa resim kodlayıcı işlemcide çalışır; NVIDIA'da da AMD'de de böyle. | Henüz değil. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Kurulumda "Images?" sorusuna evet de; sonrası Qwen3.8-Flash-Next ile aynı. 16 GB'tan az belleği olan bir kartta resim kodlayıcı işlemcide çalışır ve bir resim birkaç saniye sürer. Clover yalnızca metin okur. |
+| **Resimler** | Kurulumda "Images?" sorusuna evet de. Sonra uygulamanda resim ekle. Ekran kartı belleği 24 GB'tan azsa resim kodlayıcı işlemcide çalışır; NVIDIA'da da AMD'de de böyle. | Henüz değil. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Yalnızca metin okur. | Kurulumda "Images?" sorusuna evet de; sonrası Qwen3.8-Flash-Next ile aynı. 16 GB'tan az belleği olan bir kartta resim kodlayıcı işlemcide çalışır ve bir resim birkaç saniye sürer. Clover yalnızca metin okur. |
 | **Birden fazla istek** | Varsayılan olarak aynı anda bir tane; diğerleri bekler. `"parallel": 2` birkaçını aynı anda yanıtlar ([BATCHING.md](docs/BATCHING.md)); 12 GB'lık bir kartta her yanıt yavaşlar. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. | Aynı anda bir tane; diğerleri bekler. |
 | **Birden fazla sohbet** | Yer olduğu sürece varsayılan olarak birkaçı RAM'de tutulur, böylece devam mesajları ve sırayla çalışan ajanlar saniyeler içinde başlar ([ayrıntılar](docs/DETAILS.md#conversation-cache)). | Sonuncusu saklanır. Kurulum, birkaçının RAM'de tutulup tutulmayacağını sorar; böylece bir ajan ve alt ajanları, prompt'ları yeniden okunmadan sırayla çalışabilir ([nasıl](docs/GLM.md#several-conversations-at-once)). | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. | GLM 5.3 Flash ile aynı. |
 | **Uzun prompt'lar** | Bir sohbetin ilk mesajı baştan sona okunur; 30.000 token başına yaklaşık 1 dakika. | İlk mesaj baştan sona okunur; 30.000 token başına yaklaşık 40 saniye. | İlk mesaj baştan sona okunur; 30.000 token başına yaklaşık 29 saniye. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda 1,3 ila 1,5 saniye, 8 GB'lık dizüstünde 8 ila 10 saniye sürer. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda yaklaşık 2,3 saniye, 8 GB'lık dizüstünde 15 ila 22 saniye sürer. | İlk mesaj baştan sona okunur: 30.000 token, Q2_K ile iş istasyonunda yaklaşık 6 saniye, 8 GB'lık dizüstünde yaklaşık 40 saniye sürer. | İlk mesaj baştan sona okunur: 30.000 token, iş istasyonunda 4 ila 5 saniye, 8 GB'lık dizüstünde 14 ila 27 saniye sürer. |
 
-Daha fazlası: [sohbetlerin nerede saklandığı](docs/INSTALL.md#where-things-are-stored), [API](docs/DETAILS.md#using-it).
+Daha fazlası: [dosyaların nerede saklandığı](docs/INSTALL.md#where-things-are-stored), [API](docs/DETAILS.md#using-it).
 
 ### İsteğe bağlı: model RAM'e tamamen sığdığında tek kartta daha fazla hız
 

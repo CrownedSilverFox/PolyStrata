@@ -213,8 +213,9 @@ Ele faz algumas perguntas:
 
 Aperte Enter em cada uma para usar a resposta recomendada. Depois ele baixa o modelo (cerca de 70 GB para o
 Qwen3.8-Flash-Next, 79 a 114 GB para o GLM 5.3 Flash, 91 GB para o DeepSeek V4 Flash, 29 a 48 GB para o Kolibri 1, 11 a 42 GB para os outros oito) e o inicia.
-Se o download parar, rode de novo: ele continua de onde parou. Seu navegador abre o app do PolyStrata em
-`http://127.0.0.1:8080`.
+Se o download parar, rode de novo: ele continua de onde parou. Quando o modelo fica pronto,
+a API dele fica em `http://127.0.0.1:8080/v1`. Se você quiser um app para conversar com ele, recomendamos o
+[Linger](https://github.com/simplexai-labs/linger). Qualquer app que fale a API da OpenAI ou da Anthropic também funciona.
 
 Os catorze estão na lista de modelos do instalador. `./setup.sh --family glm`, `deepseek`, `lfm25`, `flint`, `qwen36`, `clover`, `ornith`,
 `gemma4`, `tiel`, `minicpmv`, `kolibri`, `groot` ou `inkling` vai direto para um deles ([o que ele pergunta e grava](docs/GLM.md#install), em inglês).
@@ -256,19 +257,19 @@ O que é cada tamanho, o download, a RAM que ele precisa ao lado de outras placa
 
 ## Como usar
 
-Os catorze modelos são usados do mesmo jeito: o mesmo app, a mesma API.
+Os catorze modelos são usados do mesmo jeito, pela mesma API.
 
-<p align="center"><img src="docs/media/runpagoda.png" width="900" alt="A aba Monitor do app PolyStrata ao lado de um agente de programação"><br>
-<sub>O <b>Monitor</b> do app PolyStrata (à esquerda) enquanto um agente de programação escreve o jardim com pagode do vídeo (à direita). Uma captura de tela do <a href="https://github.com/Niko1221/Strata">Strata</a>.</sub></p>
+<p align="center"><a href="https://github.com/simplexai-labs/linger"><img src="docs/media/linger-desktop.jpg" width="900" alt="Linger num Mac: uma sala de chat onde os agentes contam o que fizeram, ao lado das janelas do Chrome em que eles trabalham"></a><br>
+<sub><a href="https://github.com/simplexai-labs/linger">Linger</a>: vários agentes dividem um computador e o navegador em que você já está logado. Uma imagem do projeto Linger.</sub></p>
 
-- **No navegador:** abra `http://127.0.0.1:8080`. Lá tem o **Chat**, um **Monitor** ao vivo do modelo e da sua
-  GPU/CPU/RAM, o **Requests**, que abre o [monitor de requisições da API](docs/DETAILS.md#api-request-monitor) numa aba
-  própria depois de ligado, e o **About** com as configurações e os endereços. Com mais de um modelo instalado, a lista no
-  topo troca entre eles; a troca começa um chat novo, e **Undo** traz o anterior de volta.
+- **Como seu agente pessoal:** recomendamos o [Linger](https://github.com/simplexai-labs/linger). Baixe para Mac (Apple Silicon), Windows ou Linux na
+  [versão mais recente](https://github.com/simplexai-labs/linger/releases/latest).
 - **No terminal:** `python polystrata.py --model <name>` na pasta do PolyStrata abre um chat com um modelo instalado, e
   `--list-models` lista todos ([mais](docs/INSTALL.md#the-terminal)).
-- **Como seu agente pessoal:** baixe o [Linger](https://github.com/simplexai-labs/linger) para [Mac (Apple Silicon)](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-macos-arm64.dmg) ·
-  [Windows](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-windows-x64-setup.exe) · [Linux](https://github.com/simplexai-labs/linger/releases/download/desktop-v0.1.2/Linger-0.1.2-linux-x64.tar.gz).
+- **No navegador:** `http://127.0.0.1:8080` tem um **Monitor** ao vivo do modelo e da sua
+  GPU/CPU/RAM, o **Requests**, que abre o [monitor de requisições da API](docs/DETAILS.md#api-request-monitor) numa aba
+  própria depois de ligado, e o **About** com as configurações e os endereços. Com mais de um modelo instalado, a lista no
+  topo troca entre eles.
 - **Seus apps e agentes de programação:** adicione um provedor "OpenAI-compatible" com a URL base
   **`http://127.0.0.1:8080/v1`**. Qualquer chave de API e qualquer nome de modelo funcionam.
   - Apps que usam a API da Anthropic: `http://127.0.0.1:8080/v1/messages` (Claude Code:
@@ -276,7 +277,7 @@ Os catorze modelos são usados do mesmo jeito: o mesmo app, a mesma API.
     ([por quê](docs/FAQ.md#can-i-use-it-with-claude-code-codex-or-other-apps))).
   - Codex CLI e outros apps que usam a OpenAI Responses API: `/v1/responses`
     ([configuração](docs/DETAILS.md#the-responses-api-and-codex-cli)).
-- **Raciocínio:** escolha **off, low, medium ou high** no menu do chat ou no "reasoning effort" do seu app. Off é o
+- **Raciocínio:** escolha **off, low, medium ou high** na opção "reasoning effort" do seu app. Off é o
   mais rápido. High é o melhor para perguntas difíceis.
 - **Do seu celular ou de outro PC:** `START-HERE.bat --setup --host 0.0.0.0 --api-key <secret>`. Sempre defina uma chave.
 
@@ -284,12 +285,12 @@ Onde eles diferem:
 
 | | Qwen3.8-Flash-Next | GLM 5.3 Flash | DeepSeek V4 Flash | LFM2.5-24B-A2B | Flint 40B-A2.5B | Kolibri 1 | Qwen3.6-35B-A3B, Clover-35B-A3B-Preview, Ornith 1.5, Gemma 4 26B-A4B, Tiel Coder 35B-A3B, MiniCPM-V 4.7 35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Imagens** | Responda sim para "Images?" na instalação. Depois clique em **Picture** no chat, ou anexe imagens no seu app. Com menos de 24 GB de memória de vídeo, o codificador de imagens roda no processador, tanto na NVIDIA quanto na AMD. | Ainda não. | Ele só lê texto. | Ele só lê texto. | Ele só lê texto. | Ele só lê texto. | Responda sim para "Images?" na instalação, e depois como no Qwen3.8-Flash-Next. Numa placa com menos de 16 GB, o codificador de imagens roda no processador, e uma imagem leva alguns segundos. O Clover só lê texto. |
+| **Imagens** | Responda sim para "Images?" na instalação. Depois anexe imagens no seu app. Com menos de 24 GB de memória de vídeo, o codificador de imagens roda no processador, tanto na NVIDIA quanto na AMD. | Ainda não. | Ele só lê texto. | Ele só lê texto. | Ele só lê texto. | Ele só lê texto. | Responda sim para "Images?" na instalação, e depois como no Qwen3.8-Flash-Next. Numa placa com menos de 16 GB, o codificador de imagens roda no processador, e uma imagem leva alguns segundos. O Clover só lê texto. |
 | **Uma requisição por vez** | Por padrão, o PolyStrata responde uma requisição e as outras esperam. Para responder várias ao mesmo tempo, defina `"parallel": 2` ([BATCHING.md](docs/BATCHING.md)). Numa placa de 12 GB, isso deixa cada resposta mais lenta. | Uma por vez, as outras esperam. | Uma por vez, as outras esperam. | Uma por vez, as outras esperam. | Uma por vez, as outras esperam. | Uma por vez, as outras esperam. | Uma por vez, as outras esperam. |
 | **Várias conversas** | Por padrão várias ficam na RAM enquanto houver espaço, então as mensagens seguintes e os agentes que se revezam começam em segundos ([detalhes](docs/DETAILS.md#conversation-cache)). | A última é mantida. A instalação pergunta se deve manter várias na RAM, para que um agente e seus subagentes se revezem sem que os prompts sejam lidos de novo ([como](docs/GLM.md#several-conversations-at-once)). | Como o GLM 5.3 Flash. | Como o GLM 5.3 Flash. | Como o GLM 5.3 Flash. | Como o GLM 5.3 Flash. | Como o GLM 5.3 Flash. |
 | **Prompts longos** | O PolyStrata lê a primeira mensagem de uma conversa inteira, cerca de 1 minuto a cada 30,000 tokens. As mensagens seguintes começam em segundos. | A primeira mensagem é lida inteira, cerca de 40 segundos a cada 30,000 tokens. | A primeira mensagem é lida inteira, cerca de 29 segundos a cada 30,000 tokens. | A primeira mensagem é lida inteira: 30,000 tokens levam 1,3 a 1,5 segundo na estação de trabalho e 8 a 10 segundos no notebook de 8 GB. | A primeira mensagem é lida inteira: 30,000 tokens levam cerca de 2,3 segundos na estação de trabalho e 15 a 22 segundos no notebook de 8 GB. | A primeira mensagem é lida inteira: 30,000 tokens levam com Q2_K cerca de 6 segundos na estação de trabalho e cerca de 40 segundos no notebook de 8 GB. | A primeira mensagem é lida por inteiro: 30,000 tokens levam 4 a 5 segundos na estação de trabalho e 14 a 27 segundos no notebook de 8 GB. |
 
-Mais: [onde suas conversas ficam salvas](docs/INSTALL.md#where-things-are-stored), [a API](docs/DETAILS.md#using-it).
+Mais: [onde os arquivos ficam salvos](docs/INSTALL.md#where-things-are-stored), [a API](docs/DETAILS.md#using-it).
 
 ### Opcional: mais velocidade com uma placa quando o modelo inteiro cabe na RAM
 
