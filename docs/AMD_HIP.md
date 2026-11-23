@@ -522,6 +522,12 @@ before it installs a model.
   mapped after a larger one in the same reservation, so every piece of a reservation is made one size there (the
   expert cache had lost its last 64 MiB piece, and an attention cache grown to its end failed).
   `STRATA_VMM_EQUAL_PIECES=1` or `=0` turns that on or off on any Linux HIP build.
+- hipBLASLt loads a product type's kernels at its first call. On Windows (RX 9070 XT, ROCm 10.2.0a20260930) the
+  first single-precision product of a prompt took 4 s on one CPU thread with the card idle, inside the first prompt
+  of every strata-poly process. strata-poly now makes one small product of each kind the prompt uses (halves into
+  floats, and floats) while it loads, on HIP builds: there the first 302-token prompt took 1.35 s instead of 5.0 s
+  and the 2,048-token one 3.4 s instead of 7.2 s, and the load 11.6 s instead of 8.1 s (Inkling 2 Mini IQ4_NL,
+  `--vram-reserve-mib 3072`). `STRATA_POLY_WARMUP=0` leaves those products out.
 - Opt-in `--vram-pool` (strata-poly, VMM): the engine claims the card's VRAM once at load, as 2 MiB
   handles, and keeps it for the whole run. The attention caches and the expert cache trade handles of that pool as the
   context grows and shrinks, and nothing is released to the card, so the "released VRAM never returns" above does not

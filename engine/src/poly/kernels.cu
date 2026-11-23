@@ -3424,7 +3424,26 @@ void* blas_create(void* stream) {
     cublasGemmStridedBatchedEx(h, CUBLAS_OP_T, CUBLAS_OP_N, n, n, n, &one, a, CUDA_R_16F, n, n * n, a + n * n,
                                CUDA_R_16F, n, n * n, &zero, (float*) (a + 2 * n * n), CUDA_R_32F, n, n * n, 1,
                                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+#if defined(STRATA_USE_HIP)
+    // hipBLASLt loads a product type's kernels at its first call: on Windows the first single-precision product took
+    // 4 s with the card idle (an RX 9070 XT, ROCm 10.2), inside the first prompt.  A prompt's two other kinds of
+    // product, halves into floats and floats (gemm_f32), are made here once on the zeroed scratch, so the load happens
+    // while the model loads.  Nothing reads their results.  STRATA_POLY_WARMUP=0 leaves them out.
+    if (const char* v = std::getenv("STRATA_POLY_WARMUP"); !(v && v[0] == '0')) {
+        float* c = (float*) (a + 2 * n * n);
+        cublasGemmEx(h, CUBLAS_OP_T, CUBLAS_OP_N, n, n, n, &one, a, CUDA_R_16F, n, a + n * n, CUDA_R_16F, n, &zero, c,
+                     CUDA_R_32F, n, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+        const int m = n / 2;   // n * n floats of the scratch hold the two inputs and the output of m * m each
+        const float* f = (const float*) a;
+        cublasSgemm(h, CUBLAS_OP_T, CUBLAS_OP_N, m, m, m, &one, f, m, f + m * m, m, &zero, c, m);
+    }
+#endif
     cudaStreamSynchronize(cs(stream));
+#if defined(STRATA_USE_HIP)
+    // hipBLAS on Windows can leave a stale error behind a product that worked (prefill/gemm.cu): nothing reads these
+    // products, so whatever they leave must not reach the next launch's check
+    (void) cudaGetLastError();
+#endif
     cudaFree(p);
     return h;
 }
