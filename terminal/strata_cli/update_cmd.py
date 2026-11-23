@@ -30,9 +30,16 @@ import sys
 import threading
 from pathlib import Path
 
-#: Where the feed is read when nothing else is set: the files of the latest GitHub release of Niko1221/Strata (the same folder the
-#: one-line installers use). Only a feed signed with a key in update_keys.json (or STRATA_UPDATE_TRUSTED_KEYS) is accepted.
-DEFAULT_FEED = "https://github.com/Niko1221/Strata/releases/latest/download/strata-feed.json"
+from strata_cli import PRODUCT_VERSION
+
+#: (PolyStrata) The Strata project's release this tree was merged from: PRODUCT_VERSION is that release's, and a merge of a newer one
+#: brings its own.  Its files are where setup (setup.PREBUILT_URL) and `strata update` get that project's engine, Control and feed, so
+#: a newer release of that project does not change what an update installs here (#244: "latest" gave the 0.2.19 tree the 0.2.20 engine).
+STRATA_RELEASE = "v" + PRODUCT_VERSION
+STRATA_RELEASES = "https://github.com/Niko1221/Strata/releases/"
+#: Where the feed is read when nothing else is set: the files of STRATA_RELEASE. Only a feed signed with a key in update_keys.json
+#: (or STRATA_UPDATE_TRUSTED_KEYS) is accepted.
+DEFAULT_FEED = f"{STRATA_RELEASES}download/{STRATA_RELEASE}/strata-feed.json"
 ENV_FEED = "STRATA_UPDATE_FEED"
 
 ENV_APP_VERSION = "STRATA_APP_VERSION"
@@ -146,7 +153,8 @@ def _feed_source(a, root: Path) -> str:
     if os.environ.get(ENV_FEED):
         return os.environ[ENV_FEED]
     remembered = (updater.State(root).data.get("feed") or {}).get("source")
-    if remembered == DEFAULT_FEED:                    # the common feed remembered from before: a Linux ARM64 machine reads its own file
+    if isinstance(remembered, str) and remembered.startswith(STRATA_RELEASES):
+        # a default remembered from before (the latest release, an older STRATA_RELEASE, the common file on Linux ARM64): today's
         return default_feed()
     return remembered if _may_be_remembered(remembered) else default_feed()
 

@@ -302,9 +302,12 @@ LLAMA_CPP_COMMIT = "3cf03257f219afbe7334045ff7c6a06ac68c627d"
 # by tools/make_release.py.  Set this to the GitHub release download folder when publishing, e.g.
 # "https://github.com/<you>/PolyStrata/releases/latest/download/" (or pass --prebuilt / set STRATA_PREBUILT_URL).
 # With the default, the release of this checkout's own version (PREBUILT_TAG_URL, CMakeLists.txt's version) is
-# tried first and the latest release is the fallback (#214): an older checkout keeps the engine it shipped with.
-# The Qwen engine is the Strata project's, unchanged, so its ready-made build comes from that project's releases.
-PREBUILT_URL = "https://github.com/Niko1221/Strata/releases/latest/download/"
+# tried first and PREBUILT_URL is the fallback (#214): an older checkout keeps the engine it shipped with.
+# The Qwen engine is the Strata project's, unchanged, so its ready-made build comes from that project's releases:
+# (PolyStrata) the release this tree was merged from (update_cmd.STRATA_RELEASE), not the latest one (#244), and the
+# signed feed that has the 0.2 engines is that release's too (update_cmd.DEFAULT_FEED).
+from strata_cli import update_cmd  # noqa: E402
+PREBUILT_URL = f"{update_cmd.STRATA_RELEASES}download/{update_cmd.STRATA_RELEASE}/"
 # The repository the release assets and their SHA-256 come from; `engine_digest` reads the API here even
 # when --prebuilt points the download somewhere else, because the hash is only worth having if it comes
 # from somewhere the download does not.
