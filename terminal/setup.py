@@ -941,6 +941,9 @@ FAMILIES = {
                 "remote_suffix": "_file", "shards": 1,
                 "tag": "inkling-", "name": "inkling-2-mini", "engine": "poly", "vision": True, "experimental": True,
                 "windows": True, "ran_on_gb": 8, "row_bytes": 32768, "one_request": True,
+                # the engine's layer split is not built for Inkling 2 yet: it exits with "Inkling 2 runs on one
+                # card (--layer-split is not supported for it yet)", so setup never offers a pair to this family
+                "one_card": True,
                 # the picture reader: Unsloth's mmproj (strata-vision's inkling2v tower), beside the GGUFs' folder.  On
                 # a Mac the tower has no Metal kernels: setup_mac.py runs it on the CPU ("mac_vision_cpu")
                 "mmproj_hf": hf("unsloth/Inkling-2-Mini-GGUF"), "mmproj": "mmproj-F16.gguf", "mac_vision_cpu": True,
@@ -3001,6 +3004,10 @@ def offer_together(cfg_path: Path, cfg: dict, yes: bool) -> dict:
     """Starting a model set up for one card on a PC with two or more that can share it: asked once (the answer is
     saved in its config)."""
     if isinstance(cfg.get("gpu"), list) or cfg.get("gpus_asked"):
+        return cfg
+    # a family whose engine has no layer split (Inkling 2: "Inkling 2 runs on one card") never gets the pair, or
+    # the engine would exit the moment it starts
+    if FAMILIES.get(choices_from_config(cfg_path)["family"], {}).get("one_card"):
         return cfg
     found = gpus()
     can = together_ok(found)
@@ -10838,6 +10845,9 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
         cfg["tool_call_recovery"] = True
         ok("its tool calls are JSON inside the wrapper: they are read with the recovery (tool_call_recovery in the "
            "config)")
+    if multi and fam.get("one_card"):                  # the engine has no layer split for this family yet: it would
+        multi = []                                     # exit with "Inkling 2 runs on one card", so one card is set
+        warn(f"{title} runs on one card so far (--layer-split is not supported for it yet): using {gpu_name(gpu)}")
     if multi:                                          # the server passes --layer-split and orders the cards
         cfg["gpu"], cfg["gpus_asked"] = multi, True
         cfg["layer_split"] = a.layer_split or "auto"
