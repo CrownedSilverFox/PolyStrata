@@ -40,16 +40,6 @@ class VersionBump(unittest.TestCase):
         self.assertEqual(first("../engine/CMakeLists.txt", r"^project\(strata VERSION ([0-9.]+) "), "0.1.66")
         self.assertIn('STRATA_VERSION="0.1.66-metal"', (ROOT.parent / "engine" / "metal" / "CMakeLists.txt").read_text(encoding="utf-8"))
 
-    def test_every_place_the_app_version_lives_says_0_2_3(self):
-        self.assertEqual(first("../app/desktop/src-tauri/Cargo.toml", r'^version = "([^"]+)"'), "0.2.20")
-        lock = (ROOT.parent / "app" / "desktop" / "src-tauri" / "Cargo.lock").read_text(encoding="utf-8")
-        self.assertRegex(lock, r'name = "strata-desktop"\r?\nversion = "0.2.20"')
-        self.assertEqual(json.loads((ROOT.parent / "app" / "desktop" / "package.json").read_text(encoding="utf-8"))["version"], "0.2.20")
-        host = json.loads((ROOT.parent / "app" / "host" / "package.json").read_text(encoding="utf-8"))
-        self.assertEqual(host["version"], "0.2.20")
-        locked = json.loads((ROOT.parent / "app" / "host" / "package-lock.json").read_text(encoding="utf-8"))
-        self.assertEqual((locked["version"], locked["packages"][""]["version"]), ("0.2.20", "0.2.20"))
-
     def test_the_documents_that_state_the_current_version_agree(self):
         self.assertIn("Version 0.2.20, engine 0.1.66.", (ROOT.parent / "AGENTS.md").read_text(encoding="utf-8"))
         # PolyStrata's README.md and its translations offer no app download, so they state no app version (upstream's

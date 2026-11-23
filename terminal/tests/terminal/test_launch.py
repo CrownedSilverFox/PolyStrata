@@ -129,7 +129,7 @@ class CatalogRules(unittest.TestCase):
             self.assertEqual((rec["family"], rec["model"]), ("qwen", "IQ3_XXS"))
 
     def test_fit_on_matches_native_fit_ts(self):
-        # app/host/src/lib/native-fit.ts: memory = experts + 1; GPU holds experts up to vram - 5; RAM holds up to ram - 10; the rest spills
+        # native-fit (strata_cli/launch/catalog.py): memory = experts + 1; GPU holds experts up to vram - 5; RAM holds up to ram - 10; the rest spills
         f = fit_on({"experts_gb": 42.9, "ram_needed_gb": 60}, 64.0, 12.0)
         self.assertEqual((f["memoryGb"], f["vramUseGb"], f["spillGb"]), (43.9, 12.0, 0.0))
         self.assertAlmostEqual(f["ramUseGb"], 35.9, places=1)

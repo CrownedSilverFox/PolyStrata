@@ -28,7 +28,7 @@
 #   4. codesign --verify --deep --strict, spctl -a -vvv;
 #   5. smoke tests of the SIGNED copy (the app's own --self-test, node loading every native addon, python imports, the engine's --version,
 #      and Control's own engine manifest check), so a signing mistake shows up here and not on a tester's Mac;
-#   6. notarises the .app, staples it, rebuilds the dmg (same layout as app/desktop/scripts/make-dmg.sh), signs the dmg, notarises the dmg,
+#   6. notarises the .app, staples it, rebuilds the dmg (the Strata project's make-dmg.sh layout), signs the dmg, notarises the dmg,
 #      staples it, spctl -a -t open --context context:primary-signature -vv;
 #   7. Terminal archive: signs every Mach-O inside, re-zips, notarises the zip (a zip cannot be stapled: see the note at the end).
 #   7b. --engine FOLDER.tar.gz (an engine package of the Mac that Control installs from the feed, a tar of one folder: its program, its
@@ -554,7 +554,7 @@ process_app() {
     rm -f "$zip"
   fi
 
-  # the dmg, same layout as app/desktop/scripts/make-dmg.sh: the app, an Applications link, the volume icon, no Finder arrangement
+  # the dmg, the Strata project's make-dmg.sh layout: the app, an Applications link, the volume icon, no Finder arrangement
   vol="Strata ${version:-app}"
   mkdir -p "$WORK/final"
   out_dmg="$WORK/final/$dmg_name"

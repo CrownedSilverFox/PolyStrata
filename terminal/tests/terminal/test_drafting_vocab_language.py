@@ -273,14 +273,12 @@ class TheShippedFiles(unittest.TestCase):
 
 class ThePackagingLists(unittest.TestCase):
     """data/ goes into every package whole (packaging/package_terminal.py INSTALLER_DATA is the folder, not a list of files), so a choice's file is in the Terminal's installer bundle, the app's Control
-    component (app/desktop/scripts/stage-control.py takes the same name) and the Mac's Control. The Mac ENGINE folder (metal/data) carries only the default file, by design: the other choices are read from Control's data/."""
+    component and the Mac's Control. The Mac ENGINE folder (metal/data) carries only the default file, by design: the other choices are read from Control's data/."""
 
     def test_the_installer_data_is_the_whole_folder_and_leaves_no_registered_file_out(self):
         sys.path.insert(0, str(ROOT.parent / "tools" / "packaging"))
         import package_terminal as pt                                        # noqa: PLC0415
         self.assertEqual(pt.INSTALLER_DATA, "data")
-        stage = (ROOT.parent / "app" / "desktop" / "scripts" / "stage-control.py").read_text(encoding="utf-8")
-        self.assertIn("pt.INSTALLER_DATA", stage)
         source = (ROOT.parent / "tools" / "packaging" / "package_terminal.py").read_text(encoding="utf-8")
         self.assertIn("shutil.copytree(source / INSTALLER_DATA, folder / INSTALLER_DATA", source)
         self.assertNotIn("draft_vocab_", source.replace("draft_vocab\"", ""), "a per-file list would need every registered file named: none exists, the folder is copied")

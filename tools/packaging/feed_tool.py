@@ -388,8 +388,8 @@ TAURI_TARGET_NAMES = tuple(feedmod.TAURI_TARGETS.values())
 
 
 def _default_app_pubkey() -> str:
-    conf = Path(__file__).resolve().parents[2] / "app" / "desktop" / "src-tauri" / "tauri.conf.json"
-    return json.loads(conf.read_text(encoding="utf-8"))["plugins"]["updater"]["pubkey"]
+    keys = Path(__file__).resolve().parents[2] / "terminal" / "strata_control" / "update_keys.json"
+    return json.loads(keys.read_text(encoding="utf-8-sig"))["app_minisign_public"]
 
 
 def _check_mac_archive(archive: Path) -> None:
