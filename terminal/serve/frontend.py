@@ -915,7 +915,7 @@ def anthropic_to_messages(req: dict, think_unasked: bool = True) -> tuple[list[d
         # client that never asks would otherwise lose the thinking on every turn).  Anthropic's thinking is
         # opt-in there, and an effort alone does not ask for it. Claude Code's helper calls (a session title, a
         # topic check) ask for none and allow a few dozen tokens, which the model otherwise spent thinking and
-        # answered with no text at all; 2.1.282's title call also sends effort high.  The Chat settings' effort
+        # answered with no text at all; 2.1.282's title call also sends effort high.  The shared settings' effort
         # still applies: Service.with_shared sets "thinking" with it.  A request that gives its own
         # reasoning_budget_tokens (#123) asks for thinking, so it thinks as before.
         kwargs["enable_thinking"] = False

@@ -4078,7 +4078,7 @@ class JoinedEngineArgs(unittest.TestCase):
 
 
 class SharedSettings(unittest.TestCase):
-    """The web app's "Use for other apps too": POST /settings makes its Chat settings every client's defaults."""
+    """POST /settings makes the settings it is sent every client's defaults."""
 
     @classmethod
     def setUpClass(cls):
@@ -5339,7 +5339,7 @@ class ThinkingBudget(unittest.TestCase):
         self.assertTrue(b["choices"][0]["message"]["reasoning_content"].startswith(ThinkingEngine.THOUGHT[:20] + "\n"))
 
     def test_a_shared_budget_reaches_a_request_that_sets_none(self):
-        """The Chat settings shared with other apps may carry a thinking budget too, like max_tokens and the effort."""
+        """The settings shared with other apps may carry a thinking budget too, like max_tokens and the effort."""
         self.svc.set_shared({"reasoning_budget_tokens": 20})
         code, b = self.openai()                                    # a client that asks for no budget of its own
         self.assertEqual(code, 200, b)

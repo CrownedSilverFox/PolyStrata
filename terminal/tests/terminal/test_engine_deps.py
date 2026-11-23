@@ -197,7 +197,6 @@ class MacMinimumOs(unittest.TestCase):
             text = (ROOT.parent / script).read_text(encoding="utf-8")
             self.assertGreaterEqual(text.count("binary_deps.py") and text.count("--mac-min-os"), times, script)
         sign = (ROOT.parent / "tools" / "packaging" / "mac" / "sign-and-notarize.sh").read_text(encoding="utf-8")
-        self.assertIn('check_min_os "$app" "app"', sign)
         self.assertIn('check_min_os "$edir" "engine package"', sign)
 
 

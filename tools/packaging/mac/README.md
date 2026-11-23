@@ -2,7 +2,6 @@
 
 `sign-and-notarize.sh` signs the Mac Terminal archive and Mac engine packages with the Developer ID Application certificate, sends them
 to Apple's notary service and checks the result. After it, macOS runs them without the "damaged" / "unidentified developer" warning.
-The script can still sign a Strata app (`.dmg` or `.app`) as well; this repository does not build one.
 
 It has to run on the Mac that holds the certificate. It never asks for, reads or stores a password or a key: `codesign` and
 `notarytool` take them from the Keychain. The only names in it are the certificate (`Developer ID Application: Niko Veit (79LR4R7RSC)`)
@@ -46,8 +45,7 @@ folder with the feed key (this adds the release signature to the manifest) and b
 
 For the Terminal archive it signs every Mach-O inside (hardened runtime and a secure timestamp), packs it again in the format it came
 in (`.zip` or `.tar.gz`) and notarises it. For an engine package it does what the section above says. A finished file is written to
-`signed/` only after every step for it has passed. Given a `.dmg` or `.app`, it also signs, checks and notarises that app and rebuilds
-the dmg; the steps are listed at the top of the script.
+`signed/` only after every step for it has passed. The steps are listed at the top of the script.
 
 ## Entitlements
 

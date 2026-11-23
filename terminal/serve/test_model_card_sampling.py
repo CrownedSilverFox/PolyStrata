@@ -1,7 +1,7 @@
 """serve/test_model_card_sampling.py - a request that sends no sampling gets the model card's, not greedy (mock engine).
 
 Qwen's "Best Practices": thinking mode temperature 1.0 / top_p 0.95 / top_k 20, non-thinking 0.7 / 0.8 / 20 with
-presence_penalty 1.5.  The request's own fields win, then the Chat settings shared with apps, then the config's
+presence_penalty 1.5.  The request's own fields win, then the settings shared with apps, then the config's
 `sampling` block, then the card; temperature 0 asked for is still greedy.
 
     python -m unittest serve.test_model_card_sampling -v
@@ -126,7 +126,7 @@ class ModelCardSampling(unittest.TestCase):
         self.assertNotIn("penalty_present", self.keys())
         self.assertIn("penalty_present=1.5", self.keys(temperature=0.7))  # ... unless the request asks for more
         self.svc.sampling_defaults = {}
-        self.svc.shared = {"temperature": 0}                             # the shared Chat settings
+        self.svc.shared = {"temperature": 0}                             # the shared settings
         self.assertNotIn("penalty_present", self.keys())
 
     def test_asks_greedy(self):

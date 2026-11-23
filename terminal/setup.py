@@ -8514,7 +8514,7 @@ def readable_config(path: Path) -> bool:
 
 
 def model_config_files(folder: Path) -> list:
-    """#346: the strata-*.json files of a folder that can be model configs. The server keeps a config's Chat settings
+    """#346: the strata-*.json files of a folder that can be model configs. The server keeps a config's settings
     next to it as strata-<model>.shared-settings.json: it matches the pattern but is no config (no exe, no args)."""
     return [p for p in folder.glob("strata-*.json") if not p.name.endswith(".shared-settings.json")]
 

@@ -5041,13 +5041,13 @@ class Service:
                 setattr(self, key, value)
 
     def read_shared(self, config_path) -> None:
-        """The Chat settings shared with other apps (POST /settings), kept next to the model's run config as
+        """The settings shared with other apps (POST /settings), kept next to the model's run config as
         strata-<model>.shared-settings.json: from the last time this model ran."""
         self.shared_path = str(Path(config_path).with_suffix("")) + ".shared-settings.json"
         try:
             self.shared = clean_shared_defaults(json.loads(Path(self.shared_path).read_text(encoding="utf-8")))
             if self.shared:
-                print("[strata] other apps use the Chat settings: " +
+                print("[strata] other apps use the settings: " +
                       ", ".join(f"{k}={v}" for k, v in self.shared.items()), flush=True)
         except (OSError, ValueError):
             self.shared = {}
@@ -5570,7 +5570,7 @@ class Service:
         self.idle_thread.start()
 
     def set_shared(self, defaults) -> dict:
-        """The Chat settings every client gets for what it leaves out; {} / None = clients use their own again."""
+        """The settings every client gets for what it leaves out; {} / None = clients use their own again."""
         self.shared = clean_shared_defaults(defaults)
         if self.shared_path:
             try:
@@ -5583,7 +5583,7 @@ class Service:
         return self.shared
 
     def effort_default(self) -> str | None:
-        """The thinking level of a request that names none: the Chat settings shared with apps first, then the config's
+        """The thinking level of a request that names none: the settings shared with apps first, then the config's
         "reasoning_effort" (#1641).  Every API reads it here (the Responses API did not: 0.1.44.1)."""
         return self.shared.get("reasoning_effort") or self.config_effort
 
@@ -6359,7 +6359,7 @@ class Service:
              declared_only=False, deferred=False) -> Iterator[tuple[str, object]]:
         """Yields ("event", Event) as text arrives, then ("done", {"finish": .., "completion_tokens": ..}).
         `force` (forced_call): the opening of the call the reply must make - see prepare()."""
-        # the model card's sampling for this thinking state, then the config's block, then the Chat settings shared with
+        # the model card's sampling for this thinking state, then the config's block, then the settings shared with
         # apps; the request's own fields win over all of them
         # #3354: when MTP drafting is active (has_mtp) and the request does not explicitly ask for sampling,
         # omitted sampling parameters remain greedy so MTP drafts are not silently disabled by model card defaults.
@@ -8602,7 +8602,7 @@ def make_handler(svc: Service):
             except ValueError as e:
                 self._json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
                 return
-            print("[strata] other apps now use the Chat settings: " + ", ".join(f"{k}={v}" for k, v in shared.items())
+            print("[strata] other apps now use the settings: " + ", ".join(f"{k}={v}" for k, v in shared.items())
                   if shared else "[strata] other apps use their own settings again", flush=True)
             self._json(200, {"shared": bool(shared), "defaults": shared})
 
@@ -8935,7 +8935,7 @@ def make_handler(svc: Service):
                 print(f"[strata] /v1/responses: left out the hosted tools {', '.join(sorted(set(skipped) - noted))} "
                       f"(this server cannot run them)", flush=True)
                 noted.update(skipped)
-            if req.get("max_output_tokens") is None and "max_tokens" in svc.shared:   # the shared Chat settings
+            if req.get("max_output_tokens") is None and "max_tokens" in svc.shared:   # the shared settings
                 req = {**req, "max_output_tokens": svc.shared["max_tokens"]}
             try:
                 svc.reasoning_budget(req)                    # a bad value is a 400 before anything is sent
@@ -10035,7 +10035,7 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
     svc.keep_awake = KeepAwake.create(cfg.get("prevent_sleep") is True)      # #1727: opt-in, Windows only
     if svc.config_effort:                               # #1641: the thinking level of requests that name none
         print(f"[strata] thinking level: {svc.config_effort} (reasoning_effort in the config; a request, or the "
-              "Chat settings shared with other apps, can set its own)", flush=True)
+              "settings shared with other apps, can set its own)", flush=True)
     if svc.aliases:
         print(f"[strata] model aliases: {', '.join(svc.aliases)}", flush=True)
     if a.strict_model or cfg.get("strict_model") is True:
@@ -10144,11 +10144,11 @@ def _main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> i
     if a.config:
         svc.config_path = a.config                      # #564: the web page's Settings view
         svc.models_root = Path(a.config).resolve().parent   # the other models' configs are beside this one
-    if a.config:                                        # the Chat settings shared with other apps, from last time
+    if a.config:                                        # the settings shared with other apps, from last time
         svc.shared_path = str(Path(a.config).with_suffix("")) + ".shared-settings.json"
         svc.shared = load_shared_settings(svc.shared_path)      # #4933: one unknown key no longer clears the rest
         if svc.shared:
-            print("[strata] other apps use the Chat settings: " +
+            print("[strata] other apps use the settings: " +
                   ", ".join(f"{k}={v}" for k, v in svc.shared.items()), flush=True)
     switch = cfg.get("switch_on_request", False)        # #38: opt-in, read from the config the server starts with
     if not isinstance(switch, bool):

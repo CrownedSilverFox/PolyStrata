@@ -315,7 +315,7 @@ SHARED_KEYS = ("reasoning_effort", "reasoning_budget_tokens", "temperature", "to
 
 
 def load_shared_settings(path, warn=print) -> dict:
-    """The Chat settings kept next to a config between starts, read so that one bad key cannot erase the others.
+    """The settings kept next to a config between starts, read so that one bad key cannot erase the others.
 
     The strict reader below belongs to POST /settings, where a client is there to be told which key is wrong and can
     fix it.  At start-up nobody is there: the old code called the same strict reader and caught its ValueError with
@@ -330,10 +330,10 @@ def load_shared_settings(path, warn=print) -> dict:
     except FileNotFoundError:
         return {}                   # no file yet: the normal case on a first start, nothing to report
     except (OSError, ValueError) as e:
-        warn(f"[strata] the Chat settings in {path} are ignored ({e}); other apps use their own settings")
+        warn(f"[strata] the settings in {path} are ignored ({e}); other apps use their own settings")
         return {}
     if not isinstance(doc, dict):
-        warn(f"[strata] the Chat settings in {path} are ignored (a JSON object was expected, found "
+        warn(f"[strata] the settings in {path} are ignored (a JSON object was expected, found "
              f"{type(doc).__name__}); other apps use their own settings")
         return {}
     out = {}
@@ -346,7 +346,7 @@ def load_shared_settings(path, warn=print) -> dict:
 
 
 def clean_shared_defaults(d, hy4: bool = False) -> dict:
-    """The Chat settings other apps get (POST /settings): only known keys, each checked; ValueError names a bad one."""
+    """The settings other apps get (POST /settings): only known keys, each checked; ValueError names a bad one."""
     if d is None:
         return {}
     if not isinstance(d, dict):
@@ -604,7 +604,7 @@ def check_request_sampling(req) -> None:
 FAMILY_MODEL_NAMES = {"qwen4exp": "qwen3.8-flash-next", "qwen35moe": "qwen3.6-35b-a3b"}
 
 
-# The sampling each model card recommends ("Best Practices"), used when neither the request, the Chat settings nor the
+# The sampling each model card recommends ("Best Practices"), used when neither the request, the settings nor the
 # run config's `sampling` block says otherwise.  Greedy is only for a request or config that asks for temperature 0.
 # min_p 0, repetition_penalty 1 and presence_penalty 0 are the engine's own "off", so they are not listed.
 MODEL_CARD_SAMPLING = {

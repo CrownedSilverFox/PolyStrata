@@ -36,7 +36,6 @@ V = r"(\d+\.\d+(?:\.\d+)*)"
 LINES = [
     ("AGENTS.md", r"^Version " + V + r", engine " + V + r"\.", ["product_version", "engine_version"]),
     ("docs/AI_REFERENCE.md", r"PolyStrata on the Strata project's " + V + r", engine " + V + r"\)", ["product_version", "engine_version"]),
-    ("tools/packaging/UPDATES.md", r'"app": \{[^\n]*\n\s*"version": "' + V + '"', ["product_version"]),
     ("tools/packaging/UPDATES.md", r'"control": \{"version": "' + V + '"', ["control_version"]),
     ("tools/packaging/UPDATES.md", r"pack-control <control folder> --version " + V, ["control_version"]),
     ("tools/packaging/UPDATES.md", r"VERSION file\s*\n\s*# \(" + V + r"\)", ["control_version"]),

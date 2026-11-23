@@ -15,29 +15,24 @@ update downloads only the package for that PC's GPU.
 |---|---|---|
 | Engine package (per platform / backend / variant) | Control's component updater: download with resume, verify, install beside the old one, test-start, switch | the feed key (Ed25519) |
 | Control (Python runtime, `strata_control`, CLI, server) | the same updater: staged beside the running one, run once, then `components/control/active.json` points at it | the feed key |
-| The Strata project's desktop app (not built from this repository) | Tauri's signed updater; `strata update --app` downloads and checks its installer | the Tauri updater key (minisign) |
 
-Two separate private keys, both kept by the owner, neither in git, neither the same as Apple/Windows code signing:
+One private key, kept by the owner, not in git, not the same as Apple/Windows code signing:
 
 * **feed key**: Ed25519, signs `strata-feed.json` and every engine package manifest.
-* **Tauri updater key**: minisign (what `tauri signer generate` makes), signs the Strata app's installers.
 
 <a id="the-feed"></a>
 ## The feed (`strata-feed.json` + `strata-feed.json.sig`)
 
 `strata-feed.json.sig` is `{"alg": "ed25519", "key_id": "<16 hex>", "value": "<base64>"}` over the **exact bytes** of
 `strata-feed.json` (no canonicalisation). The annotated example below illustrates the format; it is not a current signed feed.
-Comments are for this document only; actual feed files must be strict JSON.
+Comments are for this document only; actual feed files must be strict JSON. A Strata feed may also carry an `app` member (that
+project's desktop app installers); PolyStrata ignores it.
 
 ```jsonc
 {
   "schema_version": 1, "feed": "strata-updates", "channel": "stable",
   "sequence": 12,                           // goes up with every feed; an older one than the last accepted is refused
   "generated_at": "2026-10-20T10:00:00Z", "expires_at": "2027-10-20T10:00:00Z",   // expires_at may be null
-  "app": {                                  // exactly Tauri's static updater JSON, plus sha256/size per platform
-    "version": "0.2.20", "notes": "...", "pub_date": "2026-10-20T10:00:00Z",
-    "platforms": {"windows-x86_64": {"url": "app/Strata-0.2.20-windows-x64-setup.exe", "signature": "<minisign, base64>", "sha256": "...", "size": 71000000}}
-  },
   "control": {"version": "0.1.66", "packages": [{"platform": "linux-x86_64", "format": "tar.gz", "url": "control/...tar.gz",
                                                   "size": 0, "sha256": "...", "installed_bytes": 0, "entry": "strata.py"}]},
   "engine": {"packages": [{
@@ -151,7 +146,7 @@ Saved tuning presets: when the engine identity changed (version, build id, manif
 
 ### Commands
 
-    strata update [--check] [--app] [--no-engine] [--no-control] [--feed URL|DIR] [--wait S] [--force] [--model-config RUN.json]
+    strata update [--check] [--no-engine] [--no-control] [--feed URL|DIR] [--wait S] [--force] [--model-config RUN.json]
     strata components update            # the same
     strata components rollback          # back to the previous engine (an engine switch; nothing is downloaded)
     strata components engines [--output json]   # every installed engine (Qwen and the model-shape engines), sizes, which one is in use: what Settings > Engine shows
@@ -171,14 +166,10 @@ Exit codes: 0 done or nothing to do, 5 refused (signature, hash, downgrade, no t
 On an offline machine, outside any git checkout:
 
     python packaging/feed_tool.py keygen --out D:\strata-keys          # feed-key.json (SECRET) + feed-key.pub.json
-    npx tauri signer generate -w D:\strata-keys\tauri-updater.key      # asks for a password; prints the public key
 
-Back both up (a lost feed key means every installed PC needs a build with a new key; a lost Tauri key means the same for the app).
-Then, in git, once, in the commit that ships the first signed release (the release key id is `5d1bc23abbeffd0d`):
-
-* the `keys` entry from `feed-key.pub.json` into `strata_control/update_keys.json`;
-* the Tauri public key into `update_keys.json` as `app_minisign_public` (`strata update --app` verifies the Strata app's
-  installer with it).
+Back it up (a lost feed key means every installed PC needs a build with a new key). Then, in git, once, in the commit that ships
+the first signed release (the release key id is `5d1bc23abbeffd0d`): the `keys` entry from `feed-key.pub.json` into
+`strata_control/update_keys.json`.
 
 Only release keys live in `update_keys.json`. A tester or local-test key is never added there: it is passed with `STRATA_UPDATE_TRUSTED_KEYS`
 (a file of extra public keys; `packaging/make_local_feed.py` writes one as `test-trust.json`), so private tester builds keep working
@@ -188,7 +179,7 @@ A key rotation is a release that carries both public keys; the old private key s
 
 ## Releasing
 
-Keys live only on the release PC (`feed-key.json`, `tauri-updater.key`). Every build box builds without a key. All signing happens on the
+The key lives only on the release PC (`feed-key.json`). Every build box builds without a key. All signing happens on the
 release PC, on the finished files.
 
 **What is built.** The engine packages (one per platform, backend and variant) and a Control package per platform. Engines come per card
@@ -227,7 +218,7 @@ Publish as a normal release (latest): a pre-release is not found by `latest/down
 
 Everything above runs against a folder or a loopback server: `tests/terminal/test_update_feed.py` (signatures, hashes, downgrades, selection),
 `tests/terminal/test_updater.py` (end to end against a loopback HTTP feed with stub engines: update, test-start, switch; a failing test start
-keeps the old engine; an interrupted download resumes; rollback; Control; the app installer's minisign check). For a real engine on a box, build a package with `packaging/package_engine.py`, serve it from a local feed made by `packaging/make_local_feed.py`, and run `strata update --feed` against it.
+keeps the old engine; an interrupted download resumes; rollback; Control). For a real engine on a box, build a package with `packaging/package_engine.py`, serve it from a local feed made by `packaging/make_local_feed.py`, and run `strata update --feed` against it.
 
 ### Release gate: a feed model installed from a real file
 
@@ -242,7 +233,5 @@ Run it before every release that touches `setup.py`, `strata_control/feed_models
 
 ## History / older measurements
 
-- **Keys:** the feed key and the Tauri updater key were created once and the feed key's public half was committed in `strata_control/update_keys.json`
+- **Keys:** the feed key was created once and its public half was committed in `strata_control/update_keys.json`
   with the first signed release (0.2.0-beta). Terminals from before that build trust no key and refuse every feed.
-- **Engine-less installers:** an app update once carried an engine. The Windows and Linux installers now drop `engine-bundle`
-  (`tauri.update.conf.json`), so one `latest.json` entry per OS serves every card variant.
