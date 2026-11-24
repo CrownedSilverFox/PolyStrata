@@ -973,63 +973,88 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
         }
     }
 #elif I8M_DOT4
-    // HIP without matrix cores (RDNA2): the products on the signed dot4, __dp4a (v_dot4_i32_i8).  Thread tid takes
-    // weight row tid % 64 of the block and the activation rows tid / 64 + 4 j: the 32 lanes of a wave read the same
-    // activation row (one LDS read for all) and 32 weight rows, whose 8 words a block they keep in registers while
-    // they go down the rows.  A product as CUDA's and the WMMA bodies', term for term: per 32-value block (per 16
-    // values for a type with a scale per 16) its integer sum, exact in any order, then sum * (weight scale *
-    // activation scale) added to the float sum, then the minimum's term, the blocks in their order; so the bits are
-    // the same.
+    // HIP without matrix cores (RDNA2): the products on the signed dot4, __dp4a (v_dot4_i32_i8).  Thread tid takes the
+    // weight rows wg + 16 i (i = 0..3, wg = tid % 16) and the activation rows ag + 16 j (ag = tid / 16, j < MT / 16): a
+    // block's 4 x 8 weight words and 8 activation words a row go from LDS into registers once and into 4 x MT / 16
+    // products.  A product as CUDA's and the WMMA bodies', term for term: per 32-value block (per 16 values for a type
+    // with a scale per 16) its integer sum, exact in any order, then sum * (weight scale * activation scale) added to
+    // the float sum, then the minimum's term, the blocks in their order; so the bits are the same.
     static_assert(NT == 256 && WR == 64, "the dot4 products are written for 256 threads and 64 weight rows");
-    constexpr int RM = MT / 4;   // activation rows a thread
-    const int wn = tid & 63, mg = tid >> 6;
-    float acc[RM];
+    constexpr int TJ = MT / 16;   // activation rows a thread
+    const int wg = tid & 15, ag = tid >> 4;
+    float acc[4][TJ];
 #pragma unroll
-    for (int j = 0; j < RM; ++j) acc[j] = 0.0f;
-    const uint32_t* const w_row = s_w + wn * I8M_LD;
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < TJ; ++j) acc[i][j] = 0.0f;
+    const auto dot8 = [](const uint4& xa, const uint4& xb, const uint4& wa, const uint4& wb) {
+        int c = __dp4a((int) xa.w, (int) wa.w, __dp4a((int) xa.z, (int) wa.z, __dp4a((int) xa.y, (int) wa.y, __dp4a((int) xa.x, (int) wa.x, 0))));
+        return __dp4a((int) xb.w, (int) wb.w, __dp4a((int) xb.z, (int) wb.z, __dp4a((int) xb.y, (int) wb.y, __dp4a((int) xb.x, (int) wb.x, c))));
+    };
     const auto multiply = [&]() {
         if constexpr (TWO) {
 #pragma unroll 2
             for (int q = 0; q < 16; ++q) {   // a 16-value part
-                const uint4 wq = *(const uint4*) (w_row + 4 * q);
-                const float w = s_ws[wn * LDS + q];
-                float m16 = 0.0f;
-                if constexpr (MIN16) m16 = s_m16[wn * LDM + q];
+                uint4 wq[4];
+                float w[4], m16[4];
 #pragma unroll
-                for (int j = 0; j < RM; ++j) {
-                    const int m = mg + 4 * j;
+                for (int i = 0; i < 4; ++i) {
+                    const int r = wg + 16 * i;
+                    wq[i] = *(const uint4*) (s_w + r * I8M_LD + 4 * q);
+                    w[i] = s_ws[r * LDS + q];
+                    m16[i] = 0.0f;
+                    if constexpr (MIN16) m16[i] = s_m16[r * LDM + q];
+                }
+#pragma unroll
+                for (int j = 0; j < TJ; ++j) {
+                    const int m = ag + 16 * j;
                     if (m >= ntok) break;
                     const uint4 xq = *(const uint4*) (s_x + m * I8M_LD + 4 * q);
-                    const int c = __dp4a((int) xq.w, (int) wq.w, __dp4a((int) xq.z, (int) wq.z,
-                                  __dp4a((int) xq.y, (int) wq.y, __dp4a((int) xq.x, (int) wq.x, 0))));
-                    acc[j] = fmaf((float) c, w * s_xq[(q >> 1) * XSTR + m], acc[j]);
-                    if constexpr (MIN16) acc[j] = fmaf(m16, s_x16[q * S16 + m], acc[j]);
+                    const float xs = s_xq[(q >> 1) * XSTR + m];
+                    float sm = 0.0f;
+                    if constexpr (MIN16) sm = s_x16[q * S16 + m];
+#pragma unroll
+                    for (int i = 0; i < 4; ++i) {
+                        const int c = __dp4a((int) xq.w, (int) wq[i].w, __dp4a((int) xq.z, (int) wq[i].z,
+                                      __dp4a((int) xq.y, (int) wq[i].y, __dp4a((int) xq.x, (int) wq[i].x, 0))));
+                        acc[i][j] = fmaf((float) c, w[i] * xs, acc[i][j]);
+                        if constexpr (MIN16) acc[i][j] = fmaf(m16[i], sm, acc[i][j]);
+                    }
                 }
             }
         } else {
-#pragma unroll 2
+#pragma unroll 1
             for (int kb = 0; kb < 8; ++kb) {   // a 32-value block
-                const uint4 wa = *(const uint4*) (w_row + 8 * kb), wb = *(const uint4*) (w_row + 8 * kb + 4);
-                float w, mn = 0.0f;
-                if constexpr (SM::PK) {
-                    const float2 v = *(const float2*) (s_ws + wn * LDS + 2 * kb);
-                    w = v.x;
-                    mn = v.y;
-                } else {
-                    w = s_ws[wn * LDS + kb];
-                    if constexpr (HAS_MIN) mn = s_wm[wn * LDB + kb];
+                uint4 wa[4], wb[4];
+                float w[4], mn[4];
+#pragma unroll
+                for (int i = 0; i < 4; ++i) {
+                    const int r = wg + 16 * i;
+                    wa[i] = *(const uint4*) (s_w + r * I8M_LD + 8 * kb);
+                    wb[i] = *(const uint4*) (s_w + r * I8M_LD + 8 * kb + 4);
+                    mn[i] = 0.0f;
+                    if constexpr (SM::PK) {
+                        const float2 v = *(const float2*) (s_ws + r * LDS + 2 * kb);
+                        w[i] = v.x;
+                        mn[i] = v.y;
+                    } else {
+                        w[i] = s_ws[r * LDS + kb];
+                        if constexpr (HAS_MIN) mn[i] = s_wm[r * LDB + kb];
+                    }
                 }
 #pragma unroll
-                for (int j = 0; j < RM; ++j) {
-                    const int m = mg + 4 * j;
+                for (int j = 0; j < TJ; ++j) {
+                    const int m = ag + 16 * j;
                     if (m >= ntok) break;
                     const uint4 xa = *(const uint4*) (s_x + m * I8M_LD + 8 * kb), xb = *(const uint4*) (s_x + m * I8M_LD + 8 * kb + 4);
-                    int c = __dp4a((int) xa.w, (int) wa.w, __dp4a((int) xa.z, (int) wa.z,
-                            __dp4a((int) xa.y, (int) wa.y, __dp4a((int) xa.x, (int) wa.x, 0))));
-                    c = __dp4a((int) xb.w, (int) wb.w, __dp4a((int) xb.z, (int) wb.z,
-                        __dp4a((int) xb.y, (int) wb.y, __dp4a((int) xb.x, (int) wb.x, c))));
-                    acc[j] = fmaf((float) c, w * s_xq[kb * XSTR + m], acc[j]);
-                    if constexpr (HAS_MIN) acc[j] = fmaf(mn, s_xq[kb * XSTR + MT + m], acc[j]);
+                    const float xs = s_xq[kb * XSTR + m];
+                    float sm = 0.0f;
+                    if constexpr (HAS_MIN) sm = s_xq[kb * XSTR + MT + m];
+#pragma unroll
+                    for (int i = 0; i < 4; ++i) {
+                        acc[i][j] = fmaf((float) dot8(xa, xb, wa[i], wb[i]), w[i] * xs, acc[i][j]);
+                        if constexpr (HAS_MIN) acc[i][j] = fmaf(mn[i], sm, acc[i][j]);
+                    }
                 }
             }
         }
@@ -1045,14 +1070,18 @@ __global__ void __launch_bounds__(i8m_threads(T, NJ, WR)) i8m_kernel(const uint8
         if (S + 1 < stages) fetch(S + 1);   // read while this stage is multiplied
         multiply();
     }
-    const int n = n0 + wn;
-    if (n >= n_out) return;
 #pragma unroll
-    for (int j = 0; j < RM; ++j) {
-        const int m = mg + 4 * j;
+    for (int j = 0; j < TJ; ++j) {
+        const int m = ag + 16 * j;
         if (m >= ntok) break;
         const int id = s_id[m];
-        if (id >= 0) Y[(size_t) id * (size_t) ldy + n] = acc[j];
+        if (id < 0) continue;
+        float* const out = Y + (size_t) id * (size_t) ldy;
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            const int n = n0 + wg + 16 * i;
+            if (n < n_out) out[n] = acc[i][j];
+        }
     }
 #else
     // The products of a stage.  A warp's operands come out of shared memory by ldmatrix, four 8 x 16-byte pieces an
