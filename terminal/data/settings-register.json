@@ -23817,6 +23817,66 @@
    "retired_in": ""
   },
   {
+   "name": "STRATA_MMQ_TEST_DUMP",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/mmq_paths_test.cu",
+     "line": 83,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "status": "research",
+   "owner": "poly",
+   "note": "test only: poly_mmq_paths_test writes each int8 product's floats to DIR/<type>_<K>_<case>.bin and the inputs' hashes to DIR/inputs.txt, to compare CUDA's and HIP's int8 tiles bit for bit (engine/src/poly/mmq_paths_test.cu)",
+   "retire_after": "",
+   "retired_in": "",
+   "first_date": "2026-11-24",
+   "last_date": "2026-11-24"
+  },
+  {
+   "name": "STRATA_MMQ_TEST_REF",
+   "backends": [
+    "cuda-hip"
+   ],
+   "reads": [
+    {
+     "file": "engine/src/poly/mmq_paths_test.cu",
+     "line": 87,
+     "backend": "cuda-hip",
+     "fn": "getenv"
+    }
+   ],
+   "parse": "flag",
+   "default_state": null,
+   "code_default": null,
+   "engine_sets": [],
+   "engine_defaults": [],
+   "launch_files": [],
+   "launch_sets": [],
+   "launch_reads": [],
+   "doc_mentions": [],
+   "status": "research",
+   "owner": "poly",
+   "note": "test only: poly_mmq_paths_test compares each int8 product's bytes with DIR's file of the same name (another card's STRATA_MMQ_TEST_DUMP) and fails where one is missing or differs (engine/src/poly/mmq_paths_test.cu)",
+   "retire_after": "",
+   "retired_in": "",
+   "first_date": "2026-11-24",
+   "last_date": "2026-11-24"
+  },
+  {
    "name": "STRATA_MMQ_TIER_SORT",
    "backends": [
     "cuda-hip"
