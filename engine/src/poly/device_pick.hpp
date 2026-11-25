@@ -24,7 +24,7 @@ struct Pick {
 
 // The APUs (Ryzen iGPUs) whose flag may read 0 under some drivers.
 inline bool apu_arch(const std::string& arch) {
-    for (const char* a : {"gfx1036", "gfx1103", "gfx1150", "gfx1151", "gfx1152", "gfx1153"})
+    for (const char* a : {"gfx90c", "gfx1035", "gfx1036", "gfx1103", "gfx1150", "gfx1151", "gfx1152", "gfx1153"})
         if (arch.compare(0, std::strlen(a), a) == 0 && (arch.size() == std::strlen(a) || arch[std::strlen(a)] == ':'))
             return true;
     return false;
@@ -61,7 +61,7 @@ inline Pick pick(const std::vector<Dev>& devs, bool env_set) {
 }
 
 inline bool env_selects_devices() {
-    for (const char* v : {"HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"}) {
+    for (const char* v : {"HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL"}) {
         const char* s = std::getenv(v);
         if (s && *s) return true;
     }
