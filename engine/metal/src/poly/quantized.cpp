@@ -91,18 +91,28 @@ void qrun(const std::string& name,const QArgs& a,void* s,gpu::metal::Grid groups
 // weight piece decoded once for all the rows.  The others take poly_mulr, which decodes it again for each row.
 bool mulr2_type(int t) {
     switch(t) {
-    case 8: case 14:                                                       // q8_0, q6_K
+    case 8: case 14: case 40:                                              // q8_0, q6_K, nvfp4
     case 2: case 3: case 6: case 7: case 39: case 10: case 11: case 13:     // q4_0 q4_1 q5_0 q5_1 mxfp4 q2_K q3_K q5_K
     case 17: case 18: case 20: case 21: case 23: case 29: return true;     // iq2_xs iq3_xxs iq4_nl iq3_s iq4_xs iq1_m
     default: return false;
     }
 }
-// native_mmvq() of 2 to 8 rows: NR outputs a SIMD group, 4 where the matrix has 8,192 outputs or more and 1 below, Q5_1
-// always 1, as qrun() takes them for poly_mul
+// native_mmvq() of 2 to 8 rows: uses MAXR=4 (1r4 for q8_0/q6_K, 2r4 for large q5_K) for rows<=4 to halve accumulator
+// register pressure while preserving high TG occupancy.
 void mulr_run(int type,const QArgs& a,void* s) {
     static const auto source=quant_source();
-    const int nr=type!=7 && a.no>=8192?4:1;
-    const std::string kernel=std::string(mulr2_type(type)?"poly_mulr2_":"poly_mulr_")+quant_name(type)+(nr==1?"_1":"");
+    const bool r2=mulr2_type(type);
+    if(type==8 && a.rows<=4) {
+        dispatch("poly_quantized",source,"poly_mulr2_q8_0_1r4",a,s,{uint32_t(a.no),1,1},32,{a.p,6,true,nullptr});
+        return;
+    }
+    if((type==13 || type==14) && a.rows<=4) {
+        const std::string k=std::string("poly_mulr2_")+quant_name(type)+"_1r4";
+        dispatch("poly_quantized",source,k.c_str(),a,s,{uint32_t(a.no),1,1},32,{a.p,6,true,nullptr});
+        return;
+    }
+    const int nr=!r2 && type!=7 && a.no>=8192?4:1;
+    const std::string kernel=std::string(r2?"poly_mulr2_":"poly_mulr_")+quant_name(type)+(nr==1?"_1":"");
     dispatch("poly_quantized",source,kernel.c_str(),a,s,{uint32_t((a.no+nr-1)/nr),1,1},32,{a.p,6,true,nullptr});
 }
 const char* quant_name(int t) {
@@ -131,6 +141,11 @@ size_t native_mmvq_weight_bytes(int t,int ni,int no) {
 void native_quantize_q8_1(const float* x,void* q,int n,int rows,void* s) {
     native_q8_1_bytes(n,rows);
     QArgs a;a.p[0]=x;a.p[1]=q;a.ni=n;a.rows=rows;a.xstride=n;
+    qrun("poly_quantize",a,s,{uint32_t(n/32),uint32_t(rows),1});
+}
+void native_swiglu_quantize_q8_1(const float* gate,const float* up,void* q,int n,int rows,void* s) {
+    native_q8_1_bytes(n,rows);
+    QArgs a;a.p[0]=gate;a.p[1]=q;a.p[3]=up;a.ni=n;a.rows=rows;a.xstride=n;a.kind=1;
     qrun("poly_quantize",a,s,{uint32_t(n/32),uint32_t(rows),1});
 }
 void native_add_rms_norm_q8_1(float* x,const float* add,const float* w,float* y,void* q,int n,int rows,float eps,int,void* s) {
@@ -162,9 +177,16 @@ bool native_mmvq_slots(int t,const MmvqSlots& a,int count,int ni,int no,void* s)
 }
 bool native_mmvq_ids(int t,const MmvqIds& a,int count,int ni,int no,void* s) {
     if(!native_mmvq_supported(t)) return false;
+    if(!count) return true;
     native_mmvq_weight_bytes(t,ni,no);
     QArgs q;q.p[0]=a.table;q.p[1]=a.x;q.p[2]=a.y;q.p[3]=a.ids;q.ni=ni;q.no=no;q.rows=count;
     q.xstride=a.x_stride;q.ystride=a.y_stride;q.offset=a.offset;q.every=a.x_every;q.kind=1;
+    if(t==40 && no%4==0 && gpu::metal::optimize() && uint64_t(no)*count>=8192) {
+        static const auto source=quant_source();
+        dispatch("poly_quantized",source,"poly_mul_nvfp4_k1",q,s,
+                 {uint32_t(no/4),uint32_t(count),1},32,{q.p,6,true,q.p[0]});
+        return true;
+    }
     qrun(std::string("poly_mul_")+quant_name(t),q,s,{uint32_t(no),uint32_t(count),1});return true;
 }
 // Any type poly_mul has: the matrices' outputs one after another in one launch (kind 9), each output the sum
@@ -187,6 +209,34 @@ void native_mmvq_many(int t,const NativeMmvqMany& m,int ni,void* s) {
     q.stride=packed[0];q.xstride=packed[1];q.ystride=packed[2];q.offset=packed[3];
     qrun(std::string("poly_mul_")+quant_name(t),q,s,{total,1,1});
 }
+bool native_mmvq_many_rows_fits(int t,const NativeMmvqMany& m,int ni,int rows) {
+    if(rows==1) return native_mmvq_many_fits(t,m,ni);
+    return rows>=2 && rows<=8 && mulr2_type(t) && gpu::metal::optimize() && native_mmvq_many_fits(t,m,ni);
+}
+void native_mmvq_many_rows(int t,const NativeMmvqMany& m,int ni,int rows,void* s) {
+    if(rows==1) { native_mmvq_many(t,m,ni,s); return; }
+    if(!native_mmvq_many_rows_fits(t,m,ni,rows)) throw std::invalid_argument("native_mmvq_many_rows: not these matrices");
+    QArgs q;q.ni=ni;q.rows=rows;q.count=m.count;q.kind=9;
+    uint64_t packed[4]={};
+    uint32_t total=0;
+    for(int j=0;j<m.count;++j) {
+        q.p[3*j]=m.w[j];q.p[3*j+1]=m.x_q8_1[j];q.p[3*j+2]=m.y[j];
+        packed[j/2]|=uint64_t(uint32_t(m.n_out[j]))<<(32*(j%2));
+        total+=uint32_t(m.n_out[j]);
+    }
+    q.stride=packed[0];q.xstride=packed[1];q.ystride=packed[2];q.offset=packed[3];
+    static const auto source=quant_source();
+    int nr=1;
+    std::string kernel=std::string("poly_mulr2_")+quant_name(t)+"_1";
+    if(t==8 && rows<=4) {
+        kernel="poly_mulr2_q8_0_1r4";
+    } else if((t==13 || t==14) && rows<=4) {
+        kernel=std::string("poly_mulr2_")+quant_name(t)+"_1r4";
+    }
+    uint32_t gx=0;
+    for(int j=0;j<m.count;++j) gx+=(uint32_t(m.n_out[j])+nr-1)/nr;
+    dispatch("poly_quantized",source,kernel.c_str(),q,s,{gx,1,1},32,{q.p,size_t(3*q.count),true,nullptr});
+}
 }
 namespace strata::poly {
 using namespace metal_detail;
@@ -199,6 +249,11 @@ Mmq::Mmq() {
     for(int t=0;t<64;++t) if(quant_name(t))
         for(const char* tile:{"","_1"})
             gpu::metal::pipeline("poly_quantized",source.c_str(),(std::string("poly_mul_")+quant_name(t)+tile).c_str(),error);
+    for(const char* k:{"poly_mulr2_q8_0_1r4","poly_mulr2_q8_0_1",
+                       "poly_mulr2_q5_K_1r4","poly_mulr2_q5_K_1",
+                       "poly_mulr2_q6_K_1r4","poly_mulr2_q6_K_1",
+                       "poly_mul_nvfp4_k1"})
+        gpu::metal::pipeline("poly_quantized",source.c_str(),k,error);
 }
 Mmq::~Mmq() = default;
 bool Mmq::fits(int t,int64_t rows,int64_t cols) {

@@ -220,6 +220,10 @@ struct NativeMmvqMany {
 /// type, the small-K layout, a packed tensor, the wave layout).
 bool native_mmvq_many_fits(int ggml_type, const NativeMmvqMany& m, int n_in);
 void native_mmvq_many(int ggml_type, const NativeMmvqMany& m, int n_in, void* stream);
+#if defined(STRATA_GPU_METAL)
+bool native_mmvq_many_rows_fits(int ggml_type, const NativeMmvqMany& m, int n_in, int rows);
+void native_mmvq_many_rows(int ggml_type, const NativeMmvqMany& m, int n_in, int rows, void* stream);
+#endif
 /// native_mmvq() of 1 to 8 matrices of one width, one column each, each of its own type (types[j]) and on a q8_1
 /// input of its own, in ONE launch: each row's block is the one-row-a-block kernel native_mmvq() runs for its matrix
 /// alone, the same bits.  Q8_0, Q4_K, Q5_K and Q6_K, CUDA only.  False, with nothing launched, where one of the
