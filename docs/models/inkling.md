@@ -277,9 +277,11 @@ every expert on the CPU the answers match an RTX 2070 Super's: on the RX 7900 XT
 64 of 64 steps after a 302-token prompt, and at 15 to 16 of 16 after 2,048 tokens. On RDNA4 the prompt's FP16 products
 go through hipBLASLt, which rounds them differently: after one 2,048-token prompt that is unusually sensitive, the RX
 9070 XT's answers differed from CUDA's more than the RX 7900 XT's, and with `ROCBLAS_USE_HIPBLASLT=0` as much as the
-RX 7900 XT's; after 302 and 8,192 tokens they match CUDA's. Use an NVIDIA card or a Mac for now.
+RX 7900 XT's; after 302 and 8,192 tokens they match CUDA's. Users have since run it without a container: an RX 9070
+XT on Windows 11 with the engine setup built ([#323](https://github.com/simplexai-labs/PolyStrata/issues/323)) and an
+RX 9060 XT on Linux ([#309](https://github.com/simplexai-labs/PolyStrata/issues/309)). Use an NVIDIA card or a Mac for now.
 
-Not run yet: an AMD card on native Linux or Windows, `--expert-gpu` on two cards (built but not run), `--layer-split`
+Not run yet: `--expert-gpu` on two cards (built but not run), `--layer-split`
 on two unequal cards (below; it has run on two RTX 2070 Super), UD-Q4_K_XL on the 8 GB card and UD-Q4_K_XL on a Mac.
 Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card; on a Mac, on the CPU. The
 draft file is an option (`--draft-model`). Several requests at once (`"parallel"`, see [BATCHING.md](../BATCHING.md))
