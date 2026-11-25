@@ -235,7 +235,138 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
         if(!lane) out_y[yrow*a.ystride+o0+r]=sum;
     }
 }
-#define MUL_(name,QK,DOT,NR,SUFFIX) template [[host_name("poly_mul_" #name SUFFIX)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>) poly_mul<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>;
+// native_mmvq() of 2 to 8 rows (kind 0: the rows' Q8_1 blocks xstride apart, outputs ystride apart): a SIMD group
+// takes NR outputs for every row, so a weight block is read once for all of them where poly_mul reads it once a row.
+// Each row's sum is the one poly_mul gives it alone: the same values in the same order, the same simd_sum.
+template<typename Block,int QK,void Deq(device const Block*,short,thread float4x4&),typename Dot,int NR>
+kernel void poly_mulr(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_position_in_grid]],
+                      uint lane [[thread_index_in_threadgroup]]) {
+    const int no=a.no,rows=a.rows;
+    const int o0=int(group.x)*NR,nr=NR==1?1:min(NR,no-o0);
+    const ulong per=a.ni/QK;
+    device const Block* weights=reinterpret_cast<device const Block*>(static_cast<device uchar*>(a.p[0]))+ulong(o0)*per;
+    device const uchar* x0=static_cast<device uchar*>(a.p[1]);
+    device float* out_y=static_cast<device float*>(a.p[2]);
+    float acc[8][NR]={};
+    for(int start=lane*16;start<a.ni;start+=32*16) {
+        const short il=short((start%QK)/16);
+        for(int t=0;t<8;++t) {
+            if(t>=rows) break;
+            float xv[16];
+            device const uchar* block=x0+ulong(t)*a.xstride+(start/32)*36;
+            const float d=float(*reinterpret_cast<device const half*>(block));
+            device const char4* q=reinterpret_cast<device const char4*>(block+4+start%32);
+            for(int j=0;j<4;++j) { const float4 v=d*float4(q[j]); xv[4*j]=v[0];xv[4*j+1]=v[1];xv[4*j+2]=v[2];xv[4*j+3]=v[3]; }
+            float xs=0;
+            if(Dot::kSum) for(int j=0;j<16;++j) xs+=xv[j];
+            for(int r=0;r<nr;++r) acc[t][r]+=Dot::run(weights+r*per+start/QK,il,xv,xs);
+        }
+    }
+    for(int t=0;t<8;++t) {
+        if(t>=rows) break;
+        for(int r=0;r<nr;++r) {
+            const float sum=simd_sum(acc[t][r]);
+            if(!lane) out_y[ulong(t)*a.ystride+o0+r]=sum;
+        }
+    }
+}
+// A dot split in two for poly_mulr2: the block's piece decoded once (w, k), then applied to each row's values with the
+// very expressions of the type's dot, so each row's sum keeps its bits.
+template<typename Block,void Deq(device const Block*,short,thread float4x4&)>
+struct SplitDeq {   // DeqDot's
+    enum { kSum=0 };
+    static void decode(device const Block* b,short il,thread float* w,thread float& k) {
+        float4x4 d; Deq(b,il,d);
+        for(int j=0;j<16;++j) w[j]=d[j/4][j%4];
+        k=1;
+    }
+    static float apply(thread const float* w,float,thread const float* xv,float) {
+        float s=0;
+        for(int j=0;j<16;++j) s+=w[j]*xv[j];
+        return s;
+    }
+};
+struct split_q8_0 {   // dot_q8_0's
+    enum { kSum=0 };
+    static void decode(device const block_q8_0* b,short il,thread float* w,thread float& k) {
+        device const ushort* q=reinterpret_cast<device const ushort*>(b->qs+16*il);
+        for(int j=0;j<8;++j) {
+            const ushort v=q[j];
+            w[2*j]=float(as_type<char>(uchar(v&255)));
+            w[2*j+1]=float(as_type<char>(uchar(v>>8)));
+        }
+        k=float(b->d);
+    }
+    static float apply(thread const float* w,float k,thread const float* xv,float) {
+        float s=0;
+        for(int j=0;j<8;++j) s+=w[2*j]*xv[2*j]+w[2*j+1]*xv[2*j+1];
+        return k*s;
+    }
+};
+struct split_q6_K {   // dot_q6_K's
+    enum { kSum=1 };
+    static void decode(device const block_q6_K* b,short il,thread float* w,thread float& k) {
+        device const ushort* ql=reinterpret_cast<device const ushort*>(b->ql)+32*(il/8)+16*((il/2)&1)+8*(il&1);
+        device const ushort* qh=reinterpret_cast<device const ushort*>(b->qh)+16*(il/8)+8*(il&1);
+        const float sc=reinterpret_cast<device const int8_t*>(b->scales)[(il%2)+2*(il/2)];
+        const short kk=(il/2)&3;
+        const uint mask1=kk>1?(kk>2?0xC0C0C0C0u:0x30303030u):(kk>0?0x0C0C0C0Cu:0x03030303u),mask2=kk>1?0xF0F0F0F0u:0x0F0F0F0Fu;
+        const uint shr_h=kk>2?2:0,shl_h=kk>1?0:(kk>0?2:4),shr_l=kk>1?4:0;
+        for(int i=0;i<4;++i) {
+            const uint low=(uint(ql[2*i])|(uint(ql[2*i+1])<<16))&mask2,high=(uint(qh[2*i])|(uint(qh[2*i+1])<<16))&mask1;
+            const uchar4 c=as_type<uchar4>(((high<<shl_h)>>shr_h)|(low>>shr_l));
+            for(int j=0;j<4;++j) w[4*i+j]=float(c[j]);
+        }
+        k=float(b->d)*sc;
+    }
+    static float apply(thread const float* w,float k,thread const float* xv,float xs) {
+        float s=0;
+        for(int i=0;i<4;++i) s+=w[4*i]*xv[4*i]+w[4*i+1]*xv[4*i+1]+w[4*i+2]*xv[4*i+2]+w[4*i+3]*xv[4*i+3];
+        return k*(s-32*xs);
+    }
+};
+// poly_mulr with each weight piece decoded once for all the rows (Split: the type's dot in two), where poly_mulr decodes
+// it again for every row.  The same sums, bit for bit.
+template<typename Block,int QK,typename Split,int NR>
+kernel void poly_mulr2(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_position_in_grid]],
+                       uint lane [[thread_index_in_threadgroup]]) {
+    const int no=a.no,rows=a.rows;
+    const int o0=int(group.x)*NR,nr=NR==1?1:min(NR,no-o0);
+    const ulong per=a.ni/QK;
+    device const Block* weights=reinterpret_cast<device const Block*>(static_cast<device uchar*>(a.p[0]))+ulong(o0)*per;
+    device const uchar* x0=static_cast<device uchar*>(a.p[1]);
+    device float* out_y=static_cast<device float*>(a.p[2]);
+    float acc[8][NR]={};
+    for(int start=lane*16;start<a.ni;start+=32*16) {
+        const short il=short((start%QK)/16);
+        float w[NR][16],k[NR];
+        for(int r=0;r<nr;++r) Split::decode(weights+r*per+start/QK,il,w[r],k[r]);
+        for(int t=0;t<8;++t) {
+            if(t>=rows) break;
+            float xv[16];
+            device const uchar* block=x0+ulong(t)*a.xstride+(start/32)*36;
+            const float d=float(*reinterpret_cast<device const half*>(block));
+            device const char4* q=reinterpret_cast<device const char4*>(block+4+start%32);
+            for(int j=0;j<4;++j) { const float4 v=d*float4(q[j]); xv[4*j]=v[0];xv[4*j+1]=v[1];xv[4*j+2]=v[2];xv[4*j+3]=v[3]; }
+            float xs=0;
+            if(Split::kSum) for(int j=0;j<16;++j) xs+=xv[j];
+            for(int r=0;r<nr;++r) acc[t][r]+=Split::apply(w[r],k[r],xv,xs);
+        }
+    }
+    for(int t=0;t<8;++t) {
+        if(t>=rows) break;
+        for(int r=0;r<nr;++r) {
+            const float sum=simd_sum(acc[t][r]);
+            if(!lane) out_y[ulong(t)*a.ystride+o0+r]=sum;
+        }
+    }
+}
+#define MULR2_(name,QK,SPLIT,NR,SUFFIX) template [[host_name("poly_mulr2_" #name SUFFIX)]] kernel decltype(poly_mulr2<block_##name,QK,SPLIT,NR>) poly_mulr2<block_##name,QK,SPLIT,NR>;
+#define MULR2(name,QK,SPLIT) MULR2_(name,QK,SPLIT,4,"") MULR2_(name,QK,SPLIT,1,"_1")
+MULR2(q8_0,32,split_q8_0)
+MULR2(q6_K,256,split_q6_K)
+#define MUL_(name,QK,DOT,NR,SUFFIX) template [[host_name("poly_mul_" #name SUFFIX)]] kernel decltype(poly_mul<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>) poly_mul<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>; \
+    template [[host_name("poly_mulr_" #name SUFFIX)]] kernel decltype(poly_mulr<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>) poly_mulr<block_##name,QK,dequantize_##name<float4x4>,DOT,NR>;
 #define MUL(name,QK) MUL_(name,QK,dot_##name,4,"") MUL_(name,QK,dot_##name,1,"_1")
 #define DEQDOT(name,QK) typedef DeqDot<block_##name,dequantize_##name<float4x4>> dot_##name;
 #define MV_TYPES(M) M(q4_0,32) M(q4_1,32) M(q5_0,32) M(q5_1,32) M(q8_0,32) M(q2_0,64) M(mxfp4,32) M(nvfp4,64) \
@@ -245,6 +376,8 @@ kernel void poly_mul(constant QArgs& a [[buffer(0)]],uint3 group [[threadgroup_p
     M(iq2_xs,256) M(iq3_xxs,256) M(iq4_nl,32) M(iq3_s,256) M(iq4_xs,256) M(iq1_m,256)
 MV_TYPES_DEQ(DEQDOT)
 MV_TYPES(MUL)
+#define DEQSPLIT(name,QK) typedef SplitDeq<block_##name,dequantize_##name<float4x4>> split_##name; MULR2(name,QK,split_##name)
+MV_TYPES_DEQ(DEQSPLIT)
 #ifdef MV_DEQ   // poly_mv_bench's: poly_mul_<type>_deq4 and _deq1, every type from its block decoder
 template<typename Block,void Deq(device const Block*,short,thread float4x4&)> struct BenchDot {
     enum { kSum=0 };

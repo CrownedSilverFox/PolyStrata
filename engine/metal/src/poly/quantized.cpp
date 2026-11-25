@@ -87,6 +87,24 @@ void qrun(const std::string& name,const QArgs& a,void* s,gpu::metal::Grid groups
     dispatch("poly_quantized",source,kernel.c_str(),a,s,groups,32,
              {a.p,a.kind==8 || a.kind==9?size_t(3*a.count):6,true,indirect?a.p[0]:nullptr});
 }
+// The types whose dot poly_mulr2 has split (quantized.metal: split_q8_0, split_q6_K and the DeqDot types'): each
+// weight piece decoded once for all the rows.  The others take poly_mulr, which decodes it again for each row.
+bool mulr2_type(int t) {
+    switch(t) {
+    case 8: case 14:                                                       // q8_0, q6_K
+    case 2: case 3: case 6: case 7: case 39: case 10: case 11: case 13:     // q4_0 q4_1 q5_0 q5_1 mxfp4 q2_K q3_K q5_K
+    case 17: case 18: case 20: case 21: case 23: case 29: return true;     // iq2_xs iq3_xxs iq4_nl iq3_s iq4_xs iq1_m
+    default: return false;
+    }
+}
+// native_mmvq() of 2 to 8 rows: NR outputs a SIMD group, 4 where the matrix has 8,192 outputs or more and 1 below, Q5_1
+// always 1, as qrun() takes them for poly_mul
+void mulr_run(int type,const QArgs& a,void* s) {
+    static const auto source=quant_source();
+    const int nr=type!=7 && a.no>=8192?4:1;
+    const std::string kernel=std::string(mulr2_type(type)?"poly_mulr2_":"poly_mulr_")+quant_name(type)+(nr==1?"_1":"");
+    dispatch("poly_quantized",source,kernel.c_str(),a,s,{uint32_t((a.no+nr-1)/nr),1,1},32,{a.p,6,true,nullptr});
+}
 const char* quant_name(int t) {
     switch(t) {
 #define Q(id,name) case id:return #name;
@@ -123,6 +141,10 @@ void native_add_rms_norm_q8_1(float* x,const float* add,const float* w,float* y,
 void native_mmvq(int type,const void* w,const void* x,float* y,int ni,int no,int rows,void* s) {
     native_mmvq_weight_bytes(type,ni,no);
     QArgs a;a.p[0]=w;a.p[1]=x;a.p[2]=y;a.ni=ni;a.no=no;a.rows=rows;a.xstride=native_q8_1_bytes(ni);a.ystride=no;
+    if(rows>=2 && rows<=8 && gpu::metal::optimize()) {   // the weights read once for the rows (poly_mulr, poly_mulr2)
+        mulr_run(type,a,s);
+        return;
+    }
     qrun(std::string("poly_mul_")+quant_name(type),a,s,{uint32_t(no),uint32_t(rows),1});
 }
 bool native_mmvq_slots(int t,const MmvqSlots& a,int count,int ni,int no,void* s) {
