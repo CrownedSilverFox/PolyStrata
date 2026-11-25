@@ -962,6 +962,13 @@ __device__ __forceinline__ float small_q8_dot(const Q40Block* __restrict__ w,
     return d * (sumi * ds.x - 4 * ds.y);
 }
 
+__device__ __forceinline__ int q5_0_centred(const int v) {
+    // Each byte holds an unsigned 5-bit code in 0..31; convert to signed (q - 16) in -16..15 in-place
+    // so the -16 offset multiplies the quantized activations (matching iq_kernels.cu's Q5_0 path and CPU).
+    const uint32_t b = (uint32_t) v ^ 0x10101010u;
+    return (int) (b | ((b & 0x10101010u) * 0x0Eu));
+}
+
 __device__ __forceinline__ float small_q8_dot(const Q50Block* __restrict__ w,
                                              const Q81Block* __restrict__ x, int iqs) {
     int sumi = 0;
@@ -974,17 +981,16 @@ __device__ __forceinline__ float small_q8_dot(const Q50Block* __restrict__ w,
         vi0 |= (vh << 11) & 0x00001000;
         vi0 |= (vh << 18) & 0x00100000;
         vi0 |= (vh << 25) & 0x10000000;
-        sumi = STRATA_DP4A(vi0, reinterpret_cast<const int*>(x->qs)[iqs + i], sumi);
+        sumi = STRATA_DP4A(q5_0_centred(vi0), reinterpret_cast<const int*>(x->qs)[iqs + i], sumi);
         int vi1 = (vl >> 4) & 0x0f0f0f0f;
         vi1 |= (vh >> 12) & 0x00000010;
         vi1 |= (vh >> 5) & 0x00001000;
         vi1 |= (vh << 2) & 0x00100000;
         vi1 |= (vh << 9) & 0x10000000;
-        sumi = STRATA_DP4A(vi1, reinterpret_cast<const int*>(x->qs)[iqs + i + 4], sumi);
+        sumi = STRATA_DP4A(q5_0_centred(vi1), reinterpret_cast<const int*>(x->qs)[iqs + i + 4], sumi);
     }
-    const float2 ds = __half22float2(x->ds);
-    const float d = w->d;
-    return d * (sumi * ds.x - 8 * ds.y);
+    const float d = __half2float(w->d) * __low2float(x->ds);
+    return d * float(sumi);
 }
 
 __device__ __forceinline__ float small_q8_dot(const Q80Block* __restrict__ w,
@@ -1384,13 +1390,13 @@ struct SmallTraits<Q50Block, 4> {
             vi0 |= (vh << 11) & 0x00001000;
             vi0 |= (vh << 18) & 0x00100000;
             vi0 |= (vh << 25) & 0x10000000;
-            r.vi0[i] = vi0;
+            r.vi0[i] = q5_0_centred(vi0);
             int vi1 = (vl >> 4) & 0x0f0f0f0f;
             vi1 |= (vh >> 12) & 0x00000010;
             vi1 |= (vh >> 5) & 0x00001000;
             vi1 |= (vh << 2) & 0x00100000;
             vi1 |= (vh << 9) & 0x10000000;
-            r.vi1[i] = vi1;
+            r.vi1[i] = q5_0_centred(vi1);
         }
         r.d = w->d;
         return r;
@@ -1402,8 +1408,7 @@ struct SmallTraits<Q50Block, 4> {
             sumi = STRATA_DP4A(r.vi0[i], reinterpret_cast<const int*>(x->qs)[iqs + i], sumi);
             sumi = STRATA_DP4A(r.vi1[i], reinterpret_cast<const int*>(x->qs)[iqs + i + 4], sumi);
         }
-        const float2 ds = __half22float2(x->ds);
-        return r.d * (sumi * ds.x - 8 * ds.y);
+        return r.d * __low2float(x->ds) * float(sumi);
     }
 };
 

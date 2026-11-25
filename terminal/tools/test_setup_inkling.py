@@ -66,11 +66,11 @@ class Main(unittest.TestCase):
                 self.assertIn("--parallel 2 to 4", out)                           # offered, as for the other families
 
     def test_a_card_that_holds_part_of_the_experts_gets_the_small_card_flags(self):
-        # an 8 GB card: Q5_0 attention, BF16 loop controllers, tail skip 4; expert swaps stay on (the default)
+        # an 8 GB card: Q5_K attention, BF16 loop controllers, tail skip 4; expert swaps stay on (the default)
         code, out, _ = self.main(family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
         self.assertEqual(code, 0, out)
         args = json.loads((self.t / "strata-inkling-ud-q3_k_xl.json").read_text())["args"]
-        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_0")
+        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_k")
         self.assertIn("--loop-bf16", args)
         self.assertEqual(args[args.index("--tail-skip") + 1], "4")
         self.assertNotIn("--expert-swaps", args)
@@ -90,7 +90,7 @@ class Main(unittest.TestCase):
         return cfg["args"], cfg.get("small_card"), out
 
     def assert_on(self, args):
-        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_0")
+        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_k")
         self.assertIn("--loop-bf16", args)
         self.assertEqual(args[args.index("--tail-skip") + 1], "4")
         self.assertEqual(args.count("--tail-skip"), 1)
@@ -163,7 +163,7 @@ class Main(unittest.TestCase):
         self.assertNotIn("layer_split", cfg)
         self.assertIn("runs on one card so far", out)
         args = cfg["args"]
-        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_0")
+        self.assertEqual(args[args.index("--attn-requant") + 1], "q5_k")
         self.assertEqual(args[args.index("--tail-skip") + 1], "4")
         self.assertIn("holds part of", out)
         code, out, cfg = self.main(family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=16303 / 1024, n_gpus=2)

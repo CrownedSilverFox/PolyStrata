@@ -959,7 +959,7 @@ FAMILIES = {
                 # (measured with --expert-swaps 0 as well, since dropped: it keeps the experts held as they were loaded,
                 # so the CPU computes more of a token's experts; 16-23% slower writing after a 302-token prompt on the
                 # 8 and 16 GB cards measured)
-                "small_card_args": ["--attn-requant", "q5_0", "--loop-bf16", "--tail-skip", "4"],
+                "small_card_args": ["--attn-requant", "q5_k", "--loop-bf16", "--tail-skip", "4"],
                 "models": {"UD-Q4_K_XL": {"about": "4-bit experts (NVFP4, Unsloth Dynamic), 8-bit where they write",
                                           "download_gb": 17.6, "ram_gb": 21, "arena_gb": 15.797846016,
                                           "vram_beside_gb": 3.7},
@@ -12904,7 +12904,7 @@ def main() -> int:
                          "experts fit on the GPU); auto: when the RAM has room for it")
     ap.add_argument("--inkling-small-card", choices=["on", "off"],
                     help="Inkling 2 Mini on a card that does not hold every expert of the size: on = the small-card "
-                         "settings (--attn-requant q5_0 --loop-bf16 --tail-skip 4: faster, the answers move a "
+                         "settings (--attn-requant q5_k --loop-bf16 --tail-skip 4: faster, the answers move a "
                          "little; the default); off = the high-accuracy mode, without them. A later setup run keeps "
                          "off (\"small_card\" in the run config) until --inkling-small-card on")
     ap.add_argument("--backend", choices=["cuda", "hip", "sycl"],

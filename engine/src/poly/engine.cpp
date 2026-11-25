@@ -2041,8 +2041,9 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
     if (o.expert_gpu >= 0 && (!inkling || !o.layer_split.empty()))
         throw std::runtime_error("--expert-gpu is Inkling 2's, on one card beside it (no --layer-split); this is a '" +
                                  name + "' model");
-    if (!o.attn_requant.empty() && o.attn_requant != "q4_0" && o.attn_requant != "q5_0" && o.attn_requant != "iq4_nl")
-        throw std::runtime_error("--attn-requant takes q4_0, q5_0 or iq4_nl");
+    if (!o.attn_requant.empty() && o.attn_requant != "q4_0" && o.attn_requant != "q5_0" &&
+        o.attn_requant != "iq4_nl" && o.attn_requant != "q5_k" && o.attn_requant != "q6_k")
+        throw std::runtime_error("--attn-requant takes q4_0, q5_0, q5_k, q6_k or iq4_nl");
     const auto make = [&]() -> std::unique_ptr<Engine> {
         if (name == "glm5-next" || name == "glm5next") return std::make_unique<Glm5Next>();   // Unsloth: no hyphen
         if (qwen35) return std::make_unique<Qwen35>();
@@ -2192,6 +2193,8 @@ Dev Engine::upload_as(const TensorInfo* t, const std::string& name, int64_t n_in
         const size_t row = strata::quant::row_bytes((int) guess_type_, n_in), out = row * (size_t) n_out;
         const Dev d{dense_ ? dense_ + dense_at_ : nullptr, guess_type_, (int) n_in, (int) n_out};
         void (*quantize)(const float*, void*, int64_t) = guess_type_ == 6    ? strata::quant::quantize_q5_0_ref
+                                                         : guess_type_ == 13 ? strata::quant::quantize_q5_K_ref
+                                                         : guess_type_ == 14 ? strata::quant::quantize_q6_K_ref
                                                          : guess_type_ == 20 ? strata::quant::quantize_iq4_nl_ref
                                                                              : strata::quant::quantize_q4_0_ref;
         dense_at_ += pad(out) + kTail;
