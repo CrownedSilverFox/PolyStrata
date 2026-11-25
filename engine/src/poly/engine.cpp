@@ -5439,8 +5439,16 @@ bool Engine::moe(Layer& L, int il, int n, const std::function<void()>* first) {
             if (opt_.metal_optimize && n_host > 0)
                 ck(gpu::metal::submit(static_cast<gpu::Stream>(st_)), "submitting cached experts");
 #endif
-            // the next layer's guesses, up while the CPU computes this layer's experts
-            if (ahead_j >= 0 && at == 0) vram_ahead(ahead_j, n, ahead_part);
+            // the next layer's guesses, up while the CPU computes this layer's experts.  vram_ahead() takes the
+            // group uploaded longest ago, once its `read` has passed, and that can be a group this call reads: one
+            // with this layer's guesses from an earlier token, when fewer uploads than groups went up since (a bus
+            // that is often busy).  `read` is marked again after the launches above first, so the upload waits for
+            // them and not for an older call's.
+            if (ahead_j >= 0 && at == 0) {
+                for (int h = 0; h < kAheadGroups; ++h)
+                    if (read >> h & 1u) ck(cudaEventRecord((cudaEvent_t) ahead_[h].read, cs(st_)), "upload ahead");
+                vram_ahead(ahead_j, n, ahead_part);
+            }
         };
 
         // The next layer's router wait is what makes h_cpu_ free to write again.
