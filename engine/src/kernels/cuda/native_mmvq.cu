@@ -4432,6 +4432,58 @@ __global__ void native_mmvq_mixed_kernel(MmvqMixed m, int n_in) {
     }
 }
 
+#if !defined(__HIPCC__)
+template<typename F, int NCOLS>
+__device__ __forceinline__ void mixed_row_n(const MmvqMixed& m, int j, int n_in) {
+    const auto* __restrict__ w = static_cast<const typename F::Block*>(m.a.w[j]);
+    const Q81Block* __restrict__ x = m.a.x[j];
+    const int tid = WARP * int(threadIdx.y) + int(threadIdx.x);
+    const int row = int(blockIdx.x) - m.a.first[j];
+    const int n_out = m.a.first[j + 1] - m.a.first[j];
+    const int blocks_per_row = n_in / F::DIV;
+    const int x_stride = n_in / Q8K;
+    const int kqs = F::kqs(tid);
+    float tmp[NCOLS] = {};
+    for (int kbx = tid / F::T; kbx < blocks_per_row; kbx += F::BPI) {
+        const int kby = kbx * F::KBY;
+        const typename F::W wv = F::load(w + std::size_t(row) * blocks_per_row + kbx, kqs);
+#pragma unroll
+        for (int c = 0; c < NCOLS; ++c) {
+            tmp[c] += F::apply(wv, x + std::size_t(c) * x_stride + kby, kqs);
+        }
+    }
+    __shared__ float partial[WARPS - 1][NCOLS][WARP];
+    if (threadIdx.y > 0) {
+#pragma unroll
+        for (int c = 0; c < NCOLS; ++c) partial[threadIdx.y - 1][c][threadIdx.x] = tmp[c];
+    }
+    __syncthreads();
+    if (threadIdx.y > 0) return;
+#pragma unroll
+    for (int c = 0; c < NCOLS; ++c) {
+#pragma unroll
+        for (int l = 0; l < WARPS - 1; ++l) tmp[c] += partial[l][c][threadIdx.x];
+        tmp[c] = warp_sum(tmp[c]);
+        if (threadIdx.x == 0) m.a.y[j][std::size_t(c) * n_out + row] = tmp[c];
+    }
+}
+
+template<int NCOLS>
+__launch_bounds__(WARPS * WARP, 1)
+__global__ void native_mmvq_mixed_rows_kernel(MmvqMixed m, int n_in) {
+    pdl_trigger();
+    pdl_wait();
+    int j = 0;
+    while (int(blockIdx.x) >= m.a.first[j + 1]) ++j;
+    switch (m.kind[j]) {
+    case 0: mixed_row_n<SmallTraits<Q80Block, 8>, NCOLS>(m, j, n_in); break;
+    case 1: mixed_row_n<Q4KTraits, NCOLS>(m, j, n_in); break;
+    case 2: mixed_row_n<Q5KTraits, NCOLS>(m, j, n_in); break;
+    default: mixed_row_n<Q6KTraits, NCOLS>(m, j, n_in); break;
+    }
+}
+#endif
+
 // Where native_mmvq() of one column runs the one-row-a-block kernel for this type and width: its kind, else -1.
 template<typename F>
 int mixed_kind_of(int kind, int n_in) { return n_in % F::DIV == 0 && n_in / F::DIV >= F::BPI ? kind : -1; }
@@ -4488,6 +4540,42 @@ bool native_mmvq_mixed(const int* types, const NativeMmvqMany& m, int n_in, void
     validate_stream(stream);
     native_mmvq_mixed_kernel<<<unsigned(a.a.first[m.count]), dim3(WARP, WARPS), 0, static_cast<cudaStream_t>(stream)>>>(
         a, n_in);
+    launch_check();
+    return true;
+#endif
+}
+
+bool native_mmvq_mixed_rows_fits(const int* types, const NativeMmvqMany& m, int n_in, int ncols) {
+#if defined(__HIPCC__)
+    (void) types, (void) m, (void) n_in, (void) ncols;
+    return false;
+#else
+    if (ncols < 2 || ncols > 8 || !g_multi_exact || s26_tsum_on()) return false;
+    MmvqMixed a;
+    return mixed_args(types, m, n_in, a);
+#endif
+}
+
+bool native_mmvq_mixed_rows(const int* types, const NativeMmvqMany& m, int n_in, int ncols, void* stream) {
+#if defined(__HIPCC__)
+    (void) types, (void) m, (void) n_in, (void) ncols, (void) stream;
+    return false;
+#else
+    if (ncols < 2 || ncols > 8 || !g_multi_exact || s26_tsum_on()) return false;
+    MmvqMixed a;
+    if (!mixed_args(types, m, n_in, a)) return false;
+    validate_stream(stream);
+    const dim3 grid(unsigned(a.a.first[m.count])), threads(WARP, WARPS);
+    const auto s = static_cast<cudaStream_t>(stream);
+    switch (ncols) {
+    case 2: launch_pdl(native_mmvq_mixed_rows_kernel<2>, grid, threads, 0, s, a, n_in); break;
+    case 3: launch_pdl(native_mmvq_mixed_rows_kernel<3>, grid, threads, 0, s, a, n_in); break;
+    case 4: launch_pdl(native_mmvq_mixed_rows_kernel<4>, grid, threads, 0, s, a, n_in); break;
+    case 5: launch_pdl(native_mmvq_mixed_rows_kernel<5>, grid, threads, 0, s, a, n_in); break;
+    case 6: launch_pdl(native_mmvq_mixed_rows_kernel<6>, grid, threads, 0, s, a, n_in); break;
+    case 7: launch_pdl(native_mmvq_mixed_rows_kernel<7>, grid, threads, 0, s, a, n_in); break;
+    default: launch_pdl(native_mmvq_mixed_rows_kernel<8>, grid, threads, 0, s, a, n_in); break;
+    }
     launch_check();
     return true;
 #endif
@@ -4693,6 +4781,14 @@ bool native_mmvq_slots(int ggml_type, const MmvqSlots& slots, int count, int n_i
 }
 
 bool native_mmvq_ids_supported(int ggml_type) { return slots_kind(ggml_type) != 0; }
+
+void native_mmvq_ids_group(const int32_t* ids, int count, void* group_buf, void* stream) {
+    if (!group_buf || count < 2 || count > 64) return;
+    validate_pointer(ids);
+    validate_pointer(group_buf);
+    validate_stream(stream);
+    iq_mmvq_ids_group(ids, count, group_buf, stream);
+}
 
 bool native_mmvq_ids(int ggml_type, const MmvqIds& ids, int count, int n_in, int n_out, void* stream) {
     if (!slots_kind(ggml_type)) return false;
