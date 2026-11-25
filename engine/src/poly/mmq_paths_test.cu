@@ -17,7 +17,7 @@
 // long enough (whole blocks cut from a model's tensor), in place of ggml's quantization of random weights.
 // With STRATA_PREFILL_NVFP4=w4a8 NVFP4 takes the int8 tiles where the card has them, and is checked as the int8 types are.
 //
-// usage: poly_mmq_paths_test [--turing-int8]   (--turing-int8: the int8 path on Turing and on HIP too, gemm_iq_i8_turing(); exit 0: every product within 2% RMS of the reference, and an int8 product within
+// usage: poly_mmq_paths_test [--turing-int8]   (--turing-int8: the int8 path on Turing too, gemm_iq_i8_turing(); exit 0: every product within 2% RMS of the reference, and an int8 product within
 // 1e-5 RMS of its own numbers; 77: no card).  Rows of 2,048 values for every type, then rows of 1,152 (Inkling 2's
 // experts' downs) for Q8_0, IQ4_NL and NVFP4.  Where a row's product does not depend on its launch
 // (Mmq::split_exact()), 100 of the dense rows multiplied as a launch of their own give the same bits.
