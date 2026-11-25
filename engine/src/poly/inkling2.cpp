@@ -226,8 +226,8 @@ void Inkling2::load_geometry() {
     if (attn_type_) guess_type_ = attn_type_;
     ctrl_bf16_ = opt_.loop_bf16;
 #if !defined(STRATA_GPU_METAL)
-    // Turing's prompt products on the int8 kernel that Ampere and newer take by default (i8_mma.cuh), only with
-    // --prompt-int8: on Turing it gave the same most likely token as the halves at 560 of 576 steps (97.2%), under
+    // Turing's and RDNA3 / RDNA4's prompt products on the int8 kernel that Ampere and newer take by default
+    // (i8_mma.cuh), only with --prompt-int8: on Turing it gave the same most likely token as the halves at 560 of 576 steps (97.2%), under
     // the 97.8% a default change needs, so the halves and cuBLAS stay Turing's default (STRATA_PF_I8MMA=0 turns the
     // kernel off on every card)
     kernels::gemm_iq_i8_turing(opt_.prompt_int8 == 1);

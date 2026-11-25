@@ -34348,36 +34348,6 @@
    "retired_in": ""
   },
   {
-   "name": "STRATA_POLY_HIP_INT8",
-   "backends": [
-    "cuda-hip"
-   ],
-   "reads": [
-    {
-     "file": "engine/src/poly/mmq_own.cu",
-     "line": 296,
-     "backend": "cuda-hip",
-     "fn": "getenv"
-    }
-   ],
-   "parse": "flag",
-   "default_state": "off",
-   "code_default": null,
-   "engine_sets": [],
-   "engine_defaults": [],
-   "launch_files": [],
-   "launch_sets": [],
-   "launch_reads": [],
-   "doc_mentions": [],
-   "status": "experimental",
-   "owner": "poly",
-   "note": "1: strata-poly's prompt products on the int8 kernel (i8_mma.cuh) on RDNA3/RDNA4 matrix cores (WMMA iu8), NVFP4 included unless STRATA_PREFILL_NVFP4 names a mode; unset: the FP16 tiles / BLAS loop as before (engine/src/poly/mmq_own.cu)",
-   "retire_after": "",
-   "retired_in": "",
-   "first_date": "2026-11-24",
-   "last_date": "2026-11-24"
-  },
-  {
    "name": "STRATA_POLY_MIRROR",
    "backends": [
     "cuda"

@@ -59,7 +59,8 @@ only part of the experts was not measured. Three runs each, 32 tokens written af
 
 On an RTX 20 card (Turing) the engine multiplies the experts as halves while it reads a prompt. With `--prompt-int8`
 it multiplies them on the int8 tensor cores, as it does on RTX 30 and newer, with the prompt's numbers rounded to 8
-bits with a scale for every 32 (`STRATA_PF_I8MMA=0` turns the int8 products off on every card). It is not the
+bits with a scale for every 32 (`STRATA_PF_I8MMA=0` turns the int8 products off on every card). `--prompt-int8` takes the
+same kernel on an AMD RDNA3 or RDNA4 card (HIP; `--no-prompt-int8` says the default there too). It is not the
 default because it moves the answers more: measured on a Quadro RTX 4000 (8 GB),
 which holds a third to two thirds of the experts, written after the halves' greedy answers to three prompts of 302
 to 8,192 tokens, 64 tokens each, with three files (the two below and an IQ3_S), it gives the same most likely token
