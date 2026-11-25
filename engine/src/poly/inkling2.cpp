@@ -2494,11 +2494,12 @@ void Inkling2::load_extra(const uint8_t* src, int64_t pos) {
     }
 }
 
-// The full slots' rows of the whole context, keys then values a slot.
+// The full slots' rows of the whole context, keys then values a slot.  Under the ZHA index a row is a position's
+// 4-bit leaves (codes, then their scales): what the index rebuilds its ring and summaries from.
 size_t Inkling2::card_row_bytes() const {
     size_t n = 0;
-    for (const Slot& s : slots_) n += blocks_[(size_t) s.il].swa || zha_on_ ? 0 : 1;   // the index's: in RAM
-    return n * 2 * kv_row();
+    for (const Slot& s : slots_) n += blocks_[(size_t) s.il].swa ? 0 : 1;
+    return n * 2 * (zha_on_ ? zha_leaf_codes() + zha_leaf_scales() : kv_row());
 }
 
 void Inkling2::save_card_rows(int64_t first, int64_t n, uint8_t* dst) {
@@ -2506,6 +2507,18 @@ void Inkling2::save_card_rows(int64_t first, int64_t n, uint8_t* dst) {
         throw std::logic_error("save_rows: the rows are outside the context");
     ck(cudaStreamSynchronize(cs(st_)), "save rows");
     const size_t row = kv_row();
+    for (size_t i = 0; i < slots_.size() && zha_on_ && n > 0; ++i) {   // the index's leaves, keys then values
+        const ZSlot& z = zs_[i];
+        if (blocks_[(size_t) slots_[i].il].swa || !z.kc) continue;
+        const size_t codes = zha_leaf_codes(), scales = zha_leaf_scales();
+        const std::pair<const int8_t*, const uint16_t*> parts[2] = {{z.kc, z.ksc}, {z.vc, z.vsc}};
+        for (const auto& [c, sc] : parts) {
+            std::memcpy(dst, c + (size_t) first * codes, (size_t) n * codes);
+            dst += (size_t) n * codes;
+            std::memcpy(dst, (const uint8_t*) sc + (size_t) first * scales, (size_t) n * scales);
+            dst += (size_t) n * scales;
+        }
+    }
     for (const Slot& s : slots_) {
         if (blocks_[(size_t) s.il].swa || !s.keys || n == 0) continue;
         for (const uint16_t* cache : {s.keys, s.vals}) {
@@ -2524,6 +2537,20 @@ void Inkling2::load_card_rows(const uint8_t* src, int64_t from, int64_t count, i
     for (ZSlot& z : zs_) z.zpos = -1;   // the index's ring and summaries again from its leaves
     ck(cudaStreamSynchronize(cs(st_)), "load rows");
     const size_t row = kv_row();
+    for (size_t i = 0; i < slots_.size() && zha_on_ && n > 0; ++i) {   // the index's leaves, as save_card_rows() wrote
+        ZSlot& z = zs_[i];
+        if (blocks_[(size_t) slots_[i].il].swa || !z.kc) continue;
+        const size_t codes = zha_leaf_codes(), scales = zha_leaf_scales();
+        const std::pair<int8_t*, uint16_t*> parts[2] = {{z.kc, z.ksc}, {z.vc, z.vsc}};
+        for (const auto& [c, sc] : parts) {
+            std::memcpy(c + (size_t) first * codes, src + (size_t) (first - from) * codes, (size_t) n * codes);
+            src += (size_t) count * codes;
+            std::memcpy((uint8_t*) sc + (size_t) first * scales, src + (size_t) (first - from) * scales,
+                        (size_t) n * scales);
+            src += (size_t) count * scales;
+        }
+        z.zbuilt = std::min(z.zbuilt, (int) (first / zha_.C));   // the summaries from the first new row's chunk on
+    }
     for (const Slot& s : slots_) {
         if (blocks_[(size_t) s.il].swa || !s.keys || n == 0) continue;
         for (uint16_t* cache : {s.keys, s.vals}) {

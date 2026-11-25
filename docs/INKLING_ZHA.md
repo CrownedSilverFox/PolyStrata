@@ -51,7 +51,8 @@ log of the sum of the weights. A token then reads, for each KV group of 3 heads:
 The exact chunks come from the 4-bit leaves in pinned RAM over the bus. An answer keeps the chunks it read in a pool
 in VRAM (600 a KV head), so the next token reads only the ones it has not read yet. The recent keys stay in a ring
 in VRAM in Q8_0. A jump in the sequence (a new prompt, a restored conversation) rebuilds the ring and the summaries
-from the leaves.
+from the leaves. The leaves are what a saved conversation keeps of the 8 runs (the server's conversation cache: 9,216
+bytes a token), so a conversation brought back after another one reads its own keys again.
 
 ## What it takes
 
@@ -82,20 +83,20 @@ about it at the end; the answer must be the code (`7349-AMBER-2291`).
 
 | Prompt | Without the index | With it |
 | --- | --- | --- |
-| 32,768 tokens, 200 written | 1,319 tokens/s read, 31.1 written/s | 1,391 tokens/s read, 32.7 written/s |
-| 131,497 tokens, the code | 947 tokens/s, found | 1,328 tokens/s, found |
-| 129,024 tokens, 200 written | 963 tokens/s read, 22.2 written/s | 1,310 tokens/s read, 30.0 written/s |
-| 271,910 tokens, the code | stops: `no VRAM for the attention cache` | 1,243 tokens/s, found |
-| 1,024,338 tokens, the code | (the full runs' fp8 caches alone: 16 GiB) | 853 tokens/s (20 min), found |
+| 32,768 tokens, 200 written | 1,318 tokens/s read, 31.8 written/s | 1,400 tokens/s read, 33.8 written/s |
+| 131,497 tokens, the code | 946 tokens/s, found | 1,330 tokens/s, found |
+| 129,024 tokens, 200 written | 963 tokens/s read, 22.4 written/s | 1,313 tokens/s read, 30.5 written/s |
+| 271,910 tokens, the code | stops: `no VRAM for the attention cache` | 1,242 tokens/s, found |
+| 1,024,338 tokens, the code | (the full runs' fp8 caches alone: 16 GiB) | 849 tokens/s (20 min), found |
 
-At 1M the index's leaves took 9.0 GiB of pinned RAM beside the 11.5 GiB of experts the card did not hold.
+At 1M the index's leaves took 9.0 GiB of pinned RAM beside the 11.4 GiB of experts the card did not hold.
 
 How far the answers move: over the last 2,048 tokens of a 32,768-token text, each scored one at a time after the
 ones before (a scoring build, not part of this change), the index's next-token distributions against the full
-attention's: mean KL 0.0156 (p99 0.216), the same most likely token at 97.1% of the positions, perplexity 1.5656
-against 1.5697.
+attention's: mean KL 0.0166 (p99 0.240), the same most likely token at 97.1% of the positions, perplexity 1.5617
+against 1.5653.
 
-The default path: without `STRATA_INK_ZHA` this build and main (36e654b1b) wrote the same 200 tokens after the
+The default path: without `STRATA_INK_ZHA` this build and main (d62dfacbe) wrote the same 200 tokens after the
 32,768-token prompt, with `STRATA_FREEZE_EXPERTS=1` so that both keep the same experts on the card (which experts sit
 there changes which code computes them). With `--batch 3 --check-batch 3` both wrote, for each of 3 sequences, the
 same 64 tokens as that sequence alone.
@@ -103,6 +104,6 @@ same 64 tokens as that sequence alone.
 ## Limits
 
 - The answers move: a token's far chunks it does not read exactly are estimated. At 32K tokens the next-token
-  distributions differ from the full attention's by a mean KL of 0.0156 (above).
+  distributions differ from the full attention's by a mean KL of 0.0166 (above).
 - One sequence (`--batch` is not used); not with the drafter, `--layer-split` or `--expert-gpu`; NVIDIA only.
 - The reference file is for Inkling 2 Mini, chunks of 64 and 4 references; the load refuses another shape.

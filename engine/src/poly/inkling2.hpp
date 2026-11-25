@@ -280,6 +280,9 @@ private:
     const void* zw_owner_ = nullptr;
     int64_t zw_next_ = -1;
     bool zha_full(const Block& B) const { return zha_on_ && !B.swa; }
+    /// A position's leaves of keys (or of values) in a full slot: 4-bit codes, then fp16 scales a 32 values.
+    size_t zha_leaf_codes() const { return (size_t) n_kv_ * head_dim_ / 2; }
+    size_t zha_leaf_scales() const { return (size_t) n_kv_ * head_dim_ / 32 * sizeof(uint16_t); }
     size_t zha_q8n(int cap) const {
         return ink::zha_q8n_make((size_t) n_kv_ * cap * zha_.R, cap, true);   // 4-bit summaries
     }
