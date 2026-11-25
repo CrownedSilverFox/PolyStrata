@@ -793,7 +793,9 @@ protected:
     int room(int n) const;
     int room_key(int n) const;
     void* dmalloc(size_t bytes, const char* what);
-    void* hmalloc(size_t bytes, const char* what);
+    /// `live`: memory that the card and the host read and write while a kernel runs (the doorbell): on HIP
+    /// coherent (hipHostMallocCoherent), so the card never reads it from a cache; on CUDA all pinned memory is.
+    void* hmalloc(size_t bytes, const char* what, bool live = false);
     void hfree(void* p);
     std::vector<uint8_t> ram_keep(const std::vector<float>* lately = nullptr) const;
     bool read_file(uint8_t* dst, const uint8_t* src, size_t n, bool copy = false) const;
@@ -1195,8 +1197,8 @@ protected:
     int32_t* d_ids_ = nullptr;                    ///< a batch's experts and weights when it routes on the card
     float* d_wts_ = nullptr;
     int32_t* h_ids_ = nullptr;                    ///< pinned: the experts, back from the card
-    float* h_wts_ = nullptr;                      ///< pinned: their weights, for step()'s rows (bells(), --batch)
-    /// While moe() takes step()'s rows: their picks from the card (h_ids_, h_wts_), as a token alone routes there
+    float* h_wts_ = nullptr;                      ///< pinned: their weights, for step()'s and window()'s rows (bells())
+    /// While moe() takes several rows: their picks from the card (h_ids_, h_wts_), as a token alone routes there
     const int32_t* step_ids_ = nullptr;
     void** d_slots_ = nullptr;                    ///< every layer's L.slot on the card, n_expert_ a layer (moe_card())
     std::vector<void*> h_slots_;                  ///< what d_slots_ holds
@@ -1224,8 +1226,14 @@ protected:
     bool bell_ = false;                           ///< this call rings (run())
     bool bell_counts_ = false;                    ///< a call since follow() last read d_use_ rang: picks to read
     bool bell_on(int n) const;
+    // Where a token alone routes on the card (the doorbell), rows the host takes are routed there too (route_card(),
+    // step_ids_): the host's route() need not round the gates like the card's.  The first: whether a token alone is
+    // routed on the card at all; the second: whether layer L is (moe_card() would find its kernels).
+    bool picks_like_alone() const;
+    bool picks_like_alone(const Layer& L) const;
     void bell_serve();
     void bell_job();
+    void bell_unwind();
     uint8_t* stage_ = nullptr;                    ///< experts that are not cached, on their way through VRAM
     uint8_t* h_stage_[2] = {};                    ///< pinned; filled in turn
     void* ev_stage_[2] = {};                      ///< marks the upload out of each
