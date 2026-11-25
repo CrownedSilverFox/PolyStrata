@@ -1753,10 +1753,10 @@ void usage() {
                  "                         little (default 0 = none is; setup gives Qwen3.6 6)\n"
                  "  --route-top N          a token's experts from place N+1 on are left out, in VRAM or not, where\n"
                  "                         the host routes (default 0 = none is)\n"
-                 "  --attn-requant TYPE    Inkling 2: its attention's matrices quantized again to TYPE (q5_0, q4_0\n"
-                 "                         or iq4_nl) at load: fewer bytes a token, and the answers move a little\n"
-                 "                         (default: the file's types; setup gives an 8 GB card q5_0); off or none\n"
-                 "                         says the default (the last --attn-requant counts)\n"
+                 "  --attn-requant TYPE    Inkling 2: its attention's matrices quantized again to TYPE (q5_k, q6_k,\n"
+                 "                         q5_0, q4_0 or iq4_nl) at load: fewer bytes a token, and the answers move\n"
+                 "                         a little (default: the file's types; setup gives an 8 GB card q5_k); off\n"
+                 "                         or none says the default (the last --attn-requant counts)\n"
                  "  --loop-bf16            Inkling 2: its loop controllers' matrices in BF16, not F32;\n"
                  "                         --no-loop-bf16 says the default (F32; the last one counts)\n"
                  "  --prompt-int8          Inkling 2 on an RTX 20 (Turing): its prompt products on the int8 tensor\n"
@@ -1895,7 +1895,7 @@ int main(int argc, char** argv) {
         else if (a == "--tail-skip") o.tail_skip = std::atoi(val());
         else if (a == "--route-top") o.route_top = std::atoi(val());
         else if (a == "--attn-requant") {
-            // off / none: the file's types, so a flag appended to a run config can undo setup's q5_0
+            // off / none: the file's types, so a flag appended to a run config can undo setup's q5_k
             std::string t = val(), low = t;
             for (char& c : low) c = (char) std::tolower((unsigned char) c);
             o.attn_requant = (low == "off" || low == "none") ? std::string() : t;

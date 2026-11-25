@@ -224,7 +224,12 @@ void Inkling2::load_geometry() {
     // --attn-requant: the attention's six matrices quantized again to that type at load (kGuessMat), fewer bytes a
     // token than their Q8_0.  --loop-bf16: the loop controllers' matrices as BF16, half the bytes of their F32.
     const std::string& a = opt_.attn_requant;
-    attn_type_ = a == "q4_0" ? 2 : a == "q5_0" ? 6 : a == "iq4_nl" ? 20 : 0;
+    attn_type_ = a == "q4_0"   ? 2
+                 : a == "q5_0" ? 6
+                 : a == "q5_k" ? 13
+                 : a == "q6_k" ? 14
+                 : a == "iq4_nl" ? 20
+                                 : 0;
     if (attn_type_) guess_type_ = attn_type_;
     ctrl_bf16_ = opt_.loop_bf16;
 #if !defined(STRATA_GPU_METAL)
