@@ -66,8 +66,9 @@ protected:
     bool tail_by_rows() const override { return true; }
     bool reads_by_layer() const override { return false; }
     // A call's residual streams and the core's bank from one layer run to the next: read() takes the calls through
-    // the runs a group at a time.  Not with the drafter, whose taps of three runs are a call's too.
-    int carry_rows() const override { return ds_file_ ? 0 : kBlocks + 2; }
+    // the runs a group at a time.  With the drafter, its taps of three runs and the final normed state too, which
+    // ds_commit() reads at the call's last layer run (ds_tap_'s four blocks).
+    int carry_rows() const override { return kBlocks + 2 + (ds_file_ ? kDsTaps : 0); }
     void carry_at(float* at) override;
     float* carried(int i) override;
     void save_run(int il, int64_t pos, uint8_t* dst) override;
@@ -152,7 +153,7 @@ private:
     bool bells() const override { return true; }
 #if defined(STRATA_USE_HIP)
     // the shared expert is one memset (moe_shared()), and a graph launch a layer for it cost an RX 9070 XT's host
-    // more than the memset: with experts on the CPU (no doorbell on HIP) a token's layers are launched one by one
+    // more than the memset: with experts on the CPU and no doorbell a token's layers are launched one by one
     bool shared_recorded() const override { return false; }
 #endif
     // routed on the card in that recording: the host reads neither
@@ -264,6 +265,8 @@ private:
     float* bl_[kBlocks] = {};   ///< the residual streams the blocks started from
     float *bank_ = nullptr, *bank_out_ = nullptr;
     float* home_[kBlocks + 2] = {};   ///< bl_, bank_ and bank_out_ in the scratch, where carry_at(nullptr) puts them
+    float* ds_home_ = nullptr;         ///< ds_tap_ in the scratch, likewise
+    static constexpr int kDsTaps = 4;  ///< ds_tap_'s blocks of rows_ rows: three layer runs' inputs, the final state
     void save_slots(int il, int pass, int64_t pos, uint8_t* dst);
     float* in_[3] = {};
     float* xin_[3] = {};

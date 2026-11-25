@@ -230,9 +230,12 @@ void Inkling2::load_geometry() {
 #if !defined(STRATA_GPU_METAL)
     // Turing's prompt products on the int8 kernel that Ampere and newer take by default (i8_mma.cuh), only with
     // --prompt-int8: on Turing it gave the same most likely token as the halves at 560 of 576 steps (97.2%), under
-    // the 97.8% a default change needs, so the halves and cuBLAS stay Turing's default (STRATA_PF_I8MMA=0 turns the
-    // kernel off on every card)
-    kernels::gemm_iq_i8_turing(opt_.prompt_int8 == 1);
+    // the 97.8% a default change needs, so the halves and cuBLAS stay Turing's default.  On AMD's RDNA3 / RDNA4 the
+    // kernel is the default and --no-prompt-int8 turns it off.  STRATA_PF_I8MMA=0 turns the kernel off on every card.
+#if defined(STRATA_USE_HIP)
+    if (opt_.prompt_int8 >= 0)   // on AMD the int8 kernel is the default: only --no-prompt-int8 (or --prompt-int8) says
+#endif
+        kernels::gemm_iq_i8_turing(opt_.prompt_int8 == 1);
     // STRATA_PREFILL_IQ1S=int8: IQ1_S (UD-Q2_K_XL's gate|up in 6 layers) on the int8 prompt kernel, as the file's
     // other types are on Ampere and newer (i8_mma.cuh: activations int8 a 32 values).  Opt-in: on a 302-token prompt
     // it cost more KL a matrix than those types do.  Unset or =fp16: the FP16 kernel, as before.  Other models never
@@ -569,7 +572,9 @@ void Inkling2::guess_block(int32_t token) {
     input(token, pos_, h_ds_row_);
     for (int t = 0; t < kDsRows; ++t) h_ds_at_[2 * t] = pos_ + t;
     h_ds_at_[2 * kDsRows] = token;
-    if (opt_.graphs && !prompt_scratch_) {   // the recording holds the few tokens' scratch
+    // (unrecorded where the card has no VRAM for the recording: instantiate(), graph_room())
+    // (the recording holds the few tokens' scratch)
+    if (opt_.graphs && !prompt_scratch_ && (ds_graph_[nb] || (rec_off_ == 0 && !rec_short_))) {
         void*& g = ds_graph_[nb];
         if (!g) {
             cudaGraph_t graph = nullptr;
@@ -582,15 +587,14 @@ void Inkling2::guess_block(int32_t token) {
                 throw;
             }
             ck(cudaStreamEndCapture(cs(st_), &graph), "cudaStreamEndCapture");
-            cudaGraphExec_t exec = nullptr;
-            const cudaError_t made = cudaGraphInstantiateWithFlags(&exec, graph, 0);
+            void* exec = instantiate(graph);
             cudaGraphDestroy(graph);
-            ck(made, "cudaGraphInstantiate");
-            graphs_.push_back(exec);
+            if (exec) graphs_.push_back(exec);
             g = exec;
             recorded_ = true;
         }
-        ck(cudaGraphLaunch((cudaGraphExec_t) g, cs(st_)), "the drafter");
+        if (g) ck(cudaGraphLaunch((cudaGraphExec_t) g, cs(st_)), "the drafter");
+        else ds_block(nb);
     } else {
         ds_block(nb);
     }
@@ -808,12 +812,12 @@ void Inkling2::load_layer(int il) {
 
 size_t Inkling2::recurrent_floats() const { return slots_.size() * past_floats(); }
 
-// ROCm on Linux gives VRAM back only with its addresses (Engine::vmm_unmap()), and a prompt's lent buffers crashed
-// strata-poly there (an RX 9070 XT, Inkling 2 Mini IQ4_NL with some experts in RAM): the prompt batch's scratch stays
-// out of them, in one layout as before.  With the experts frozen (STRATA_FREEZE_EXPERTS, --check-batch) lend_prompt()
+// A HIP build lends no prompt buffers (STRATA_VMM_NO_PROMPT_LEND): lent, they crashed strata-poly inside the HIP
+// runtime (an RX 9070 XT, Inkling 2 Mini IQ4_NL with some experts in RAM), so the prompt batch's scratch stays out of
+// them, in one layout as before.  With the experts frozen (STRATA_FREEZE_EXPERTS, --check-batch) lend_prompt()
 // lends nothing, and the small layout would only take VRAM from the expert cache for the whole run.
 bool Inkling2::scores_apart() const {
-#ifdef STRATA_VMM_RELEASE_WITH_ADDRESSES
+#ifdef STRATA_VMM_NO_PROMPT_LEND
     return false;
 #else
     return !ds_file_ && !freeze_experts_asked_ && mmq_ && vmm_ && !split_ && rows_ >= kStageRows;
@@ -933,7 +937,7 @@ void Inkling2::assign_scratch() {
     if (ds_file_) {   // the drafter's: a call's features and mixes, and a block's rows
         const size_t E = (size_t) n_embd_, hq = (size_t) n_head_ * head_dim_, kv = (size_t) n_kv_ * head_dim_,
                      B = (size_t) ds_block_, V = (size_t) n_vocab_, R = (size_t) ds_rank_;
-        ds_tap_ = fbuf(4 * n * E);
+        ds_tap_ = ds_home_ = fbuf(kDsTaps * n * E);
         ds_mix_ = fbuf(3 * n * E);
         ds_k_ = fbuf(std::max(n, B) * kv);
         ds_v_ = fbuf(std::max(n, B) * kv);
@@ -2140,14 +2144,19 @@ size_t Inkling2::extra_bytes() const {
 }
 
 // On a layer split the next card goes on from these and r_: what crosses is the stream, the four blocks' starts the
-// mixes read and the loop's bank (64.5 KB a token at Inkling 2 Mini's width).
-float* Inkling2::carried(int i) { return i < kBlocks ? bl_[i] : i == kBlocks ? bank_ : bank_out_; }
+// mixes read and the loop's bank (64.5 KB a token at Inkling 2 Mini's width).  The drafter's taps after them are
+// read()'s groups' only: the drafter runs on one card.
+float* Inkling2::carried(int i) {
+    if (i >= kBlocks + 2) return ds_tap_ + (size_t) (i - kBlocks - 2) * rows_ * n_embd_;
+    return i < kBlocks ? bl_[i] : i == kBlocks ? bank_ : bank_out_;
+}
 
 void Inkling2::carry_at(float* at) {
     const auto place = [&](int i) { return at ? at + (size_t) i * rows_ * n_embd_ : home_[i]; };
     for (int i = 0; i < kBlocks; ++i) bl_[i] = place(i);
     bank_ = place(kBlocks);
     bank_out_ = place(kBlocks + 1);
+    if (ds_file_) ds_tap_ = at ? at + (size_t) (kBlocks + 2) * rows_ * n_embd_ : ds_home_;
 }
 
 void Inkling2::save_layer(int il, int64_t pos, uint8_t* dst) { save_slots(il, -1, pos, dst); }
