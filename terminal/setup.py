@@ -10785,9 +10785,12 @@ def poly_setup(a, family, gpu, hip, cuda_tk, multi, ram, data, elsewhere, port, 
     eff_parallel = (a.parallel if a.parallel >= 2 else 1) if a.parallel is not None else (
         1 if fam.get("one_request") is True else poly_saved_parallel([cfg_path, earlier]))
     # Inkling 2's DSpark drafter runs on one NVIDIA card or a Mac, one sequence at a time: skip it automatically on AMD
-    # HIP, with --layer-split, or when "parallel" >= 2.
+    # HIP, with --layer-split, when "parallel" >= 2, or by default on a card that holds only part of the experts
+    # (0.4 GB for the drafter crowds out cached experts; --mtp on opts in).
+    inkling_part = family == "inkling" and not multi and poly_held_gb(d, vram) < d["arena_gb"]
     skip_inkling_draft = family == "inkling" and (
-        bool(hip) or bool(multi) or bool(a.layer_split) or eff_parallel >= 2)
+        bool(hip) or bool(multi) or bool(a.layer_split) or eff_parallel >= 2
+        or (inkling_part and getattr(a, "mtp", None) != "on"))
     use_guesser = bool(d.get("draft_model")) and draft_choice and not skip_inkling_draft
 
     # one file, or the numbered files of a split GGUF: the engine is given the first and finds the others by name

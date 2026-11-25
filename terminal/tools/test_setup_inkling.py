@@ -77,6 +77,8 @@ class Main(unittest.TestCase):
 
     def test_a_card_that_holds_part_of_the_experts_gets_the_small_card_flags(self):
         # an 8 GB card: Q5_K attention, BF16 loop controllers, tail skip 4; expert swaps stay on (the default)
+        # and DSpark is left off by default so its 0.4 GB does not crowd out cached experts
+        self.downloads = []
         code, out, _ = self.main(family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
         self.assertEqual(code, 0, out)
         args = json.loads((self.t / "strata-inkling-ud-q3_k_xl.json").read_text())["args"]
@@ -84,6 +86,8 @@ class Main(unittest.TestCase):
         self.assertIn("--loop-bf16", args)
         self.assertEqual(args[args.index("--tail-skip") + 1], "4")
         self.assertNotIn("--expert-swaps", args)
+        self.assertNotIn("--draft-model", args)
+        self.assertEqual(self.downloads, [FAM["hf"] + "Inkling-2-Mini-UD-Q3_K_XL.gguf_file"])
         self.assertEqual(args.count("--tail-skip"), 1)
         self.assertIn("holds part of", out)
         self.assertNotIn("small_card", json.loads((self.t / "strata-inkling-ud-q3_k_xl.json").read_text()))
@@ -210,23 +214,32 @@ class Main(unittest.TestCase):
 
     def test_draft_opt_out_gguf_dir_amd_and_custom_gguf(self):
         from unittest import mock
-        # --no-draft turns DSpark off and remembers "mtp": false across reruns until --mtp on
+        # --no-draft turns DSpark off on a card that holds every expert and remembers "mtp": false until --mtp on
         self.downloads, self.verified = [], []
-        code, out, cfg = self.main(("--no-draft",), family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
+        code, out, cfg = self.main(("--no-draft",), family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=32607 / 1024)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.downloads, [FAM["hf"] + "Inkling-2-Mini-UD-Q3_K_XL.gguf_file"])
         self.assertNotIn("--draft-model", cfg["args"])
         self.assertIs(cfg.get("mtp"), False)
-        code, out, cfg = self.main(family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
+        code, out, cfg = self.main(family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=32607 / 1024)
         self.assertEqual(code, 0, out)
         self.assertNotIn("--draft-model", cfg["args"])
         self.assertIs(cfg.get("mtp"), False)
         self.downloads = []
-        code, out, cfg = self.main(("--mtp", "on"), family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
+        code, out, cfg = self.main(("--mtp", "on"), family="inkling", model="UD-Q3_K_XL", ram=64.0, vram=32607 / 1024)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.downloads, [FAM["draft_hf"] + DSPARK])
         self.assertIn("--draft-model", cfg["args"])
         self.assertNotIn("mtp", cfg)
+
+        # An 8 GB card holding part of the experts leaves DSpark off by default, and --mtp on opts in explicitly
+        self.downloads = []
+        code, out, cfg = self.main(family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("--draft-model", cfg["args"])
+        code, out, cfg = self.main(("--mtp", "on"), family="inkling", model="UD-Q3_K_XL", ram=32.0, vram=8188 / 1024)
+        self.assertEqual(code, 0, out)
+        self.assertIn("--draft-model", cfg["args"])
 
         # --gguf-dir with both files already present uses both directly and verifies both SHA-256s
         mine = self.t / "own"
@@ -234,8 +247,8 @@ class Main(unittest.TestCase):
         (mine / "Inkling-2-Mini-UD-Q3_K_XL.gguf").write_bytes(b"")
         (mine / DSPARK).write_bytes(b"")
         self.downloads, self.verified = [], []
-        code, out, cfg = self.main(("--gguf-dir", str(mine)), family="inkling", model="UD-Q3_K_XL", ram=32.0,
-                                   vram=8188 / 1024)
+        code, out, cfg = self.main(("--gguf-dir", str(mine)), family="inkling", model="UD-Q3_K_XL", ram=64.0,
+                                   vram=32607 / 1024)
         self.assertEqual((code, self.downloads), (0, []), out)
         self.assertEqual([v[0] for v in self.verified], ["Inkling-2-Mini-UD-Q3_K_XL.gguf", DSPARK])
         self.assertEqual(Path(cfg["args"][cfg["args"].index("--draft-model") + 1]), mine / DSPARK)

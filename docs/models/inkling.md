@@ -295,8 +295,9 @@ Not run yet: `--expert-gpu` on two cards (built but not run), `--layer-split`
 on two unequal cards (below; it has run on two RTX 2070 Super), UD-Q4_K_XL on the 8 GB card and UD-Q4_K_XL on a Mac.
 Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card; on a Mac, on the CPU.
 Setup downloads the DSpark drafter (`dspark-Inkling-2-Mini-Q8_0.gguf`, 0.4 GB) and enables `--draft-model` by default on
-one NVIDIA card and on a Mac (`--no-draft` or `--mtp off` at setup leaves it off; it is also left off on AMD, with
-`--layer-split`, and when `"parallel"` is 2 or more). Several requests at once (`"parallel"`, see [BATCHING.md](../BATCHING.md))
+a Mac or an NVIDIA card that holds all of the model's experts (`--no-draft` or `--mtp off` at setup leaves it off; on a
+card that holds only part of the experts it stays off by default so it does not crowd out cached experts, and `--mtp on`
+opts in; it is also left off on AMD, with `--layer-split`, and when `"parallel"` is 2 or more). Several requests at once (`"parallel"`, see [BATCHING.md](../BATCHING.md))
 are opt-in on an NVIDIA card (up to 16 slots), not with the draft file, not with `--layer-split` and not on AMD. With
 `--tail-skip` (setup's small-card flags) a chat's answer can then depend on the other chats writing at the same time.
 On a Mac the engine takes one request at a time for this model, and the installer writes `"parallel": 1` there. Its
