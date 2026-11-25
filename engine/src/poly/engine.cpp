@@ -6952,6 +6952,9 @@ void Engine::run(const int32_t* tokens, int n) {
 
     // h_r_ and h_cpu_ may still be the source of the previous call's copies
     ck(cudaStreamSynchronize(cs(st_)), "eval");
+    moe_left_ = false;
+    moe_left_scale_ = nullptr;
+    reset_call();
     // Greedy answers have to be a function of the request alone: which experts take the GPU path and which the
     // CPU one decides a layer's sums to the last bit (the two paths add in different orders), so the cache's
     // state at the first layer may not depend on whether an upload happened to have finished.  Every expert on
@@ -7172,8 +7175,11 @@ void Engine::run(const int32_t* tokens, int n) {
                 k.push_back(INT_MIN + c);
                 return k;
             };
-            if (!passes_.count(part(0)))
-                for (int c = 0; il < hi_; ++c) passes_[part(c)] = record(layers(first));
+            if (!passes_.count(part(0))) {
+                std::vector<void*> made;
+                for (int c = 0; il < hi_; ++c) made.push_back(record(layers(first)));
+                for (size_t c = 0; c < made.size(); ++c) passes_[part((int) c)] = made[c];
+            }
             for (int c = 0;; ++c) {
                 const auto it = passes_.find(part(c));
                 if (it == passes_.end()) break;
@@ -7271,6 +7277,9 @@ void Engine::step(const int* seqs, const int32_t* tokens, int n, const int32_t* 
     picks_ = picks;
 
     ck(cudaStreamSynchronize(cs(st_)), "step");
+    moe_left_ = false;
+    moe_left_scale_ = nullptr;
+    reset_call();
     if (n_swap_ > 0) follow(R);
     tok_ = rtok.data();
     windowed_ = false;
@@ -7837,8 +7846,14 @@ void Engine::carry_in(int64_t from, int n) {
 }
 
 void Engine::eval(const int32_t* tokens, int n, bool want_logits) {
+    const bool picks = !next_ && std::exchange(eval_picks_, false) && want_logits && n == 1 && d_picks_;
     OnCard here(device_, split_);
-    run(tokens, n);
+    try {
+        run(tokens, n);
+    } catch (...) {
+        for (Engine* e = next_.get(); e; e = e->next_.get()) e->eval_picks_ = false;
+        throw;
+    }
     if (next_) {
         hand_on(pos_, n, pass_rows(n));
         next_->eval(tokens, n, want_logits);
@@ -7847,7 +7862,6 @@ void Engine::eval(const int32_t* tokens, int n, bool want_logits) {
         return;
     }
     // The model's output: the last token's for the logits, and every token's for the draft block.
-    const bool picks = std::exchange(eval_picks_, false) && want_logits && n == 1 && d_picks_;
     picks_ = picks;
     if (want_logits || draft_) {
         const bool replay = opt_.graphs && n == 1 && want_logits && !opt_.dump && !prompt_scratch_;
@@ -8308,6 +8322,9 @@ bool Engine::read_groups(const Mark* marks, int n_marks, const std::function<boo
     for (; g > 1 && !(base = carry_take((size_t) g * per * sizeof(float), most)); g = (g + 1) / 2) {
     }
     g = std::max(g, 1);
+    moe_left_ = false;
+    moe_left_scale_ = nullptr;
+    reset_call();
     int visits = 0;
     for (int il = lo_; il < hi_; il = next_layer(il)) ++visits;
     const int groups = (n_calls + g - 1) / g, steps = groups * visits;
@@ -8323,6 +8340,9 @@ bool Engine::read_groups(const Mark* marks, int n_marks, const std::function<boo
         carry_at(nullptr);
         pos_ = pos0;
         shared_ahead_ = false;
+        moe_left_ = false;
+        moe_left_scale_ = nullptr;
+        reset_call();
     };
     try {
         for (int k = 0; k < groups; ++k) {
@@ -8431,7 +8451,11 @@ unsigned Engine::snap_tokens(int t) const {
 // written again when the position gets its real token.  So they leave the state as it was after tokens of the
 // window (snap_, snap_tokens()), and keep() puts back the one after the last token that was right.
 void Engine::window(const int32_t* tokens, int t) {
-    if (t < 1 || t > opt_.window) throw std::logic_error("a window takes 1 to max_window() tokens");
+    const bool picks = !next_ && std::exchange(eval_picks_, false) && d_picks_;
+    if (t < 1 || t > opt_.window) {
+        for (Engine* e = next_.get(); e; e = e->next_.get()) e->eval_picks_ = false;
+        throw std::logic_error("a window takes 1 to max_window() tokens");
+    }
     OnCard here(device_, split_);
     end_read();
     // the two ways are a choice only with experts on the CPU; a call that records launches says nothing of them
@@ -8456,6 +8480,7 @@ void Engine::window(const int32_t* tokens, int t) {
     try {
         run(tokens, t);
     } catch (...) {
+        for (Engine* e = next_.get(); e; e = e->next_.get()) e->eval_picks_ = false;
         windowed_ = false;
         snap_bits_ = 0;
         recorded_ = recorded_ || recorded;
@@ -8472,12 +8497,19 @@ void Engine::window(const int32_t* tokens, int t) {
         next_->window(tokens, t);
         return;
     }
+    picks_ = picks;
     float* h = draft_ ? hn_ + n_embd_ : xn_;
     output_rows(0, t, h);
     lin(output_, h, wlogits_, t);
     finish_logits(wlogits_, t);
-    ck(cudaMemcpyAsync(h_wlogits_, wlogits_, (size_t) t * n_vocab_ * sizeof(float), cudaMemcpyDeviceToHost, cs(st_)),
-       "logits");
+    if (picks) {
+        likeliest_rows(wlogits_, n_vocab_, t, d_picks_, st_);
+        ck(cudaMemcpyAsync(h_picks_, d_picks_, (size_t) t * sizeof(Likeliest), cudaMemcpyDeviceToHost, cs(st_)),
+           "logits");
+    } else {
+        ck(cudaMemcpyAsync(h_wlogits_, wlogits_, (size_t) t * n_vocab_ * sizeof(float), cudaMemcpyDeviceToHost, cs(st_)),
+           "logits");
+    }
     ck(cudaStreamSynchronize(cs(st_)), "window");
     if (timed && !recorded_ && !freeze_experts_) took_way(t, ms_since(t0));
     recorded_ = recorded_ || recorded;

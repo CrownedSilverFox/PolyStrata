@@ -560,13 +560,14 @@ struct Session {
                 const bool room = engine.pos() + most <= engine.max_context();
                 const int offered = look && room ? repeats.propose(most - 1, w + 1) : 0;
                 const int match = repeats.last_match();
+                const int repeat_widest = match >= kCopyMatch ? most : std::min(most, kBlockWindow);
                 const int widest = match >= kCopyMatch ? most : std::min(most, block_window);   // this round's window
-                const int k = std::min(offered, widest - 1);
+                const int k = std::min(offered, repeat_widest - 1);
                 // A repeat that fills the window, from a match of a length that has been right nine times in ten,
                 // is taken as it is: the block would mostly say the same, and asking it takes time.  Otherwise the
                 // block guesses, each guess from the one before, while a guess more pays (Guesses).
                 const bool blocks = engine.drafts() && room && !(k == widest - 1 && policy.lookup_rate(match) >= 0.9);
-                const bool ask = guesses.begin(blocks, policy);
+                const bool ask = guesses.begin(blocks, policy, engine.guesses_at_once());
                 // the round's time, as the policy counts it: a window of `in` tokens wrote n of them
                 const auto count = [&](int in, int n) {
                     return guesses.end(in, n, ms_since(round), engine.took_record());
@@ -592,13 +593,15 @@ struct Session {
                 }
                 w[0] = t;
                 if (!use.lookup) std::copy(d, d + use.t - 1, w + 1);
+                if (card_picks) engine.eval_picks();
                 engine.window(w, use.t);
                 // logits_of(i) is what follows w[i].  A guess that is what was picked has been through the model
                 // already; the token an answer ends with is shown and never fed, as without guesses.
                 int right = 0;
                 bool more = true;
-                t = pick(engine.logits_of(0));
-                while (right < use.t - 1 && t == w[right + 1] && (more = show(t))) t = pick(engine.logits_of(++right));
+                t = card_picks ? engine.picked(0) : pick(engine.logits_of(0));
+                while (right < use.t - 1 && t == w[right + 1] && (more = show(t)))
+                    t = card_picks ? engine.picked(++right) : pick(engine.logits_of(++right));
                 engine.keep(right + 1);
                 kept.read(w, right + 1);
                 r.guessed += use.t - 1;

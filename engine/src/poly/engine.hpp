@@ -357,9 +357,9 @@ public:
     /// a step() takes it back.  picked() is the token either way.
     void step_picks() { step_picks_ = !next_; }
     int32_t picked(int i) const;
-    /// The same for the next eval() of one token with its logits: picked(0) is its most likely token, and logits()
-    /// are not copied to the host (Inkling 2's 201,024 scores are 0.8 MB to copy and to search a token).
-    /// On a layer split the last card picks: it has the logits.
+    /// The same for the next eval() of one token with its logits, or the next window(): picked(i) is row i's most
+    /// likely token, and logits() / logits_of() are not copied to the host (Inkling 2's 201,024 scores are 0.8 MB to
+    /// copy and to search a token).  On a layer split the last card picks: it has the logits.
     void eval_picks() {
         if (next_) next_->eval_picks();
         else eval_picks_ = true;
@@ -521,6 +521,8 @@ protected:
     virtual int widest() const = 0;
     /// The copies of a token's embedding a layer's input starts from.
     virtual int streams() const = 0;
+    /// Clear any per-call state before run(), step(), or read_groups() starts (or unwinds).
+    virtual void reset_call() {}
     /// A layer from its input to its router's copy (a layer without routed experts: to its end).
     virtual void layer_head(Layer& L, int il, int n) = 0;
     /// The routed experts' sum (fo_) into the layer's output.
