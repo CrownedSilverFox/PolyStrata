@@ -1131,9 +1131,8 @@ bool Inkling2::project(const Block& B, const float* const* x, int n, bool quanti
 // rows (each a token of its own sequence) the BF16 controllers' gates are a token's launch a row.
 bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n) {
     if (n >= kStageRows) return false;
-    const bool bf = c[0].down.type == kTypeBF16;   // --loop-bf16: a token's only, control() the others
-    const bool per_row = bf && rows_of_ && n > 1;
-    if (bf && !((n == 1 || per_row) && rank_ < 128)) return false;
+    const bool bf = c[0].down.type == kTypeBF16;   // --loop-bf16
+    if (bf && rank_ >= 128) return false;
     for (int j = 0; j < 3; ++j)
         for (const Dev* d : {&c[j].down, &c[j].gain, &c[j].forget})
             if (d->type != (bf ? kTypeBF16 : kTypeF32) || d->scale != 1.0f) return false;
@@ -1155,7 +1154,9 @@ bool Inkling2::control3(const float* const* cur, float* const* msg, const Ctrl* 
         ink_cat_norm_set(cur, m, cat3_, 3, n_embd_, n, st_);
         gemv_set(w, x, y, outs, 3, 2 * n_embd_, n, st_);
     }
-    if ((n == 1 || per_row) && rank_ < 128) {   // the gain and forget products and the gates in one launch
+    // The gain and forget products and the gates in one launch, a row at a time: a window's rows (and step()'s) get
+    // the bits a token's controllers give it alone, so a guess is checked against what the token would have been.
+    if (rank_ < 128) {
         const void* gw[3] = {c[0].gain.p, c[1].gain.p, c[2].gain.p};
         const void* fw[3] = {c[0].forget.p, c[1].forget.p, c[2].forget.p};
         for (int i = 0; i < n; ++i) {   // a row at a time
@@ -1567,8 +1568,9 @@ void Inkling2::layer_head(Layer& L, int il, int n) {
                      rms_eps_, st_, xq_, true);
     } else {
         ink_mix(streams_of(il / blk_ + 1, 0), fp(B.ffn_query), 1, mixed, n_embd_, n, st_);
-        // a token's controller (step()'s rows: a row at a time; each takes it or none does)
-        bool ffn_done = looped && (n == 1 || per_row) && control_ffn(msg[3], B.ctrl[3], B, 0);
+        // a token's controller, a row at a time for a window's rows and step()'s (each takes it or none does): each
+        // row the bits it gets alone
+        bool ffn_done = looped && n < kStageRows && control_ffn(msg[3], B.ctrl[3], B, 0);
         for (int i = 1; i < n && ffn_done; ++i) control_ffn(msg[3], B.ctrl[3], B, i);
         if (!ffn_done) {
             if (looped) control(mixf_, msg[3], B.ctrl[3], mixf_, n);
