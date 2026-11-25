@@ -1198,6 +1198,7 @@ protected:
     int32_t *d_ex_ = nullptr, *h_ex_ = nullptr;   ///< a prompt batch's rows' experts (ExpertScales), in VRAM and pinned
     int32_t* d_ids_ = nullptr;                    ///< a batch's experts and weights when it routes on the card
     float* d_wts_ = nullptr;
+    void* d_grp_ = nullptr;                       ///< GPU expert dedup table for multi-token moe_card()
     int32_t* h_ids_ = nullptr;                    ///< pinned: the experts, back from the card
     float* h_wts_ = nullptr;                      ///< pinned: their weights, for step()'s and window()'s rows (bells())
     /// While moe() takes several rows: their picks from the card (h_ids_, h_wts_), as a token alone routes there

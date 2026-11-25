@@ -117,8 +117,12 @@ public:
         ms_[t] = knows(t) ? ms_[t] + 0.1 * (sample - ms_[t]) : sample;
         at_[t] = round_;
         measured_ = true;
-        if (blocks_) gate.saw(asked_ > 0, wrote, ms);
-        return ms;
+        const double ask_cap = asked_ > 0 && fresh(asked_at_)
+                                   ? std::min(round_ask_ms_, 2.0 * ask_ms_ * (at_once_ ? 1 : asked_))
+                                   : round_ask_ms_;
+        const double seen_ms = sample + ask_cap;
+        if (blocks_) gate.saw(asked_ > 0, wrote, seen_ms);
+        return seen_ms;
     }
 
 private:

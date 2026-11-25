@@ -4040,6 +4040,9 @@ void Engine::alloc() {
 #endif
         d_ids_ = (int32_t*) dmalloc(rr * sizeof(int32_t), "scratch");
         d_wts_ = (float*) dmalloc(rr * sizeof(float), "scratch");
+#if !defined(STRATA_GPU_METAL)
+        d_grp_ = dmalloc(kernels::kMmvqIdsGroupBytes, "scratch");
+#endif
         h_ids_ = (int32_t*) hmalloc(rr * sizeof(int32_t), "pinned memory");
         // the weights of step()'s rows and a window's, back from the card where a token alone routes there (doorbell)
         if (bells() && (opt_.batch > 0 || opt_.window > 1))
@@ -5670,11 +5673,18 @@ bool Engine::moe_card(Layer& L, int il, int n) {
     }
 #endif
     const size_t xq_row = kernels::native_q8_1_bytes(n_embd_), ff = (size_t) n_ff_exp_;
+#if !defined(STRATA_GPU_METAL)
+    void* const grp = (n > 1 && rr <= 64 && d_grp_) ? d_grp_ : nullptr;
+    if (grp) kernels::native_mmvq_ids_group(d_ids_, rr, grp, st_);
+#else
+    void* const grp = nullptr;
+#endif
     // a mixed layer's gate and up are each a matrix of n_ff rows of its own type, up's into the second half
-    const kernels::MmvqIds gate_up{table, d_ids_, 0, xq_, xq_row, n_used_, g_, 2 * ff, lane_slots_};
+    const kernels::MmvqIds gate_up{table, d_ids_, 0, xq_, xq_row, n_used_, g_, 2 * ff, lane_slots_, grp, grp != nullptr};
     kernels::native_mmvq_ids((int) L.gu_type, gate_up, rr, n_embd_, L.mixed() ? n_ff_exp_ : 2 * n_ff_exp_, st_);
     if (L.mixed()) {
-        const kernels::MmvqIds up{table, d_ids_, L.gu_bytes, xq_, xq_row, n_used_, g_ + ff, 2 * ff, lane_slots_};
+        const kernels::MmvqIds up{table, d_ids_, L.gu_bytes, xq_, xq_row, n_used_, g_ + ff, 2 * ff, lane_slots_, grp,
+                                  grp != nullptr};
         kernels::native_mmvq_ids((int) L.u_type, up, rr, n_embd_, n_ff_exp_, st_);
     }
     const ExpertScales es = expert_scales(L, d_ids_);
@@ -5687,7 +5697,7 @@ bool Engine::moe_card(Layer& L, int il, int n) {
     if (!L.h_s_down.empty() && !moe_left_scale_) expert_weights(d_wts_, fp(L.s_down), d_ids_, rr, st_);
     if (!(situ_beta_ > 0)) kernels::native_quantize_q8_1(h_, q8_, n_ff_exp_ * rr, 1, st_);   // the rows back to back, as one vector
     const kernels::MmvqIds down{table, d_ids_, L.gu2(), q8_, kernels::native_q8_1_bytes(n_ff_exp_), 1, d_,
-                                (size_t) n_embd_, lane_slots_};
+                                (size_t) n_embd_, lane_slots_, grp, grp != nullptr};
     kernels::native_mmvq_ids((int) L.d_type, down, rr, n_ff_exp_, n_embd_, st_);
     if (moe_sum_later(n)) moe_left_ = true;
     else moe_sum(d_, d_wts_, fo_, n_embd_, n_used_, n, st_);
