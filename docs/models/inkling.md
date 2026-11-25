@@ -250,16 +250,17 @@ about 1e-6 a token at prompts of 40K to 131K. Off by default: it changes the ari
 On a Mac it runs on strata-poly's Metal engine, as a beta. Measured on an Apple M5 Ultra with 256 GB of unified memory,
 UD-Q3_K_XL (`--metal-optimize --metal-memory balanced`, greedy, the median of three rounds run in turn): a 23-token
 chat prompt, a 3,845-token editing prompt (256 tokens written) and prompts of 8,192 to 65,536 tokens (64 tokens
-written), without and with `--draft-model` (`dspark-Inkling-2-Mini-Q8_0.gguf`, which writes the same greedy tokens):
+written), with setup's default DSpark drafter (`dspark-Inkling-2-Mini-Q8_0.gguf`, which writes the same greedy tokens)
+and without it (`--no-draft` at setup):
 
-| Prompt | Reads the prompt | Writes (`UD-Q3_K_XL`) | Writes with `--draft-model` |
+| Prompt | Reads the prompt | Writes (default, with DSpark) | Writes without DSpark |
 | --- | ---: | ---: | ---: |
-| **23 tokens** (short chat) | — | 85.4 tokens/s | 104.7 tokens/s |
-| **3,845 tokens** (editing) | 2,456 tokens/s | 81.8 tokens/s | 178.3 tokens/s |
-| **8,192 tokens** | 2,636 tokens/s | 76.2 tokens/s | 116.2 tokens/s |
-| **16,384 tokens** | 2,622 tokens/s | 77.1 tokens/s | 112.7 tokens/s |
-| **32,768 tokens** | 2,448 tokens/s | 73.1 tokens/s | 107.3 tokens/s |
-| **65,536 tokens** | 2,125 tokens/s | 67.7 tokens/s | 87.5 tokens/s |
+| **23 tokens** (short chat) | — | 104.7 tokens/s | 85.4 tokens/s |
+| **3,845 tokens** (editing) | 2,451 tokens/s | 178.3 tokens/s | 81.8 tokens/s |
+| **8,192 tokens** | 2,631 tokens/s | 116.2 tokens/s | 76.2 tokens/s |
+| **16,384 tokens** | 2,611 tokens/s | 112.7 tokens/s | 77.1 tokens/s |
+| **32,768 tokens** | 2,442 tokens/s | 107.3 tokens/s | 73.1 tokens/s |
+| **65,536 tokens** | 2,118 tokens/s | 87.5 tokens/s | 67.7 tokens/s |
 
 Given the 128 tokens the CUDA engine wrote after a 4,526-token prompt (UD-Q3_K_XL), it picks the same most likely token
 at 126 of the 128 steps. UD-Q2_K_XL has run there too (73 tokens/s in the short chat). UD-Q4_K_XL has not been measured
@@ -272,7 +273,7 @@ rows took 3.4 s.
 | --- | --- |
 | **Graphics card** | One **NVIDIA** card with **8 GB of VRAM or more**. It has run on an RTX 5090 (32 GB) and on an RTX 4070 Laptop (8 GB). About 3.7 GB are taken before any expert at a 32K context. Or an **Apple Silicon Mac** (beta): it has run on an M5 Ultra. |
 | **RAM** | About **21, 17 or 13 GB** beside an 8 GB card for UD-Q4_K_XL, UD-Q3_K_XL and UD-Q2_K_XL, the installer's estimate. A 32 GB card holds any of them whole. On a Mac, setup takes UD-Q3_K_XL from 32 GB of unified memory and UD-Q2_K_XL below that. |
-| **Disk** | 9.1 to 17.6 GB for the model file. |
+| **Disk** | 9.5 to 18.0 GB (the model file and its 0.4 GB DSpark drafter). |
 | **System** | Linux or Windows 10 / 11, and a current NVIDIA driver; or macOS 15 or newer. |
 
 **AMD (HIP), experimental, not ready:** the engine builds for RDNA3 and RDNA4 (gfx1100, gfx1200, gfx1201). It has run
@@ -292,8 +293,10 @@ RX 9060 XT on Linux ([#309](https://github.com/simplexai-labs/PolyStrata/issues/
 
 Not run yet: `--expert-gpu` on two cards (built but not run), `--layer-split`
 on two unequal cards (below; it has run on two RTX 2070 Super), UD-Q4_K_XL on the 8 GB card and UD-Q4_K_XL on a Mac.
-Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card; on a Mac, on the CPU. The
-draft file is an option (`--draft-model`). Several requests at once (`"parallel"`, see [BATCHING.md](../BATCHING.md))
+Pictures go through Unsloth's mmproj-F16.gguf, read on the CPU (`--vision cpu`) or the card; on a Mac, on the CPU.
+Setup downloads the DSpark drafter (`dspark-Inkling-2-Mini-Q8_0.gguf`, 0.4 GB) and enables `--draft-model` by default on
+one NVIDIA card and on a Mac (`--no-draft` or `--mtp off` at setup leaves it off; it is also left off on AMD, with
+`--layer-split`, and when `"parallel"` is 2 or more). Several requests at once (`"parallel"`, see [BATCHING.md](../BATCHING.md))
 are opt-in on an NVIDIA card (up to 16 slots), not with the draft file, not with `--layer-split` and not on AMD. With
 `--tail-skip` (setup's small-card flags) a chat's answer can then depend on the other chats writing at the same time.
 On a Mac the engine takes one request at a time for this model, and the installer writes `"parallel": 1` there. Its
@@ -311,11 +314,12 @@ Add `--model UD-Q3_K_XL` or `--model UD-Q2_K_XL` for a smaller size.
 
 | Size | What it is | Download | RAM beside an 8 GB card |
 | --- | --- | ---: | ---: |
-| **UD-Q4_K_XL** | 4-bit experts, 8-bit where they write ([Unsloth](https://huggingface.co/unsloth/Inkling-2-Mini-GGUF)) | 17.6 GB | about 21 GB |
-| **UD-Q3_K_XL** | 3- and 4-bit experts mixed | 13.6 GB | about 17 GB |
-| **UD-Q2_K_XL** | 1- to 2-bit experts: the smallest | 9.1 GB | about 13 GB |
+| **UD-Q4_K_XL** | 4-bit experts, 8-bit where they write ([Unsloth](https://huggingface.co/unsloth/Inkling-2-Mini-GGUF)) | 18.0 GB | about 21 GB |
+| **UD-Q3_K_XL** | 3- and 4-bit experts mixed | 14.0 GB | about 17 GB |
+| **UD-Q2_K_XL** | 1- to 2-bit experts: the smallest | 9.5 GB | about 13 GB |
 
-The installer downloads the files under the repository's `Mainline_Support` folder, the layout llama.cpp runs
+Each download includes the 0.4 GB DSpark draft model (`dspark-Inkling-2-Mini-Q8_0.gguf`), fetched from the top of the
+repository. The installer downloads the main files under the repository's `Mainline_Support` folder, the layout llama.cpp runs
 (`inkling2_loop`). The files at the top of the repository (architecture `inkling2`, for example UD-IQ3_XXS) are
 Unsloth's layout of the same weights: the engine reads them too. Setup takes them with `--gguf-dir` or
 `--custom-gguf`; the engine run by hand takes the file as its `--model`.
