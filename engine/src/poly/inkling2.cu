@@ -2851,9 +2851,10 @@ void ink_mix_norm(const InkStates& states, const float* query, int n_query, floa
 }
 
 void ink_mix_many(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs,
-                  int n_embd, void* stream) {
+                  int n_embd, void* stream, int rows) {
     if (states.n < 1 || states.n > InkStates::kMax || n_query < 1 || n_query > kQueries || jobs < 1 || jobs > kMixJobs)
         throw std::invalid_argument("ink_mix_many: 1 to 6 states, 1 to 4 queries, 1 to 12 jobs");
+    if (rows <= 0) return;
     MixMany m{};
     for (int k = 0; k < jobs; ++k) {
         MixArgs& a = m.j[k];
@@ -2863,7 +2864,7 @@ void ink_mix_many(const InkStates& states, const float* const* query, int n_quer
         a.nq = n_query;
         for (int j = 0; j < n_query; ++j) a.out[j] = out[k * n_query + j];
     }
-    launch_mix<MixJobs>(states.n, n_query, dim3(1, jobs), cs(stream), m, n_embd);
+    launch_mix<MixJobs>(states.n, n_query, dim3((unsigned) rows, (unsigned) jobs), cs(stream), m, n_embd);
     launched("ink_mix_many");
 }
 
@@ -4393,7 +4394,7 @@ int64_t ds_screen_rows(int64_t n_rows) { return scr_tiles(n_rows) * 32; }
 
 size_t ds_screen_scratch_bytes(int64_t n_rows) { return (size_t) scr_tiles(n_rows) * (kScrPer + 1) * sizeof(float2); }
 
-void ds_screen_pack(const void* q8_0, int n_in, int64_t n_rows, void* copy, void* stream) {
+void ds_screen_pack(const void* q8_0, int n_in, int64_t n_rows, void* copy, void* stream, uint32_t) {
     if (n_in != 2304 && n_in != 256) throw std::logic_error("ds_screen_pack: rows of 2,304 or 256");
     // the last tile's rows past n_rows score as zeros
     if (cudaMemsetAsync(copy, 0, scr_bytes(n_rows, n_in), cs(stream)) != cudaSuccess) launched("ds_screen_pack");

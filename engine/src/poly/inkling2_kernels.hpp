@@ -20,10 +20,10 @@ struct InkStates {
 /// states' sum.  `query` holds n_query queries of n_embd; out[j] gets query j's rows.
 void ink_mix(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
              void* stream);
-/// ink_mix() of one row for `jobs` queries sets (up to 12) over the same states, in one launch with the same bits:
+/// ink_mix() of `rows` rows for `jobs` queries sets (up to 12) over the same states, in one launch with the same bits:
 /// job k's n_query queries at query[k], its outputs out[k * n_query + j].
 void ink_mix_many(const InkStates& states, const float* const* query, int n_query, float* const* out, int jobs,
-                  int n_embd, void* stream);
+                  int n_embd, void* stream, int rows = 1);
 /// ink_mix() and then rms_norm() of out[0] (weight norm_w, null: none) into norm_out, in one launch with the same bits.
 void ink_mix_norm(const InkStates& states, const float* query, int n_query, float* const* out, int n_embd, int rows,
                   const float* norm_w, float* norm_out, float eps, void* stream, void* q8 = nullptr, bool ffn = false);
@@ -34,6 +34,18 @@ void ink_mix_norm(const InkStates& states, const float* query, int n_query, floa
 /// q8[j] as native_quantize_q8_1() does it.  The same bytes.
 void ink_norm_many_q8(const float* const* x, const float* const* w, float* const* y, void* const* q8, int count, int n,
                       float eps, void* stream);
+#if defined(STRATA_GPU_METAL)
+/// Multi-row ink_norm_many_q8() for `rows` rows of 1 to 3 inputs in one launch, each row bit-identical to one row.
+void ink_norm_many_q8_rows(const float* const* x, const float* const* w, float* const* y, void* const* q8, int count,
+                           int n, int rows, float eps, void* stream);
+void ink_add_norm_q8_rows(float* x, const float* add, const float* w, float* y, void* q8, int n, int rows, float eps,
+                          void* stream);
+void ink_control3_gate_rows(const float* const* cur, const float* const* msg, const float* const* ch,
+                            const void* const* gain_w, const void* const* forget_w, float* const* out, int n, int rank,
+                            int rows, void* stream, int count = 3, bool bf16 = false);
+void ink_gate_norm_q8_rows(const float* cur, const float* msg, const float* gain, const float* forget, float* out,
+                           const float* w, float* y, void* q8, int n, int rows, float eps, void* stream);
+#endif
 
 /// One row's ink_gate() into out, then native_add_rms_norm_q8_1() of out (weight w) into y and q8.  The same bytes.
 void ink_gate_norm_q8(const float* cur, const float* msg, const float* gain, const float* forget, float* out,
@@ -99,6 +111,38 @@ void ink_conv_add_rows(const float* x, const InkStateRows& state, const float* w
 void ink_moe_conv_add(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
                       float* state, const float* cw, float* out, float* acc, float a, int channels, int taps,
                       void* stream);
+#if defined(STRATA_GPU_METAL)
+/// One token's ink_conv_add() followed immediately by ink_mix_norm() over `states` (states.p[states.n - 1] == acc;
+/// in mode 1, states.p[states.n - 2] == keep), in one launch with the same bits.
+void ink_conv_mix(const float* x, float* state, const float* w, float* ao, float* acc, float* keep, float a, int mode,
+                  int taps, const InkStates& states, const float* query, int n_query, float* const* out, int n_embd,
+                  const float* norm_w, float* norm_out, float eps, void* stream, void* q8 = nullptr);
+/// One token's ink_moe_conv_add() followed immediately by ink_mix_norm() over `states` (states.p[states.n - 1] == acc),
+/// in one launch with the same bits.
+void ink_moe_conv_mix(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
+                      float* state, const float* cw, float* fc, float* acc, float a, int taps, const InkStates& states,
+                      const float* query, int n_query, float* const* out, int n_embd, const float* norm_w,
+                      float* norm_out, float eps, void* stream, void* q8 = nullptr);
+/// Multi-row (1..8) ink_moe_conv_add() with optional conv snapshots (eliminates memset blit + moe_sum + ink_conv_few).
+void ink_moe_conv_add_rows(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
+                           float* state, const float* cw, float* out, float* acc, float a, int channels, int taps,
+                           int rows, void* stream, float* snap = nullptr, size_t snap_stride = 0,
+                           unsigned snap_bits = 0);
+void ink_moe_sum_rows(const float* x, const float* w, const float* scale, const int* ids, int n_used, float* fo,
+                      int channels, int rows, void* stream);
+/// Multi-row (2..8) ink_conv_mix() reading state read-only (grid {rows, 1, 1}); follow with ink_conv_state_update().
+void ink_conv_mix_rows(const float* x, const float* state, const float* w, float* ao, float* acc, float* keep, float a,
+                       int mode, int taps, const InkStates& states, const float* query, int n_query, float* const* out,
+                       int n_embd, int rows, const float* norm_w, float* norm_out, float eps, void* stream,
+                       void* q8 = nullptr);
+/// Updates a convolution state and optional window snapshots from `x` (ink_conv_tail).
+void ink_conv_state_update(const float* x, float* state, int channels, int taps, int rows, float* snap,
+                           size_t snap_stride, unsigned snap_bits, void* stream);
+void ink_conv_state_update2(const float* x0, float* state0, float* snap0, int rows0, const float* x1, float* state1,
+                            float* snap1, int rows1, int channels, int taps, size_t snap_stride, unsigned snap_bits,
+                            void* stream);
+void ink_warmup();
+#endif
 
 /// Each head's `dim` values, times scale (null: none; [dim] a head), brought down to an L2 norm of at most `thr`
 /// (the norm has 1e-6 added), then times tau = 1 + alpha * log(max(1, (pos + row + 1) / floor)) when alpha > 0.
@@ -186,6 +230,11 @@ struct InkQkv {
     bool kvq8 = false;  ///< the caches are Q8_0 (InkAttn::kvq8)
 };
 void ink_qkv(const InkQkv& a, void* stream);
+#if defined(STRATA_GPU_METAL)
+/// Window (2..8 contiguous rows of one sequence) fused K/V conv + snapshots + Q/K/V/R clips + KV cache store.
+void ink_qkv_win(const InkQkv& a, int rows, float* ksnap, float* vsnap, size_t snap_stride, unsigned snap_bits,
+                 void* stream);
+#endif
 /// ink_qkv() of `rows` tokens of different sequences in one launch: token t's rows of q, r, kraw, vraw, kdyn, vdyn, k
 /// and v a token's on from a's, its states and caches here, and its position what the card holds at a.at[2 t] (a.at
 /// is required; a.pos is not read).
@@ -309,6 +358,11 @@ void ds_rope(float* x, int heads, int rows, const float* w, float eps, float the
 void ds_attend(const float* q, const uint16_t* keys, const uint16_t* vals, const long long* tags, int64_t cap,
                const DsPos& p, int window, int rows, int heads, int kv_heads, float scale, float* part, float* out,
                void* stream);
+#if defined(STRATA_GPU_METAL)
+void ds_attend_q8(const float* q, const uint16_t* keys, const uint16_t* vals, const long long* tags, int64_t cap,
+                  const DsPos& p, int window, int rows, int heads, int kv_heads, float scale, float* part, float* out,
+                  void* stream, void* q8);
+#endif
 size_t ds_attend_floats(int kv_heads);
 /// g = silu(g) * u
 void ds_swiglu(float* g, const float* u, size_t n, void* stream);
@@ -343,12 +397,13 @@ struct DsScreen {
     const void* fold_sc = nullptr;
     int64_t n_rows = 0;
     float cap = 30.f;
+    uint32_t head_type = 8;   ///< 8: Q8_0 (all backends), 13: Q5_K (Metal)
 };
 /// Whether a model of this width and Markov rank can screen (the kernels are built for 2,304 and 256).
 bool ds_screens(int n_embd, int rank);
 size_t ds_screen_bytes(int n_in, int64_t n_rows);
-/// The copy of n_rows Q8_0 rows of n_in (2,304 or 256) values; it has ds_screen_rows() rows.
-void ds_screen_pack(const void* q8_0, int n_in, int64_t n_rows, void* copy, void* stream);
+/// The copy of n_rows rows (Q8_0, or Q5_K on Metal) of n_in (2,304 or 256) values; it has ds_screen_rows() rows.
+void ds_screen_pack(const void* w, int n_in, int64_t n_rows, void* copy, void* stream, uint32_t type = 8);
 int64_t ds_screen_rows(int64_t n_rows);
 /// by_row (ds_screen_rows() floats) = by_token in the copies' row order
 void ds_screen_order(const float* by_token, int64_t n_rows, float* by_row, void* stream);

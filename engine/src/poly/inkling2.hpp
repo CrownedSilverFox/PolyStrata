@@ -49,6 +49,7 @@ protected:
     bool every_expert_fits() const;
     int widest() const override;
     int streams() const override { return 1; }
+    void reset_call() override;
     void layer_head(Layer& L, int il, int n) override;
     void layer_tail(Layer& L, int il, int n) override;
     int next_layer(int il) override;
@@ -137,12 +138,17 @@ private:
     void control(const float* cur, const float* msg, const Ctrl& c, float* out, int n);
     bool control3(const float* const* cur, float* const* msg, const Ctrl* c, float* const* out, int n);
     bool project(const Block& B, const float* const* x, int n, bool quantized = false, bool* extras = nullptr);
-    bool control_ffn(const float* msg, const Ctrl& c, const Block& B, int row = 0);
+    bool control_ffn(const float* msg, const Ctrl& c, const Block& B, int rows);
+    bool control_ffn_row(const float* msg, const Ctrl& c, const Block& B, int row);
     void guess_block(int32_t token) override;
     bool own_blocks() const override { return ds_file_ != nullptr; }
     // only where moe_card() and layer_tail() are recorded together (whole_rec_), and not with the doorbell, whose
     // experts' sum comes in after the card's
+#if defined(STRATA_GPU_METAL)
+    bool moe_sum_later(int n) const override { return n >= 1 && n <= kConvFew && whole_rec_ && !bell_; }
+#else
     bool moe_sum_later(int n) const override { return n == 1 && whole_rec_ && !bell_; }
+#endif
     bool bells() const override { return true; }
 #if defined(STRATA_USE_HIP)
     // the shared expert is one memset (moe_shared()), and a graph launch a layer for it cost an RX 9070 XT's host
@@ -150,13 +156,15 @@ private:
     bool shared_recorded() const override { return false; }
 #endif
     // routed on the card in that recording: the host reads neither
+#if defined(STRATA_GPU_METAL)
+    bool router_rows_to_host(int) const override { return !whole_rec_; }
+#else
     bool router_rows_to_host(int n) const override { return !(n == 1 && whole_rec_); }
-#if !defined(STRATA_GPU_METAL)
+#endif
     // Both GGUFs' routers are F32 of BF16 values: as BF16 a token reads half of their bytes, the same scores
     // (gemv_bf16() is gemv_f32()'s sums, a prompt batch's gemm_f32() takes them widened).  Idea: merbanan's Strata
     // branch inkling2-turing.
     bool router_bf16() const override { return true; }
-#endif
     void copy_rows(const float* from, float* to, int n);
     void tail_rows(int il, int n);
     /// The application of layer il in pass `pass`, in the order a token runs them.
@@ -199,6 +207,17 @@ private:
                        : (size_t) n_kv_ * head_dim_ * sizeof(uint16_t);
     }
     int pass_ = 0;   ///< the core's pass the call under way is in
+    int attn_mixed_il_ = -1;   ///< layer whose attn ink_mix_norm was folded into the previous tail
+    int attn_mixed_pass_ = 0;
+#if defined(STRATA_GPU_METAL)
+    struct PendingConv {
+        const float* x = nullptr;
+        float* state = nullptr;
+        float* snap = nullptr;
+        int rows = 0;
+    } pending_aconv_{}, pending_fconv_{};
+    void flush_pending_convs();
+#endif
     // The DSpark drafter (--draft-model, a file of architecture dflash): three dense layers over a block of the
     // anchor token and mask rows, reading keys and values made from four of the target's features of every position
     // it ran (the inputs of three layer runs and the final normed state), then a recurrent Markov head over the
@@ -237,7 +256,7 @@ private:
           *ds_base_ = nullptr, *ds_z_ = nullptr, *ds_fy_ = nullptr, *ds_part_ = nullptr, *ds_ctxh_ = nullptr,
           *ds_ctxf_ = nullptr, *ds_in_ = nullptr, *ds_sp_ = nullptr, *ds_state_ = nullptr, *ds_lat_ = nullptr,
           *ds_frc_ = nullptr, *ds_approx_ = nullptr, *ds_hscr_ = nullptr;
-    void *ds_yq_ = nullptr, *ds_hq_ = nullptr, *ds_latq_ = nullptr;
+    void *ds_yq_ = nullptr, *ds_hq_ = nullptr, *ds_latq_ = nullptr, *ds_gq_ = nullptr;
     void* side_ = nullptr;                             ///< fork()'s stream
     void *side_go_ = nullptr, *side_done_ = nullptr;   ///< its fork and its join
 
