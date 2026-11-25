@@ -248,13 +248,18 @@ from 1.76 to 1.57 ms; with the IQ4_NL file, a 131K context and the experts held 
 about 1e-6 a token at prompts of 40K to 131K. Off by default: it changes the arithmetic.
 
 On a Mac it runs on strata-poly's Metal engine, as a beta. Measured on an Apple M5 Ultra with 256 GB of unified memory,
-UD-Q3_K_XL, the README's benchmark on setup's settings with a 40,960-token context: 256 tokens written, the most likely
-one each time. Other programs were using the GPU at the same time. Two runs of the same prompts given to the engine
-alone wrote 73-74 and 60-61 tokens/s and read 2,411 tokens/s.
+UD-Q3_K_XL (`--metal-optimize --metal-memory balanced`, greedy, the median of three rounds run in turn): a 23-token
+chat prompt, a 3,845-token editing prompt (256 tokens written) and prompts of 8,192 to 65,536 tokens (64 tokens
+written), without and with `--draft-model` (`dspark-Inkling-2-Mini-Q8_0.gguf`, which writes the same greedy tokens):
 
-| UD-Q3_K_XL | Writes in a short chat | Reads a 32,787-token prompt | Writes after it |
+| Prompt | Reads the prompt | Writes (`UD-Q3_K_XL`) | Writes with `--draft-model` |
 | --- | ---: | ---: | ---: |
-| M5 Ultra | 74 tokens/s | 2,440 tokens/s | 61 tokens/s |
+| **23 tokens** (short chat) | — | 85.4 tokens/s | 104.7 tokens/s |
+| **3,845 tokens** (editing) | 2,456 tokens/s | 81.8 tokens/s | 178.3 tokens/s |
+| **8,192 tokens** | 2,636 tokens/s | 76.2 tokens/s | 116.2 tokens/s |
+| **16,384 tokens** | 2,622 tokens/s | 77.1 tokens/s | 112.7 tokens/s |
+| **32,768 tokens** | 2,448 tokens/s | 73.1 tokens/s | 107.3 tokens/s |
+| **65,536 tokens** | 2,125 tokens/s | 67.7 tokens/s | 87.5 tokens/s |
 
 Given the 128 tokens the CUDA engine wrote after a 4,526-token prompt (UD-Q3_K_XL), it picks the same most likely token
 at 126 of the 128 steps. UD-Q2_K_XL has run there too (73 tokens/s in the short chat). UD-Q4_K_XL has not been measured
