@@ -99,7 +99,7 @@ added. On an RTX 2070 Super 8 GB a 2,048-token prompt reads 6.5% faster with IQ4
 
 On a laptop with an RTX 4070 Laptop (8 GB), a Core i7-14700HX and 32 GB of RAM, on Windows, UD-Q3_K_XL has 1,216 of
 its 3,072 experts on the card and the rest are computed on the CPU. On a card that does not hold every expert, setup
-gives Inkling 2 Mini three settings that read fewer bytes for each token: `--attn-requant q5_0` (the attention's
+gives Inkling 2 Mini three settings that read fewer bytes for each token: `--attn-requant q5_k` (the attention's
 matrices in 5 bits instead of 8), `--loop-bf16` (the loop controllers in BF16 instead of F32) and `--tail-skip 4`.
 A card that holds the whole model gets none of them. Expert swaps stay on: with `--expert-swaps 0` the experts the
 card holds stay the ones it loaded, fewer of a token's experts are found there, and the CPU computes more of them
@@ -127,16 +127,16 @@ is slower on an 8 GB card this way (see the table above).
 ### Setup's four settings, one at a time
 
 These settings make the answers worse to make them faster. Setup adds three of them by itself, without asking,
-whenever the card cannot hold every expert of the size: `--attn-requant q5_0`, `--loop-bf16` and `--tail-skip 4`.
+whenever the card cannot hold every expert of the size: `--attn-requant q5_k`, `--loop-bf16` and `--tail-skip 4`.
 It no longer adds `--expert-swaps 0` (measured below because setup used to); `--inkling-small-card off` (above) leaves the
-three out. `--attn-requant q5_0` stores the attention's matrices in fewer bits and `--loop-bf16` the loop
+three out. `--attn-requant q5_k` stores the attention's matrices in fewer bits and `--loop-bf16` the loop
 controllers: lossy rounding. `--tail-skip 4` does not compute some of a token's experts at all: on the 8 GB cards
 below, with the other three settings, 9% to 27% of a token's expert picks. The answers differ measurably from the model's without them
 (the same most likely token at 94.3-95.0% of the steps with all four, against 98.2-99.0% for a second run without
 them), and with `--tail-skip` the engine's "experts from VRAM" figure counts the skipped experts as found in VRAM, so
 it reads high.
 
-To turn them off, delete `"--attn-requant", "q5_0", "--loop-bf16", "--tail-skip", "4"` from
+To turn them off, delete `"--attn-requant", "q5_k", "--loop-bf16", "--tail-skip", "4"` from
 the `"args"` list of the model's run config, `strata-inkling-<size>.json` in the install's `terminal` folder (for
 example `strata-inkling-ud-q3_k_xl.json`), and restart the server. To keep the rounding but compute every expert,
 change the `4` after `--tail-skip` to `0`, or add `"env": {"STRATA_ROUTE_TAIL_SKIP": "0"}` to the config. Running
@@ -149,7 +149,7 @@ the group ranks it fifth or lower.
 
 | Setting | What it does | Kind |
 | --- | --- | --- |
-| `--attn-requant q5_0` | the attention's matrices in 5 bits instead of 8: fewer bytes a token, and more VRAM for experts | rounding |
+| `--attn-requant q5_k` | the attention's matrices in 5 bits (Q5_K) instead of 8: fewer bytes a token, and more VRAM for experts | rounding |
 | `--loop-bf16` | the loop controllers in BF16 instead of F32 | rounding |
 | `--expert-swaps 0` | no expert moves into VRAM while an answer is written (default 64 on their way at a time) | rounding: the same experts, but more of them on the CPU, which rounds a little differently |
 | `--tail-skip 4` | a token's experts ranked 5th to 8th that are not on the card are left out | **skips computation** |

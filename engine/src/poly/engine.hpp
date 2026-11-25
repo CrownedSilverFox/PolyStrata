@@ -129,7 +129,7 @@ struct Options {
                                   ///< this share of its token's experts' weight, for every token of the call, is left
                                   ///< out (--skip-weight); 0: tail_skip decides
     std::string attn_requant;     ///< Inkling 2: its attention's six matrices quantized again to this type at load
-                                  ///< (q4_0, q5_0 or iq4_nl; --attn-requant); empty: the file's types
+                                  ///< (q4_0, q5_0, q5_k, q6_k or iq4_nl; --attn-requant); empty: the file's types
     bool loop_bf16 = false;       ///< Inkling 2: its loop controllers' matrices in BF16, not the file's F32 (--loop-bf16)
     int prompt_int8 = -1;         ///< Inkling 2: its prompt products on the int8 tensor cores, as on Ampere, on Turing and
                                   ///< AMD's RDNA3 / RDNA4 (gemm_iq_i8_turing()); -1: the default (Turing off, AMD on);
